@@ -28,6 +28,8 @@ import { McpRoutes } from "./routes/mcp"
 import { FileRoutes } from "./routes/file"
 import { ConfigRoutes } from "./routes/config"
 import { ExperimentalRoutes } from "./routes/experimental"
+import { TaskRoutes } from "./routes/task"
+import { TeamRoutes } from "./routes/team"
 import { ProviderRoutes } from "./routes/provider"
 import { lazy } from "../util/lazy"
 import { InstanceBootstrap } from "../project/bootstrap"
@@ -226,6 +228,8 @@ export namespace Server {
         .route("/provider", ProviderRoutes())
         .route("/", FileRoutes())
         .route("/mcp", McpRoutes())
+        .route("/task", TaskRoutes())
+        .route("/team", TeamRoutes())
         .route("/tui", TuiRoutes())
         .post(
           "/instance/dispose",

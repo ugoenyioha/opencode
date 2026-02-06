@@ -331,7 +331,7 @@ export function Autocomplete(props: {
 
   const agents = createMemo(() => {
     const agents = sync.data.agent
-    return agents
+    const agentOptions = agents
       .filter((agent) => !agent.hidden && agent.mode !== "primary")
       .map(
         (agent): AutocompleteOption => ({
@@ -349,6 +349,36 @@ export function Autocomplete(props: {
           },
         }),
       )
+
+    // Add team members as @teammate-name options when a team is active
+    const sessionID = props.sessionID
+    const teamInfo = sessionID ? sync.data.team[sessionID] : undefined
+    const teammateOptions: AutocompleteOption[] = []
+    if (teamInfo?.members) {
+      for (const member of teamInfo.members) {
+        // Don't duplicate if a subagent with the same name already exists
+        if (agentOptions.some((a) => a.display === "@" + member.name)) continue
+        const statusLabel = member.planApproval === "pending" ? "planning" : member.status
+        const modelSuffix = member.model ? `, ${member.model}` : ""
+        teammateOptions.push({
+          display: "@" + member.name,
+          description: `Teammate (${statusLabel}${modelSuffix}) — select to message`,
+          onSelect: () => {
+            // Clear the @trigger text, then insert "@name " as a prompt prefix.
+            // The prompt's submit() will route this through the team-message endpoint
+            // when selectedTeammate is set by the parent session view.
+            const inp = props.input()
+            const cursor = inp.logicalCursor
+            inp.deleteRange(0, 0, cursor.row, cursor.col)
+            inp.insertText(`@${member.name} `)
+            inp.cursorOffset = Bun.stringWidth(`@${member.name} `)
+            setStore("visible", false)
+          },
+        })
+      }
+    }
+
+    return [...agentOptions, ...teammateOptions]
   })
 
   const commands = createMemo((): AutocompleteOption[] => {

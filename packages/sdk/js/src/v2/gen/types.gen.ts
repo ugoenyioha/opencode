@@ -1313,6 +1313,22 @@ export type KeybindsConfig = {
    * Toggle thinking blocks visibility
    */
   display_thinking?: string
+  /**
+   * Show agent team status and tasks
+   */
+  team_show?: string
+  /**
+   * Navigate to next teammate session
+   */
+  team_next?: string
+  /**
+   * Navigate to previous teammate session
+   */
+  team_previous?: string
+  /**
+   * Toggle delegate mode (lead coordination-only)
+   */
+  team_delegate?: string
 }
 
 /**
@@ -3281,6 +3297,8 @@ export type SessionSummarizeData = {
     providerID: string
     modelID: string
     auto?: boolean
+    instructions?: string
+    boundaryMessageID?: string
   }
   path: {
     /**

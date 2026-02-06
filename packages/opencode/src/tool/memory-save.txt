@@ -1,0 +1,14 @@
+Saves a piece of information to persistent memory so it is available in all future sessions.
+
+Use this tool ONLY when:
+1. The user explicitly asks you to remember something (e.g., "remember that...", "save this for later", "always do X")
+2. The user states a clear, durable preference or project convention that should persist across sessions
+
+Do NOT use this tool:
+1. For transient information only relevant to the current session
+2. For things already captured in AGENTS.md or existing rules files
+3. For long or rambling text — facts should be concise and self-contained
+4. Proactively without the user indicating they want something remembered
+5. If you are unsure whether the information should be persisted — ask the user first
+
+Each saved fact is appended to a memory file in .opencode/rules/ and automatically loaded in future sessions.

@@ -41,6 +41,10 @@ export type PromptProps = {
   ref?: (ref: PromptRef) => void
   hint?: JSX.Element
   showPlaceholder?: boolean
+  /** When set, submit sends a team message to this teammate instead of a normal prompt */
+  selectedTeammate?: string | null
+  /** Called after a team message is sent so the parent can reset selection state */
+  onTeammateMessageSent?: () => void
 }
 
 export type PromptRef = {
@@ -558,7 +562,28 @@ export function Prompt(props: PromptProps) {
     const currentMode = store.mode
     const variant = local.model.variant.current()
 
-    if (store.mode === "shell") {
+    // Team message interception: when a teammate is selected, send via team_message endpoint
+    if (props.selectedTeammate) {
+      const teammate = props.selectedTeammate
+      try {
+        const res = await fetch(`${sdk.url}/session/${sessionID}/team-message`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            agent: local.agent.current().name,
+            to: teammate,
+            text: inputText,
+          }),
+        })
+        if (!res.ok) {
+          toast.show({ message: `Failed to message @${teammate}`, variant: "error" })
+        }
+      } catch {
+        toast.show({ message: `Failed to message @${teammate}`, variant: "error" })
+      }
+      props.onTeammateMessageSent?.()
+      // Fall through to the clear logic below
+    } else if (store.mode === "shell") {
       sdk.client.session.shell({
         sessionID,
         agent: local.agent.current().name,
@@ -569,6 +594,23 @@ export function Prompt(props: PromptProps) {
         command: inputText,
       })
       setStore("mode", "normal")
+    } else if (
+      iife(() => {
+        if (!inputText.startsWith("/")) return false
+        const command = inputText.split(/\s/)[0].slice(1)
+        return command === "compact" || command === "summarize"
+      })
+    ) {
+      // Intercept /compact and /summarize — these are not registered commands,
+      // they trigger compaction directly via the summarize endpoint.
+      const firstSpace = inputText.indexOf(" ")
+      const instructions = firstSpace > 0 ? inputText.slice(firstSpace + 1).trim() : undefined
+      sdk.client.session.summarize({
+        sessionID,
+        modelID: selectedModel.modelID,
+        providerID: selectedModel.providerID,
+        ...(instructions ? { instructions } : {}),
+      })
     } else if (
       inputText.startsWith("/") &&
       iife(() => {
@@ -797,7 +839,13 @@ export function Prompt(props: PromptProps) {
             flexGrow={1}
           >
             <textarea
-              placeholder={props.sessionID ? undefined : `Ask anything... "${PLACEHOLDERS[store.placeholder]}"`}
+              placeholder={
+                props.sessionID
+                  ? (sync.data.suggestion[props.sessionID]
+                      ? `${sync.data.suggestion[props.sessionID]}  [Tab to accept]`
+                      : undefined)
+                  : `Ask anything... "${PLACEHOLDERS[store.placeholder]}"`
+              }
               textColor={keybind.leader ? theme.textMuted : theme.text}
               focusedTextColor={keybind.leader ? theme.textMuted : theme.text}
               minHeight={1}
@@ -813,6 +861,16 @@ export function Prompt(props: PromptProps) {
                 if (props.disabled) {
                   e.preventDefault()
                   return
+                }
+                // Tab to accept prompt suggestion — only when prompt is empty and a suggestion exists
+                if (e.name === "tab" && !e.shift && !e.ctrl && !store.prompt.input && props.sessionID) {
+                  const suggestion = sync.data.suggestion[props.sessionID]
+                  if (suggestion) {
+                    e.preventDefault()
+                    input.insertText(suggestion)
+                    setStore("prompt", "input", suggestion)
+                    return
+                  }
                 }
                 // Handle clipboard paste (Ctrl+V) - check for images first on Windows
                 // This is needed because Windows terminal doesn't properly send image data

@@ -150,6 +150,7 @@ The assistant did not use the todo list because this is a single command executi
    - in_progress: Currently working on (limit to ONE task at a time)
    - completed: Task finished successfully
    - cancelled: Task no longer needed
+   - blocked: Task cannot start because its dependencies are not yet completed (set automatically)
 
 2. **Task Management**:
    - Update task status in real-time as you work
@@ -162,6 +163,23 @@ The assistant did not use the todo list because this is a single command executi
    - Create specific, actionable items
    - Break complex tasks into smaller, manageable steps
    - Use clear, descriptive task names
+
+4. **Task Dependencies** (optional `depends_on` field):
+   - Use `depends_on: ["task-id-1", "task-id-2"]` to declare that a task cannot start until the listed tasks are completed
+   - Tasks with unresolved dependencies are automatically set to `blocked` status
+   - When all dependencies are completed, blocked tasks automatically become `pending`
+   - Use dependencies when tasks have a natural ordering (e.g., "write tests" depends on "implement feature")
+   - Do NOT overuse dependencies — only add them when there is a genuine sequencing requirement
+   - Circular dependencies are detected and warned about; avoid creating them
+   - Example:
+     ```json
+     [
+       { "id": "1", "content": "Implement auth module", "status": "pending", "priority": "high" },
+       { "id": "2", "content": "Write auth tests", "status": "pending", "priority": "high", "depends_on": ["1"] },
+       { "id": "3", "content": "Integrate auth into API", "status": "pending", "priority": "medium", "depends_on": ["1"] },
+       { "id": "4", "content": "End-to-end testing", "status": "pending", "priority": "medium", "depends_on": ["2", "3"] }
+     ]
+     ```
 
 When in doubt, use this tool. Being proactive with task management demonstrates attentiveness and ensures you complete all requirements successfully.
 

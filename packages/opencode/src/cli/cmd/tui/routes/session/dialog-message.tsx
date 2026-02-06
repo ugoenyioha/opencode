@@ -3,6 +3,8 @@ import { useSync } from "@tui/context/sync"
 import { DialogSelect } from "@tui/ui/dialog-select"
 import { useSDK } from "@tui/context/sdk"
 import { useRoute } from "@tui/context/route"
+import { useLocal } from "@tui/context/local"
+import { useToast } from "../../ui/toast"
 import { Clipboard } from "@tui/util/clipboard"
 import type { PromptInfo } from "@tui/component/prompt/history"
 
@@ -13,8 +15,17 @@ export function DialogMessage(props: {
 }) {
   const sync = useSync()
   const sdk = useSDK()
+  const local = useLocal()
+  const toast = useToast()
   const message = createMemo(() => sync.data.message[props.sessionID]?.find((x) => x.id === props.messageID))
   const route = useRoute()
+
+  // Check if this is the first user message (nothing before it to compact)
+  const isFirstUserMessage = createMemo(() => {
+    const messages = sync.data.message[props.sessionID] ?? []
+    const firstUser = messages.find((m) => m.role === "user")
+    return firstUser?.id === props.messageID
+  })
 
   return (
     <DialogSelect
@@ -48,6 +59,30 @@ export function DialogMessage(props: {
               props.setPrompt(promptInfo)
             }
 
+            dialog.clear()
+          },
+        },
+        {
+          title: "Summarize before",
+          value: "session.compact_before",
+          description: "compact messages before this point",
+          disabled: isFirstUserMessage(),
+          onSelect: (dialog) => {
+            const selectedModel = local.model.current()
+            if (!selectedModel) {
+              toast.show({
+                variant: "warning",
+                message: "Connect a provider to summarize this session",
+                duration: 3000,
+              })
+              return
+            }
+            sdk.client.session.summarize({
+              sessionID: props.sessionID,
+              modelID: selectedModel.modelID,
+              providerID: selectedModel.providerID,
+              boundaryMessageID: props.messageID,
+            })
             dialog.clear()
           },
         },

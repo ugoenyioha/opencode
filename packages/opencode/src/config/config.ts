@@ -904,6 +904,10 @@ export namespace Config {
       terminal_title_toggle: z.string().optional().default("none").describe("Toggle terminal title"),
       tips_toggle: z.string().optional().default("<leader>h").describe("Toggle tips on home screen"),
       display_thinking: z.string().optional().default("none").describe("Toggle thinking blocks visibility"),
+      team_show: z.string().optional().default("<leader>w").describe("Show agent team status and tasks"),
+      team_next: z.string().optional().default("<leader>j").describe("Navigate to next teammate session"),
+      team_previous: z.string().optional().default("<leader>k").describe("Navigate to previous teammate session"),
+      team_delegate: z.string().optional().default("<leader>d").describe("Toggle delegate mode (lead coordination-only)"),
     })
     .strict()
     .meta({
@@ -1177,6 +1181,17 @@ export namespace Config {
             .positive()
             .optional()
             .describe("Timeout in milliseconds for model context protocol (MCP) requests"),
+          max_turns: z
+            .number()
+            .int()
+            .positive()
+            .optional()
+            .describe("Maximum number of turns (LLM calls) per session before auto-stopping. Safety guard against infinite loops."),
+          max_budget_usd: z
+            .number()
+            .positive()
+            .optional()
+            .describe("Maximum cost in USD per session. Session is aborted when cumulative cost exceeds this limit."),
         })
         .optional(),
     })

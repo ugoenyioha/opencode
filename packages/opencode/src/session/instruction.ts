@@ -1,5 +1,6 @@
 import path from "path"
 import os from "os"
+import matter from "gray-matter"
 import { Global } from "../global"
 import { Filesystem } from "../util/filesystem"
 import { Config } from "../config/config"
@@ -41,12 +42,83 @@ async function resolveRelative(instruction: string): Promise<string[]> {
   return Filesystem.globUp(instruction, Flag.OPENCODE_CONFIG_DIR, Flag.OPENCODE_CONFIG_DIR).catch(() => [])
 }
 
+interface RuleFile {
+  filepath: string
+  content: string
+  /** Glob patterns for path-scoping. If empty, rule is unconditional. */
+  paths: string[]
+}
+
+const RULES_DIRS = [
+  // .opencode/rules/ (native)
+  { base: ".opencode", sub: "rules" },
+  // .claude/rules/ (compatibility)
+  { base: ".claude", sub: "rules" },
+]
+
+async function scanRules(): Promise<RuleFile[]> {
+  if (Flag.OPENCODE_DISABLE_PROJECT_CONFIG) return []
+
+  const rules: RuleFile[] = []
+  const root = Instance.directory
+
+  for (const { base, sub } of RULES_DIRS) {
+    const rulesDir = path.join(root, base, sub)
+    const glob = new Bun.Glob("**/*.md")
+    try {
+      for await (const file of glob.scan({ cwd: rulesDir, absolute: true, onlyFiles: true })) {
+        try {
+          const raw = await Bun.file(file).text()
+          let frontmatter: Record<string, unknown> = {}
+          let body = raw
+          try {
+            const parsed = matter(raw)
+            frontmatter = (parsed.data ?? {}) as Record<string, unknown>
+            body = parsed.content
+          } catch {
+            // No valid frontmatter — treat entire file as body
+          }
+
+          const paths: string[] = []
+          if (Array.isArray(frontmatter.paths)) {
+            for (const p of frontmatter.paths) {
+              if (typeof p === "string") paths.push(p)
+            }
+          } else if (typeof frontmatter.paths === "string") {
+            paths.push(frontmatter.paths)
+          }
+
+          const content = body.trim()
+          if (content) {
+            rules.push({ filepath: path.resolve(file), content, paths })
+          }
+        } catch (e) {
+          log.warn("failed to read rule file", { file, error: e })
+        }
+      }
+    } catch {
+      // Rules directory doesn't exist — skip
+    }
+  }
+
+  return rules
+}
+
 export namespace InstructionPrompt {
   const state = Instance.state(() => {
     return {
       claims: new Map<string, Set<string>>(),
+      rules: undefined as RuleFile[] | undefined,
     }
   })
+
+  async function getRules(): Promise<RuleFile[]> {
+    const s = state()
+    if (s.rules === undefined) {
+      s.rules = await scanRules()
+    }
+    return s.rules
+  }
 
   function isClaimed(messageID: string, filepath: string) {
     const claimed = state().claims.get(messageID)
@@ -66,6 +138,11 @@ export namespace InstructionPrompt {
 
   export function clear(messageID: string) {
     state().claims.delete(messageID)
+  }
+
+  /** Invalidate the cached rules so they are re-scanned on next access. */
+  export function invalidateRules() {
+    state().rules = undefined
   }
 
   export async function systemPaths() {
@@ -141,7 +218,13 @@ export namespace InstructionPrompt {
         .then((x) => (x ? "Instructions from: " + url + "\n" + x : "")),
     )
 
-    return Promise.all([...files, ...fetches]).then((result) => result.filter(Boolean))
+    // Unconditional rules from .opencode/rules/ and .claude/rules/ (frontmatter stripped)
+    const rules = await getRules()
+    const ruleContents = rules
+      .filter((r) => r.paths.length === 0)
+      .map((r) => "Instructions from: " + r.filepath + "\n" + r.content)
+
+    return Promise.all([...files, ...fetches]).then((result) => [...result.filter(Boolean), ...ruleContents])
   }
 
   export function loaded(messages: MessageV2.WithParts[]) {
@@ -190,6 +273,28 @@ export namespace InstructionPrompt {
         }
       }
       current = path.dirname(current)
+    }
+
+    // Check path-scoped rules from .opencode/rules/ and .claude/rules/
+    const rules = await getRules()
+    const relativePath = path.relative(root, target)
+    for (const rule of rules) {
+      if (rule.paths.length === 0) continue // unconditional rules are in system prompt
+      if (isClaimed(messageID, rule.filepath)) continue
+      if (already.has(rule.filepath)) continue
+
+      const matches = rule.paths.some((pattern) => {
+        try {
+          return new Bun.Glob(pattern).match(relativePath)
+        } catch {
+          return false
+        }
+      })
+
+      if (matches) {
+        claim(messageID, rule.filepath)
+        results.push({ filepath: rule.filepath, content: "Instructions from: " + rule.filepath + "\n" + rule.content })
+      }
     }
 
     return results
