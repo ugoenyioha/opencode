@@ -842,7 +842,7 @@ export function Prompt(props: PromptProps) {
               placeholder={
                 props.sessionID
                   ? (sync.data.suggestion[props.sessionID]
-                      ? `${sync.data.suggestion[props.sessionID]}  [Tab to accept]`
+                       ? `${sync.data.suggestion[props.sessionID]}  [→ to accept]`
                       : undefined)
                   : `Ask anything... "${PLACEHOLDERS[store.placeholder]}"`
               }
@@ -862,8 +862,8 @@ export function Prompt(props: PromptProps) {
                   e.preventDefault()
                   return
                 }
-                // Tab to accept prompt suggestion — only when prompt is empty and a suggestion exists
-                if (e.name === "tab" && !e.shift && !e.ctrl && !store.prompt.input && props.sessionID) {
+                // Right arrow to accept prompt suggestion — only when prompt is empty and a suggestion exists
+                if (e.name === "right" && !e.shift && !e.ctrl && !store.prompt.input && props.sessionID) {
                   const suggestion = sync.data.suggestion[props.sessionID]
                   if (suggestion) {
                     e.preventDefault()
