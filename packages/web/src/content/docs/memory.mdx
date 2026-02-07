@@ -1,0 +1,161 @@
+---
+title: Memory
+description: Persistent memory and project-specific instructions.
+---
+
+OpenCode supports persistent memory through instruction files and a memory save tool. Memory lets the agent remember your preferences, project conventions, and important context across sessions.
+
+---
+
+## Instruction files
+
+OpenCode loads instructions from multiple sources, in order of precedence:
+
+### Project-level files
+
+These files are checked at the root of your project:
+
+| File | Description |
+|------|-------------|
+| `AGENTS.md` | Primary project instructions |
+| `.opencode/AGENTS.md` | Alternative location |
+| `CLAUDE.md` | Claude Code compatibility |
+| `.claude/CLAUDE.md` | Claude Code compatibility |
+
+### Global files
+
+These apply to all projects:
+
+| File | Description |
+|------|-------------|
+| `~/.config/opencode/AGENTS.md` | Global OpenCode instructions |
+| `~/.claude/CLAUDE.md` | Global Claude Code instructions |
+
+### Config-specified instructions
+
+Add custom instruction file paths in your config:
+
+```json title="opencode.json"
+{
+  "instructions": [
+    "docs/coding-standards.md",
+    "https://example.com/team-guidelines.md"
+  ]
+}
+```
+
+Supports local file paths and URLs. Glob patterns are also supported.
+
+---
+
+## Rules directory
+
+For modular, organized instructions, use the rules directories:
+
+```
+.opencode/rules/
+  memory.md          # Auto-saved memory
+  style.md           # Code style rules
+  testing.md         # Testing conventions
+  security.md        # Security guidelines
+```
+
+Also supports `.claude/rules/` for Claude Code compatibility.
+
+Rules files are markdown files that are automatically loaded into the system prompt. All `.md` files in the rules directories are scanned recursively.
+
+### Path-scoped rules
+
+Add YAML frontmatter with a `paths` field to restrict a rule to specific files:
+
+```md title=".opencode/rules/react-patterns.md"
+---
+paths:
+  - "src/components/**/*.tsx"
+  - "src/hooks/**/*.ts"
+---
+
+Use functional components with hooks. Prefer `useCallback` for event handlers
+passed to child components. Always use TypeScript strict mode.
+```
+
+Path-scoped rules are only injected when the agent reads a file matching the glob pattern. Rules without a `paths` field are always included.
+
+---
+
+## The `/memory` command
+
+Type `/memory` in the TUI to browse and edit all instruction files:
+
+The dialog shows:
+- **Project files**: AGENTS.md, CLAUDE.md, and their `.opencode`/`.claude` variants
+- **Project rules**: All files in `.opencode/rules/` and `.claude/rules/`
+- **Global files**: `~/.config/opencode/AGENTS.md`, `~/.claude/CLAUDE.md`
+
+Each file shows its status:
+- **ok** (green) — file exists
+- **new** (muted) — file would be created
+
+Select a file to open it in your `$EDITOR` (or `$VISUAL`). If the file doesn't exist, it's created with a template.
+
+---
+
+## Auto memory (`memory_save` tool)
+
+The agent has a `memory_save` tool that persists facts to `.opencode/rules/memory.md`. Each fact is appended as a bullet point with a date stamp:
+
+```md title=".opencode/rules/memory.md"
+- Prefer single-word variable names (2025-02-07)
+- The default branch is dev, not main (2025-02-07)
+- User prefers tests without mocks (2025-02-07)
+```
+
+This file is loaded automatically in all future sessions as part of the rules system.
+
+### When memory is saved
+
+The agent saves memory when you explicitly ask:
+- "Remember that the default branch is dev"
+- "Save this for later: always use bun instead of npm"
+- "Always run tests before committing"
+
+The agent will **not** save memory proactively — it only persists facts you explicitly request.
+
+### Permission
+
+The `memory_save` tool requires user approval. You'll be prompted to allow or deny each save.
+
+---
+
+## Memory lookup hierarchy
+
+When the agent reads a file, OpenCode walks up the directory tree from that file's location, looking for instruction files (`AGENTS.md`, `CLAUDE.md`) in each parent directory. This lets you place context-specific instructions close to the code they apply to.
+
+For example:
+```
+project/
+  AGENTS.md                    # Always loaded
+  src/
+    components/
+      AGENTS.md                # Loaded when reading files in src/components/
+```
+
+---
+
+## Environment variables
+
+| Variable | Description |
+|----------|-------------|
+| `OPENCODE_DISABLE_PROJECT_CONFIG` | Skip project-level instruction files |
+| `OPENCODE_DISABLE_CLAUDE_CODE_PROMPT` | Skip CLAUDE.md loading |
+| `OPENCODE_CONFIG_DIR` | Additional directory to scan for instruction files |
+
+---
+
+## Best practices
+
+- **Keep AGENTS.md concise.** Focus on project-specific context the agent needs — build commands, architecture decisions, naming conventions.
+- **Use rules directories for modularity.** Split instructions by topic instead of one giant file.
+- **Use path-scoped rules** for framework-specific or directory-specific guidelines.
+- **Let the agent save memory** for preferences you repeat often. This avoids re-explaining the same thing every session.
+- **Review `.opencode/rules/memory.md` periodically.** Remove outdated entries or consolidate related facts.

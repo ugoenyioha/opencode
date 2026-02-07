@@ -98,7 +98,11 @@ OpenCode has a list of keybinds that you can customize through the OpenCode conf
     "terminal_suspend": "ctrl+z",
     "terminal_title_toggle": "none",
     "tips_toggle": "<leader>h",
-    "display_thinking": "none"
+    "display_thinking": "none",
+    "team_show": "<leader>w",
+    "team_next": "<leader>j",
+    "team_previous": "<leader>k",
+    "team_delegate": "<leader>d"
   }
 }
 ```
@@ -127,6 +131,33 @@ You can disable a keybind by adding the key to your config with a value of "none
   }
 }
 ```
+
+---
+
+## Background task keybinds
+
+| Shortcut  | Action                                          |
+| --------- | ----------------------------------------------- |
+| `ctrl+b`  | Send a running bash command to the background   |
+
+:::note
+In **tmux**, press `ctrl+b` twice since the first press is consumed by the tmux prefix key. When no bash command is running, `ctrl+b` acts as cursor-left (Readline/Emacs-style).
+:::
+
+[Learn more](/docs/background-tasks) about background tasks.
+
+---
+
+## Agent team keybinds
+
+These keybinds are available when [agent teams](/docs/agent-teams) are enabled.
+
+| Shortcut     | Action                               |
+| ------------ | ------------------------------------ |
+| `<leader>w`  | Open team status dialog              |
+| `<leader>j`  | Navigate to next teammate session    |
+| `<leader>k`  | Navigate to previous teammate session|
+| `<leader>d`  | Toggle delegate mode                 |
 
 ---
 

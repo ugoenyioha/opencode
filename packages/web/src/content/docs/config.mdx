@@ -616,9 +616,19 @@ The `experimental` key contains options that are under active development.
 ```json title="opencode.json"
 {
   "$schema": "https://opencode.ai/config.json",
-  "experimental": {}
+  "experimental": {
+    "max_turns": 50,
+    "max_budget_usd": 5.00,
+    "suggestions": true
+  }
 }
 ```
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `max_turns` | number | Maximum LLM call turns per session. Session stops when reached. |
+| `max_budget_usd` | number | Maximum cost in USD per session. Warns at 80%, stops when exceeded. |
+| `suggestions` | boolean | Enable prompt suggestions after each response (default: enabled). |
 
 :::caution
 Experimental options are not stable. They may change or be removed without notice.

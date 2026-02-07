@@ -320,6 +320,60 @@ Use `websearch` when you need to find information (discovery), and `webfetch` wh
 
 ---
 
+### memory_save
+
+Save persistent facts to project memory.
+
+```json title="opencode.json" {4}
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "memory_save": "ask"
+  }
+}
+```
+
+Persists facts and preferences to `.opencode/rules/memory.md`, which is loaded in all future sessions. Use this when you want the agent to remember something across sessions. [Learn more](/docs/memory).
+
+---
+
+### process_query
+
+Query and interact with background tasks.
+
+```json title="opencode.json" {4}
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "process_query": "allow"
+  }
+}
+```
+
+Lets the agent check status, read output, and search through background task output. Supports actions: `list`, `status`, `read_output`, `read_last_n`, and `search`. [Learn more](/docs/background-tasks).
+
+---
+
+### Team tools (experimental)
+
+A set of tools for coordinating agent teams. These are only available when `OPENCODE_EXPERIMENTAL_AGENT_TEAMS=1` is set.
+
+| Tool | Description |
+|------|-------------|
+| `team_create` | Create a new agent team |
+| `team_spawn` | Spawn a teammate in a new session |
+| `team_message` | Send a message to a teammate |
+| `team_broadcast` | Broadcast a message to all teammates |
+| `team_tasks` | Manage the shared task list |
+| `team_claim` | Claim a pending task |
+| `team_approve_plan` | Approve/reject a teammate's plan |
+| `team_shutdown` | Request a teammate to shut down |
+| `team_cleanup` | Clean up team resources |
+
+[Learn more](/docs/agent-teams) about agent teams.
+
+---
+
 ### question
 
 Ask the user questions during execution.

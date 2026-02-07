@@ -1,0 +1,101 @@
+---
+title: Background Tasks
+description: Run long-running processes in the background while continuing to work.
+---
+
+Background tasks let you move long-running bash commands to the background so you can keep working without waiting for them to finish.
+
+---
+
+## How it works
+
+When a bash command is running in the foreground and you don't want to wait for it, press **Ctrl+B** to send it to the background. The process continues running while you interact with the agent.
+
+:::tip
+If you're using **tmux**, press `Ctrl+B` twice since the first press is consumed by the tmux prefix key.
+:::
+
+**What happens when you background a task:**
+1. The running process is adopted by the background task manager
+2. Its stdout and stderr output are buffered (up to 5 MB)
+3. A task ID is assigned for tracking
+4. The agent can query task status and output at any time
+5. A badge appears in the session header showing the count of running tasks
+
+---
+
+## Using background tasks
+
+### Sending a command to the background
+
+While the agent is executing a bash command, press `Ctrl+B`:
+
+```text frame="none"
+Running: npm run build...     # Press Ctrl+B here
+```
+
+A toast notification confirms the task was backgrounded, and a yellow badge appears in the header showing the active task count.
+
+### Viewing background tasks
+
+Open the task manager dialog:
+- From the prompt, type `/tasks`
+- Or use the keybind (if configured)
+
+The dialog shows all tasks organized by status:
+- **Running** — marked with `*` in the primary color
+- **Completed** — marked with `ok` in green
+- **Failed** — marked with `!` in red
+
+Select a task to view its output (last 100 lines). The dialog auto-refreshes every 2 seconds.
+
+### Killing a background task
+
+In the tasks dialog, select a running task and press `Ctrl+K`. Press `Ctrl+K` again to confirm the kill.
+
+### Agent interaction with background tasks
+
+The agent has access to the `process_query` tool, which lets it:
+
+| Action | Description |
+|--------|-------------|
+| `list` | List all background tasks |
+| `status` | Get task details (ID, command, PID, duration, exit code) |
+| `read_output` | Read the full output of a task |
+| `read_last_n` | Read the last N lines of output |
+| `search` | Search task output for a pattern |
+
+You can also ask the agent directly, for example: _"check if the build finished"_ or _"show me the test output"_.
+
+---
+
+## Good candidates for backgrounding
+
+- Build processes (`npm run build`, `cargo build`)
+- Test suites (`bun test`, `pytest`)
+- Package installations (`npm install`, `pip install`)
+- Dev servers (`npm run dev`)
+- Long-running scripts or data processing
+
+---
+
+## API reference
+
+Background tasks are accessible via the HTTP API when running in server mode:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/task` | List all tasks |
+| `GET` | `/task/:taskId` | Get a specific task |
+| `GET` | `/task/:taskId/output` | Read full task output |
+| `GET` | `/task/:taskId/tail?lines=N` | Read last N lines (default 50) |
+| `POST` | `/task/:taskId/kill` | Kill a running task |
+| `DELETE` | `/task/:taskId` | Remove a completed task |
+| `POST` | `/task/migrate/:callId` | Migrate a foreground command to background |
+| `GET` | `/task/foreground` | List foreground processes available for migration |
+
+---
+
+## Cleanup
+
+Background tasks are automatically cleaned up when OpenCode exits. You can also remove completed or failed tasks manually from the tasks dialog or via the API.
