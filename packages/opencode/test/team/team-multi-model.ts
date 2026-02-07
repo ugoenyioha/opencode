@@ -250,7 +250,7 @@ await Instance.provide({
       },
       mockCtx(leadSession.id, leadMsgs),
     )
-    assert(validModelResult.title.includes("Spawned"), "Valid model accepted")
+    assert(validModelResult.title.includes("Teammate"), "Valid model accepted")
     assert(
       validModelResult.output.includes(validModel),
       `Output shows model: "${validModelResult.output.slice(0, 200)}"`,
@@ -296,7 +296,7 @@ await Instance.provide({
         mockCtx(leadSession.id, refreshedMsgs),
       )
 
-      assert(result.title.includes("Spawned"), `${name} spawned on ${modelStr}`)
+      assert(result.title.includes("Teammate"), `${name} spawned on ${modelStr}`)
       assert(result.output.includes(modelStr), `${name} output confirms model ${modelStr}`)
 
       teammateResults.push({

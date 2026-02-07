@@ -312,60 +312,58 @@ export const TeamSpawnTool = Tool.define("team_spawn", {
       text: teamContext,
     })
 
-    // Start the teammate's prompt loop in the background
+    // Run the teammate's prompt loop, blocking until it completes (like bash tool).
+    // Collect any messages the teammate sends to the lead during execution.
     log.info("spawning teammate", { teamName, name: params.name, sessionID: session.id })
-    const notifyLead = async (status: "finished" | "errored", error?: string) => {
-      try {
-        await Team.setMemberStatus(teamName, params.name, "idle")
-        // Notify the lead session that this teammate is done
-        await TeamMessaging.send({
-          teamName,
-          from: params.name,
-          to: "lead",
-          text:
-            status === "finished"
-              ? `I have finished my work and am now idle. Review my session (${session.id}) for results.`
-              : `I encountered an error and stopped: ${error ?? "unknown error"}. Review my session (${session.id}).`,
-        })
-      } catch (notifyErr: any) {
-        log.warn("failed to notify lead of teammate completion", {
-          teamName,
-          name: params.name,
-          error: notifyErr.message,
-        })
+    const messages: string[] = []
+    const unsub = Bus.subscribe(TeamEvent.Message, (event) => {
+      if (
+        event.properties.teamName === teamName &&
+        event.properties.from === params.name &&
+        event.properties.to === "lead"
+      ) {
+        messages.push(event.properties.text)
       }
+    })
+
+    let status: "finished" | "errored" = "finished"
+    let error: string | undefined
+    try {
+      await SessionPrompt.loop({ sessionID: session.id })
+      log.info("teammate loop finished", { teamName, name: params.name })
+    } catch (err: any) {
+      log.warn("teammate loop error", { teamName, name: params.name, error: err.message })
+      status = "errored"
+      error = err.message
+    } finally {
+      unsub()
+      await Team.setMemberStatus(teamName, params.name, "idle")
     }
 
-    SessionPrompt.loop(session.id)
-      .then(() => {
-        log.info("teammate loop finished", { teamName, name: params.name })
-        notifyLead("finished")
-      })
-      .catch((err) => {
-        log.warn("teammate loop error", { teamName, name: params.name, error: err.message })
-        notifyLead("errored", err.message)
-      })
+    const header = [
+      `Teammate "${params.name}" (${agentName}, ${modelLabel}) ${status === "finished" ? "completed" : "errored"}.`,
+      `Session ID: ${session.id}`,
+      params.claim_task ? `Task claimed: ${params.claim_task}` : "",
+      error ? `Error: ${error}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n")
+
+    const body =
+      messages.length > 0
+        ? "\n\nMessages from teammate:\n" + messages.map((m, i) => `[${i + 1}] ${m}`).join("\n")
+        : "\n\nTeammate did not send any messages to the lead."
 
     return {
-      title: `Spawned teammate: ${params.name}`,
-      output: [
-        `Teammate "${params.name}" spawned with agent "${agentName}" using model ${modelLabel}.`,
-        `Session ID: ${session.id}`,
-        params.claim_task ? `Auto-claimed task: ${params.claim_task}` : "",
-        params.require_plan_approval
-          ? "Plan approval REQUIRED: teammate is in read-only mode until you approve their plan with team_approve_plan."
-          : "",
-        "",
-        "The teammate is now working independently. Use team_message to communicate.",
-      ]
-        .filter(Boolean)
-        .join("\n"),
+      title: `Teammate ${status}: ${params.name}`,
+      output: header + body,
       metadata: {
         teamName,
         memberName: params.name,
         sessionID: session.id,
         model: modelLabel,
-        planApproval: params.require_plan_approval,
+        status,
+        messageCount: messages.length,
       },
     }
   },

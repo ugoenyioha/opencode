@@ -405,7 +405,7 @@ describe("Team e2e: full lifecycle", () => {
         })
 
         // Run the teammate's prompt loop — it should hit our mock server and finish
-        const result = await SessionPrompt.loop(childSession.id)
+        const result = await SessionPrompt.loop({ sessionID: childSession.id })
 
         // Verify the loop completed — result should be an assistant message
         expect(result.info.role).toBe("assistant")

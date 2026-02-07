@@ -227,10 +227,10 @@ describe("Scenario 1: Parallel code review — 3 reviewers, 6 tasks", () => {
           ),
         ])
 
-        // Verify all 3 spawned
-        expect(secResult.title).toContain("Spawned")
-        expect(perfResult.title).toContain("Spawned")
-        expect(testResult.title).toContain("Spawned")
+        // Verify all 3 completed (blocking spawn awaits loop)
+        expect(secResult.title).toContain("Teammate")
+        expect(perfResult.title).toContain("Teammate")
+        expect(testResult.title).toContain("Teammate")
 
         // Verify 3 auto-claimed tasks
         tasks = await TeamTasks.list("review-team")
@@ -289,13 +289,13 @@ describe("Scenario 1: Parallel code review — 3 reviewers, 6 tasks", () => {
           text: "Auth module has 42% coverage, needs 60%+. API integration tests missing for PUT/DELETE.",
         })
 
-        // Verify lead received all 3 findings + 3 idle notifications = 6 team messages
+        // Verify lead received the 3 findings (idle notifications are now part of tool result, not separate messages)
         const leadMsgsAfter = await Session.messages({ sessionID: lead.id })
         const teamMessages = leadMsgsAfter.filter((m) =>
           m.parts.some((p) => p.type === "text" && p.text.includes("[Team message from")),
         )
-        // 3 idle notifications + 3 finding messages
-        expect(teamMessages.length).toBeGreaterThanOrEqual(6)
+        // 3 finding messages (idle notifications no longer sent as separate TeamMessaging)
+        expect(teamMessages.length).toBeGreaterThanOrEqual(3)
 
         // Verify content of findings
         const allText = teamMessages.flatMap((m) => m.parts.filter((p) => p.type === "text").map((p: any) => p.text))
@@ -355,7 +355,7 @@ describe("Scenario 2: Self-claim waterfall — single worker cascading through d
           { name: "worker", agent: "general", prompt: "Complete all tasks in order", claim_task: "t1" },
           mockCtx(lead.id, leadMsgs),
         )
-        expect(spawnResult.title).toContain("Spawned")
+        expect(spawnResult.title).toContain("Teammate")
 
         // Worker cascades through the chain
         // Step 1: complete t1 → t2 unblocks
@@ -555,21 +555,19 @@ describe("Scenario 4: Error recovery — teammate loop finishes, lead spawns rep
           { name: "investigator-1", agent: "general", prompt: "Investigate the memory leak", claim_task: "investigate" },
           mockCtx(lead.id, leadMsgs),
         )
-        expect(result1.title).toContain("Spawned")
+        expect(result1.title).toContain("Teammate")
 
-        // Wait for it to go idle (mock server returns quick response)
+        // Teammate loop already completed (blocking spawn), member should be idle
         const idle1 = await waitFor(async () => {
           const team = await Team.get("recovery-team")
           return team!.members.find((m) => m.name === "investigator-1")?.status === "idle"
         }, 15000, 200, "investigator-1 idle")
         expect(idle1).toBe(true)
 
-        // Verify lead got idle notification
-        const leadMsgsAfterIdle = await Session.messages({ sessionID: lead.id })
-        const idleNotif = leadMsgsAfterIdle.find((m) =>
-          m.parts.some((p) => p.type === "text" && p.text.includes("[Team message from investigator-1]") && p.text.includes("finished")),
-        )
-        expect(idleNotif).toBeDefined()
+        // With blocking spawn, the tool result itself carries the completion status.
+        // Verify the member is idle (set by the blocking spawn's finally block).
+        const teamAfterIdle = await Team.get("recovery-team")
+        expect(teamAfterIdle!.members.find((m) => m.name === "investigator-1")?.status).toBe("idle")
 
         // Lead decides to spawn a replacement with different approach
         // First, unclaim the task by resetting it
@@ -591,7 +589,7 @@ describe("Scenario 4: Error recovery — teammate loop finishes, lead spawns rep
           },
           mockCtx(lead.id, leadMsgs2),
         )
-        expect(result2.title).toContain("Spawned")
+        expect(result2.title).toContain("Teammate")
 
         // Verify task is claimed by new investigator
         const tasks = await TeamTasks.list("recovery-team")
@@ -744,8 +742,8 @@ describe("Scenario 6: Large team scaling — 5 teammates concurrently", () => {
           ),
         )
 
-        // Verify all 5 spawned successfully
-        expect(spawns.every((s) => s.title.includes("Spawned"))).toBe(true)
+        // Verify all 5 completed successfully (blocking spawn awaits loop)
+        expect(spawns.every((s) => s.title.includes("Teammate"))).toBe(true)
 
         // Verify team has 5 members
         let team = await Team.get("large-team")
@@ -765,12 +763,10 @@ describe("Scenario 6: Large team scaling — 5 teammates concurrently", () => {
         }, 45000, 200, "all 5 teammates idle")
         expect(allIdle).toBe(true)
 
-        // Verify lead received 5 idle notifications
-        const leadMsgsAfter = await Session.messages({ sessionID: lead.id })
-        const idleNotifs = leadMsgsAfter.filter((m) =>
-          m.parts.some((p) => p.type === "text" && p.text.includes("finished")),
-        )
-        expect(idleNotifs).toHaveLength(5)
+        // With blocking spawn, idle status is set by the tool's finally block.
+        // Verify all 5 are idle (no separate idle notification messages).
+        const teamAfterLoop = await Team.get("large-team")
+        expect(teamAfterLoop!.members.every((m) => m.status === "idle")).toBe(true)
 
         // Verify no state corruption — team config still consistent
         team = await Team.get("large-team")
