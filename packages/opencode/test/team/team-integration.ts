@@ -273,7 +273,7 @@ async function testTeamSpawnWithRealLoop(leadSession: Session.Info) {
     },
     mockCtx(leadSession.id, leadMsgs),
   )
-  assert(spawnResult.title.includes("Teammate"), "Researcher spawned")
+  assert(spawnResult.title.includes("Spawned"), "Researcher spawned")
   assert(spawnResult.metadata.memberName === "researcher", "Correct member name in metadata")
   assert(typeof spawnResult.metadata.sessionID === "string", "Session ID returned")
 
@@ -347,8 +347,8 @@ async function testMultipleTeammatesConcurrent(leadSession: Session.Info) {
     ),
   ])
 
-  assert(spawnReviewer.title.includes("Teammate"), "Reviewer spawned")
-  assert(spawnImplementer.title.includes("Teammate"), "Implementer spawned")
+  assert(spawnReviewer.title.includes("Spawned"), "Reviewer spawned")
+  assert(spawnImplementer.title.includes("Spawned"), "Implementer spawned")
 
   const reviewerSessionID = spawnReviewer.metadata.sessionID as string
   const implementerSessionID = spawnImplementer.metadata.sessionID as string

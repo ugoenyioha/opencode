@@ -203,7 +203,7 @@ async function testTeammateUsesToolsAutonomously(leadSession: Session.Info) {
     },
     mockCtx(leadSession.id, leadMsgs),
   )
-  assert(spawnResult.title.includes("Teammate"), "Schema checker spawned")
+  assert(spawnResult.title.includes("Spawned"), "Schema checker spawned")
 
   const teammateSessionID = spawnResult.metadata.sessionID as string
 
@@ -297,7 +297,7 @@ async function testTeammateClaimsUnblockedTask(leadSession: Session.Info) {
     },
     mockCtx(leadSession.id, leadMsgs),
   )
-  assert(spawnResult.title.includes("Teammate"), "Builder spawned")
+  assert(spawnResult.title.includes("Spawned"), "Builder spawned")
 
   const builderSessionID = spawnResult.metadata.sessionID as string
 
@@ -361,7 +361,7 @@ async function testTwoTeammatesCommunicate(leadSession: Session.Info) {
     },
     mockCtx(leadSession.id, leadMsgs),
   )
-  assert(analyzerResult.title.includes("Teammate"), "Analyzer spawned")
+  assert(analyzerResult.title.includes("Spawned"), "Analyzer spawned")
 
   // Spawn teammate B: will wait for and respond to messages
   const leadMsgs2 = await Session.messages({ sessionID: leadSession.id })
@@ -378,7 +378,7 @@ async function testTwoTeammatesCommunicate(leadSession: Session.Info) {
     },
     mockCtx(leadSession.id, leadMsgs2),
   )
-  assert(reporterResult.title.includes("Teammate"), "Reporter spawned")
+  assert(reporterResult.title.includes("Spawned"), "Reporter spawned")
 
   const analyzerSessionID = analyzerResult.metadata.sessionID as string
   const reporterSessionID = reporterResult.metadata.sessionID as string
@@ -482,8 +482,8 @@ async function testFullParallelReview(leadSession: Session.Info) {
     ),
   ])
 
-  assert(secResult.title.includes("Teammate"), "Security reviewer spawned")
-  assert(perfResult.title.includes("Teammate"), "Performance reviewer spawned")
+  assert(secResult.title.includes("Spawned"), "Security reviewer spawned")
+  assert(perfResult.title.includes("Spawned"), "Performance reviewer spawned")
 
   // Wait for both to go idle
   console.log("  Waiting for both reviewers to finish...")

@@ -312,58 +312,63 @@ export const TeamSpawnTool = Tool.define("team_spawn", {
       text: teamContext,
     })
 
-    // Run the teammate's prompt loop, blocking until it completes (like bash tool).
-    // Collect any messages the teammate sends to the lead during execution.
+    // Fire off the teammate's prompt loop in the background (non-blocking).
+    // The lead stays interactive and receives messages via auto-wake.
     log.info("spawning teammate", { teamName, name: params.name, sessionID: session.id })
-    const messages: string[] = []
-    const unsub = Bus.subscribe(TeamEvent.Message, (event) => {
-      if (
-        event.properties.teamName === teamName &&
-        event.properties.from === params.name &&
-        event.properties.to === "lead"
-      ) {
-        messages.push(event.properties.text)
+    const notifyLead = async (status: "finished" | "errored", error?: string) => {
+      try {
+        await Team.setMemberStatus(teamName, params.name, "idle")
+        // Send an idle notification to the lead — this injects a message
+        // into the lead's session and triggers auto-wake if idle.
+        await TeamMessaging.send({
+          teamName,
+          from: params.name,
+          to: "lead",
+          text:
+            status === "finished"
+              ? `I have finished my current work and am now idle. Review my session (${session.id}) for detailed results.`
+              : `I encountered an error and stopped: ${error ?? "unknown error"}. Review my session (${session.id}).`,
+        })
+      } catch (notifyErr: any) {
+        log.warn("failed to notify lead of teammate completion", {
+          teamName,
+          name: params.name,
+          error: notifyErr.message,
+        })
       }
-    })
-
-    let status: "finished" | "errored" = "finished"
-    let error: string | undefined
-    try {
-      await SessionPrompt.loop({ sessionID: session.id })
-      log.info("teammate loop finished", { teamName, name: params.name })
-    } catch (err: any) {
-      log.warn("teammate loop error", { teamName, name: params.name, error: err.message })
-      status = "errored"
-      error = err.message
-    } finally {
-      unsub()
-      await Team.setMemberStatus(teamName, params.name, "idle")
     }
 
-    const header = [
-      `Teammate "${params.name}" (${agentName}, ${modelLabel}) ${status === "finished" ? "completed" : "errored"}.`,
-      `Session ID: ${session.id}`,
-      params.claim_task ? `Task claimed: ${params.claim_task}` : "",
-      error ? `Error: ${error}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n")
-
-    const body =
-      messages.length > 0
-        ? "\n\nMessages from teammate:\n" + messages.map((m, i) => `[${i + 1}] ${m}`).join("\n")
-        : "\n\nTeammate did not send any messages to the lead."
+    SessionPrompt.loop({ sessionID: session.id })
+      .then(() => {
+        log.info("teammate loop finished", { teamName, name: params.name })
+        notifyLead("finished")
+      })
+      .catch((err) => {
+        log.warn("teammate loop error", { teamName, name: params.name, error: err.message })
+        notifyLead("errored", err.message)
+      })
 
     return {
-      title: `Teammate ${status}: ${params.name}`,
-      output: header + body,
+      title: `Spawned teammate: ${params.name}`,
+      output: [
+        `Teammate "${params.name}" spawned with agent "${agentName}" using model ${modelLabel}.`,
+        `Session ID: ${session.id}`,
+        params.claim_task ? `Auto-claimed task: ${params.claim_task}` : "",
+        params.require_plan_approval
+          ? "Plan approval REQUIRED: teammate is in read-only mode until you approve their plan with team_approve_plan."
+          : "",
+        "",
+        "The teammate is now working independently in the background.",
+        "Messages from the teammate will be delivered automatically when they finish or need help.",
+      ]
+        .filter(Boolean)
+        .join("\n"),
       metadata: {
         teamName,
         memberName: params.name,
         sessionID: session.id,
         model: modelLabel,
-        status,
-        messageCount: messages.length,
+        planApproval: params.require_plan_approval,
       },
     }
   },

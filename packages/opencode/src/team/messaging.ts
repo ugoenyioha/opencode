@@ -1,6 +1,8 @@
 import { Log } from "../util/log"
 import { Bus } from "../bus"
 import { Session } from "../session"
+import { SessionPrompt } from "../session/prompt"
+import { SessionStatus } from "../session/status"
 import { Identifier } from "../id/id"
 import { Team, TeamEvent } from "./index"
 
@@ -44,6 +46,10 @@ export namespace TeamMessaging {
       to: input.to,
       text: input.text,
     })
+
+    // Auto-wake: if the recipient session is idle, start its prompt loop
+    // so the LLM processes the injected message.
+    autoWake(targetSessionID, input.from)
   }
 
   /**
@@ -82,6 +88,25 @@ export namespace TeamMessaging {
       teamName: input.teamName,
       from: input.from,
       text: input.text,
+    })
+
+    // Auto-wake all idle recipient sessions
+    for (const target of targets) {
+      autoWake(target.sessionID, input.from)
+    }
+  }
+
+  /**
+   * Auto-wake an idle session after a team message is injected.
+   * If the session is idle (no active prompt loop), starts a new loop
+   * so the LLM picks up and processes the injected message.
+   */
+  function autoWake(sessionID: string, from: string) {
+    const status = SessionStatus.get(sessionID)
+    if (status.type !== "idle") return
+    log.info("auto-waking idle session", { sessionID, from })
+    SessionPrompt.loop({ sessionID }).catch((err: any) => {
+      log.warn("auto-wake failed", { sessionID, error: err.message })
     })
   }
 
