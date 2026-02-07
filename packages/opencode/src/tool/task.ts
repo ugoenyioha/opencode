@@ -63,6 +63,11 @@ export const TaskTool = Tool.define("task", async (ctx) => {
 
       const hasTaskPermission = agent.permission.some((rule) => rule.permission === "task")
 
+      // Inherit the caller agent's permission rules so subagents respect
+      // permissive configs like "allow": "*" (fixes upstream #12566)
+      const caller = ctx.agent ? await Agent.get(ctx.agent).catch(() => undefined) : undefined
+      const parentSession = await Session.get(ctx.sessionID).catch(() => undefined)
+
       const session = await iife(async () => {
         if (params.task_id) {
           const found = await Session.get(params.task_id).catch(() => {})
@@ -73,6 +78,11 @@ export const TaskTool = Tool.define("task", async (ctx) => {
           parentID: ctx.sessionID,
           title: params.description + ` (@${agent.name} subagent)`,
           permission: [
+            // Inherit caller agent's permission rules (includes user config)
+            ...(caller?.permission ?? []),
+            // Inherit parent session's accumulated permission rules
+            ...(parentSession?.permission ?? []),
+            // Subagent-specific overrides (deny todowrite/todoread/task)
             {
               permission: "todowrite",
               pattern: "*",
