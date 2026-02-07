@@ -1,0 +1,18 @@
+[
+  {
+    "id": "lc-task-1",
+    "content": "Build feature X",
+    "status": "completed",
+    "priority": "high",
+    "assignee": "worker-1"
+  },
+  {
+    "id": "lc-task-2",
+    "content": "Write tests for X",
+    "status": "pending",
+    "priority": "medium",
+    "depends_on": [
+      "lc-task-1"
+    ]
+  }
+]

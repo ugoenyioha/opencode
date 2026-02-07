@@ -505,7 +505,7 @@ export namespace MessageV2 {
         }
         result.push(userMessage)
         for (const part of msg.parts) {
-          if (part.type === "text" && !part.ignored)
+          if (part.type === "text" && !part.ignored && part.text)
             userMessage.parts.push({
               type: "text",
               text: part.text,
@@ -553,7 +553,7 @@ export namespace MessageV2 {
           parts: [],
         }
         for (const part of msg.parts) {
-          if (part.type === "text")
+          if (part.type === "text" && part.text)
             assistantMessage.parts.push({
               type: "text",
               text: part.text,
@@ -618,7 +618,7 @@ export namespace MessageV2 {
                 ...(differentModel ? {} : { callProviderMetadata: part.metadata }),
               })
           }
-          if (part.type === "reasoning") {
+          if (part.type === "reasoning" && part.text) {
             assistantMessage.parts.push({
               type: "reasoning",
               text: part.text,
@@ -709,9 +709,7 @@ export namespace MessageV2 {
         msg.parts.some((part) => part.type === "compaction")
       ) {
         // Check if this is a partial compaction with a boundary
-        const compactionPart = msg.parts.find(
-          (part): part is MessageV2.CompactionPart => part.type === "compaction",
-        )
+        const compactionPart = msg.parts.find((part): part is MessageV2.CompactionPart => part.type === "compaction")
         if (compactionPart?.boundaryMessageID) {
           // Continue collecting messages back to the boundary
           boundaryMessageID = compactionPart.boundaryMessageID

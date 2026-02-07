@@ -115,13 +115,16 @@ try {
   // Use Gemini for testing — it reliably calls tools when instructed.
   // Claude with the anthropic-auth plugin also works but sometimes responds
   // conversationally instead of calling tools.
-  config.model = "google/gemini-2.5-flash"
+  config.model = "anthropic/claude-sonnet-4-20250514"
   // Auto-approve all tool permissions so tests don't block on permission dialogs
   config.permission = "allow"
   await fs.writeFile(sandboxConfigFile, JSON.stringify(config, null, 2))
 } catch {
   // If no config, write minimal with Gemini default and auto-approve
-  await fs.writeFile(sandboxConfigFile, JSON.stringify({ model: "google/gemini-2.5-flash", permission: "allow" }, null, 2))
+  await fs.writeFile(
+    sandboxConfigFile,
+    JSON.stringify({ model: "google/gemini-2.5-flash", permission: "allow" }, null, 2),
+  )
 }
 
 // Write cache version to prevent cache wipe
@@ -129,7 +132,7 @@ await fs.writeFile(path.join(sandboxCacheHome, "opencode", "version"), "14")
 
 // Use real home (for ~/.claude.json metadata) but sandbox XDG dirs
 const baseEnv: Record<string, string> = {
-  HOME: os.homedir(),  // Real home for ~/.claude.json access
+  HOME: os.homedir(), // Real home for ~/.claude.json access
   XDG_DATA_HOME: sandboxDataHome,
   XDG_CACHE_HOME: sandboxCacheHome,
   XDG_CONFIG_HOME: sandboxConfigHome,
@@ -179,10 +182,7 @@ await test("TUI creates a session with real LLM response", async () => {
       text.includes("$0.") || // Cost indicator
       text.includes("tokens") || // Token count
       (text.includes("ctrl+") && text.split("\n").length > 15) // Session view with content
-    assert(
-      hasResponse,
-      `LLM should produce a response. Got last 1000: ${text.slice(-1000)}`,
-    )
+    assert(hasResponse, `LLM should produce a response. Got last 1000: ${text.slice(-1000)}`)
   } finally {
     tui.kill()
   }
@@ -215,14 +215,8 @@ await test("<leader>w from active session opens team dialog", async () => {
 
     // Should show team dialog — either "No active team" or "Agent Team"
     const text = tui.text.toLowerCase()
-    const hasTeamDialog =
-      text.includes("no active team") ||
-      text.includes("agent team") ||
-      text.includes("team_create")
-    assert(
-      hasTeamDialog,
-      `Team dialog should appear. Got last 800: ${tui.text.slice(-800)}`,
-    )
+    const hasTeamDialog = text.includes("no active team") || text.includes("agent team") || text.includes("team_create")
+    assert(hasTeamDialog, `Team dialog should appear. Got last 800: ${tui.text.slice(-800)}`)
   } finally {
     tui.kill()
   }
@@ -252,10 +246,7 @@ await test("Session header shows version and context info", async () => {
     // Look for version pattern (vX.Y.Z or "local") and cost ($0.00)
     const hasVersion = text.includes("local") || /v\d+\.\d+/.test(text)
     const hasCost = text.includes("$")
-    assert(
-      hasVersion || hasCost,
-      `Session header should show version or cost. Got: ${text.slice(0, 500)}`,
-    )
+    assert(hasVersion || hasCost, `Session header should show version or cost. Got: ${text.slice(0, 500)}`)
   } finally {
     tui.kill()
   }
@@ -286,9 +277,7 @@ await test("Escape closes team dialog and returns to session", async () => {
 
     // Verify dialog is open
     const beforeEsc = tui.text.toLowerCase()
-    const dialogOpen =
-      beforeEsc.includes("team") ||
-      beforeEsc.includes("no active")
+    const dialogOpen = beforeEsc.includes("team") || beforeEsc.includes("no active")
     assert(dialogOpen, "Team dialog should be open before Escape")
 
     // Press Escape
@@ -298,10 +287,7 @@ await test("Escape closes team dialog and returns to session", async () => {
     // TUI should still be alive (session view)
     // We can verify by checking that the session content is still there
     const afterEsc = tui.text.toLowerCase()
-    assert(
-      afterEsc.includes("ping"),
-      `Session should still show after Escape. Got: ${tui.text.slice(-500)}`,
-    )
+    assert(afterEsc.includes("ping"), `Session should still show after Escape. Got: ${tui.text.slice(-500)}`)
   } finally {
     tui.kill()
   }
@@ -336,9 +322,7 @@ await test("/team from command palette works in session context", async () => {
 
     // Should show team dialog
     const text = tui.text.toLowerCase()
-    const hasTeam =
-      text.includes("team") ||
-      text.includes("no active")
+    const hasTeam = text.includes("team") || text.includes("no active")
     assert(hasTeam, `/team should open team dialog. Got: ${tui.text.slice(-800)}`)
   } finally {
     tui.kill()
@@ -373,9 +357,7 @@ await test("/compact command triggers compaction from session", async () => {
     // The session should still be alive and functional
     // Compaction may show a status indicator or just work silently
     assert(
-      text.includes("compact") ||
-      text.includes("summariz") ||
-      text.length > 100, // TUI still alive
+      text.includes("compact") || text.includes("summariz") || text.length > 100, // TUI still alive
       `Compaction should not crash. Got: ${tui.text.slice(-500)}`,
     )
   } finally {
@@ -461,7 +443,7 @@ await test("/memory from session shows memory file list", async () => {
       text.includes("Project") ||
       text.includes("Global") ||
       text.includes("create new") ||
-      text.includes("memory")  // fallback: at least the word "memory" should appear in the dialog
+      text.includes("memory") // fallback: at least the word "memory" should appear in the dialog
     assert(hasMemory, `Memory dialog should appear. Got: ${text.slice(-800)}`)
   } finally {
     tui.kill()
@@ -525,10 +507,7 @@ await test("Session with LLM response shows follow-up prompt area", async () => 
       text.includes("ctrl+") || // Keybind hints in status bar
       text.includes("commands") ||
       text.includes("agents")
-    assert(
-      hasPrompt,
-      `Prompt area should be visible after response. Got last 500: ${text.slice(-500)}`,
-    )
+    assert(hasPrompt, `Prompt area should be visible after response. Got last 500: ${text.slice(-500)}`)
   } finally {
     tui.kill()
   }
@@ -562,10 +541,7 @@ await test("Ctrl+B backgrounds a running bash task, /tasks shows it", async () =
     // We might see a toast about the task being backgrounded,
     // or the agent may produce a follow-up response.
     const textAfterBg = tui.text
-    assert(
-      textAfterBg.length > 100,
-      `TUI still alive after Ctrl+B backgrounding. Got ${textAfterBg.length} chars`,
-    )
+    assert(textAfterBg.length > 100, `TUI still alive after Ctrl+B backgrounding. Got ${textAfterBg.length} chars`)
 
     // Now open /tasks dialog via command palette to verify the task is listed
     // Wait for the session to go idle first (agent finishes its turn)
@@ -594,8 +570,14 @@ await test("Ctrl+B backgrounds a running bash task, /tasks shows it", async () =
   }
 })
 
-// ---------- Test 12: memory_save tool writes file, /memory shows it ----------
-await test("memory_save creates .opencode/rules/memory.md, /memory lists it", async () => {
+// ---------- Test 12: /memory dialog shows pre-created rules file ----------
+await test("/memory dialog shows pre-created .opencode/rules/memory.md", async () => {
+  // Deterministic test: pre-create the memory file (simulating what memory_save does)
+  // then verify the /memory dialog picks it up. No LLM involvement.
+  const rulesDir = path.join(testProject, ".opencode", "rules")
+  await fs.mkdir(rulesDir, { recursive: true })
+  await fs.writeFile(path.join(rulesDir, "memory.md"), "- This project uses TypeScript with strict mode (2026-02-06)\n")
+
   const tui = await TuiHarness.spawn({
     cwd: testProject,
     env: baseEnv,
@@ -603,54 +585,70 @@ await test("memory_save creates .opencode/rules/memory.md, /memory lists it", as
   })
 
   try {
-    // Wait for providers to connect — the prompt footer shows provider name once loaded
-    // (e.g., "Anthropic", "Google"). Before that it shows "No provider selected".
-    // Wait for the model name or provider indicator to appear.
-    try {
-      await tui.waitForMatch(/Anthropic|Google|OpenAI|Claude|Gemini|Codex/i, 30000)
-    } catch {
-      // Fallback: just wait for the TUI to fully render
-      await tui.settle(10000)
-    }
-    await tui.settle(1000)
+    await tui.settle(4000)
 
-    // Create a session with a simple prompt
+    // Create a session so we're in session context
     tui.write("say ok")
     tui.write("\r")
-
-    // Wait for the LLM to respond — look for cost indicator or "ok" in response
-    // (after session is created, the buffer accumulates session view output)
     await tui.waitForMatch(/\$0\.|tokens|ok/i, 60000)
-    await tui.settle(3000)
+    await tui.settle(2000)
 
-    // Now we're in an active session. Send the memory_save instruction.
-    // Be very explicit — some models respond conversationally without calling the tool.
-    tui.write("call the memory_save tool with fact: this project uses TypeScript with strict mode. Do not respond with text, just call the tool.")
+    // Open /memory dialog
+    tui.sendCtrl("k")
+    await tui.settle(1500)
+    tui.write("/memory")
+    await tui.settle(500)
     tui.write("\r")
 
-    // Clear buffer so we don't match our own typed text
-    await tui.settle(500)
-    tui.clearBuffer()
-
-    // Wait for the agent turn to finish — the cost indicator updates when the turn completes.
-    // After clearing buffer, look for signs the turn completed:
-    // - "Saved to" (memory_save tool title output)
-    // - Cost with comma separator or higher amount indicating second turn
-    // - Token count in session header
-    // Wait a long time since the LLM + tool execution can take a while.
+    // Wait for dialog to load and show the rules file
     try {
-      await tui.waitForMatch(/Saved to|memory|tokens/i, 90000)
+      await tui.waitForMatch(/memory\.md|Project|rules/i, 15000)
     } catch {
-      // Agent might respond differently — give extra settle time
-      await tui.settle(20000)
+      await tui.settle(5000)
     }
 
-    // Extra settle to ensure file writes are flushed to disk
-    await tui.settle(10000)
+    const text = tui.text
+    const showsMemoryFile =
+      text.includes("memory.md") || text.includes("Project Rules") || text.includes("Project") || text.includes("rules")
+    assert(showsMemoryFile, `/memory dialog should list the pre-created memory.md. Got last 800: ${text.slice(-800)}`)
+  } finally {
+    tui.kill()
+    // Clean up the pre-created file
+    await fs.rm(path.join(testProject, ".opencode"), { recursive: true, force: true })
+  }
+})
 
-    console.log(`    DEBUG: after second prompt, text (last 600): ${tui.text.slice(-600)}`)
+// ---------- Test 13: memory_save tool via LLM creates file ----------
+await test("memory_save tool via LLM creates .opencode/rules/memory.md", async () => {
+  // Ensure clean state
+  await fs.rm(path.join(testProject, ".opencode"), { recursive: true, force: true })
 
-    // Check that the file was actually written to disk
+  const tui = await TuiHarness.spawn({
+    cwd: testProject,
+    env: baseEnv,
+    spawnTimeout: 20000,
+  })
+
+  try {
+    await tui.settle(4000)
+
+    // Single prompt — no retries to avoid accumulating messages that could trigger
+    // API errors from empty content in long conversations.
+    // Use the most explicit possible instruction.
+    tui.write("Remember this: this project uses TypeScript with strict mode")
+    tui.write("\r")
+
+    // Wait for the tool to execute — look for "Saved to" in tool output,
+    // or cost/token indicators that the turn completed.
+    try {
+      await tui.waitForMatch(/Saved to|memory_save|memory\.md/i, 90000)
+    } catch {
+      // Agent may respond differently — give extra settle time
+      await tui.settle(15000)
+    }
+    await tui.settle(5000)
+
+    // Check if file was created
     const memoryPath = path.join(testProject, ".opencode", "rules", "memory.md")
     let memoryExists = false
     let memoryContent = ""
@@ -660,10 +658,8 @@ await test("memory_save creates .opencode/rules/memory.md, /memory lists it", as
     } catch {}
 
     if (!memoryExists) {
-      // Debug: show what the agent actually did
       console.log(`    DEBUG: memory.md not found at ${memoryPath}`)
       console.log(`    DEBUG: TUI text (last 800): ${tui.text.slice(-800)}`)
-      // Also check if .opencode dir exists at all
       try {
         const entries = await fs.readdir(path.join(testProject, ".opencode"), { recursive: true })
         console.log(`    DEBUG: .opencode contents: ${entries.join(", ")}`)
@@ -672,50 +668,14 @@ await test("memory_save creates .opencode/rules/memory.md, /memory lists it", as
       }
     }
 
+    assert(memoryExists, `memory_save should create .opencode/rules/memory.md`)
     assert(
-      memoryExists,
-      `memory_save should create .opencode/rules/memory.md`,
+      memoryContent.toLowerCase().includes("typescript") || memoryContent.toLowerCase().includes("strict"),
+      `memory.md should contain the saved fact. Got: "${memoryContent.slice(0, 300)}"`,
     )
-
-    if (memoryExists) {
-      assert(
-        memoryContent.toLowerCase().includes("typescript") || memoryContent.toLowerCase().includes("strict"),
-        `memory.md should contain the saved fact. Got: "${memoryContent.slice(0, 300)}"`,
-      )
-
-      // The agent may still be running (Gemini sometimes goes on tangents after tool calls).
-      // Press Escape to interrupt, then wait for the agent to stop and the input to be ready.
-      tui.write("\x1b") // Escape
-      await tui.settle(5000)
-
-      // Now open /memory dialog and verify it shows the rules file
-      tui.sendCtrl("k")
-      await tui.settle(1500)
-      tui.write("/memory")
-      await tui.settle(500)
-      tui.write("\r")
-
-      // Wait for loading to complete — dialog shows "Loading memory files..." then the list
-      try {
-        await tui.waitForMatch(/memory\.md|Project|rules/i, 15000)
-      } catch {
-        // Give extra time if loading is slow
-        await tui.settle(10000)
-      }
-
-      const dialogText = tui.text
-      const showsMemoryFile =
-        dialogText.includes("memory.md") ||
-        dialogText.includes("Project Rules") ||
-        dialogText.includes("Project") ||
-        dialogText.includes("rules")
-      assert(
-        showsMemoryFile,
-        `/memory dialog should list the memory.md rules file. Got last 800: ${dialogText.slice(-800)}`,
-      )
-    }
   } finally {
     tui.kill()
+    await fs.rm(path.join(testProject, ".opencode"), { recursive: true, force: true })
   }
 })
 

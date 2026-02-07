@@ -891,7 +891,7 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
     expect(result[0].content[1]).toEqual({ type: "text", text: "Result" })
   })
 
-  test("does not filter for non-anthropic providers", () => {
+  test("filters empty content for all providers, not just anthropic", () => {
     const openaiModel = {
       ...anthropicModel,
       providerID: "openai",
@@ -912,9 +912,8 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
 
     const result = ProviderTransform.message(msgs, openaiModel, {})
 
-    expect(result).toHaveLength(2)
-    expect(result[0].content).toBe("")
-    expect(result[1].content).toHaveLength(1)
+    // Empty content is filtered for all providers — it's never valid
+    expect(result).toHaveLength(0)
   })
 })
 

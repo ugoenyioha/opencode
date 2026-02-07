@@ -85,8 +85,16 @@ export const TaskRoutes = lazy(() =>
         },
       }),
       async (c) => {
-        const taskId = await migrateToBackground(c.req.param("callId"))
-        if (!taskId) return c.json({ error: "Process not found or already completed" }, 404)
+        const callId = c.req.param("callId")
+        const foreground = listForegroundProcesses()
+        if (foreground.length === 0) {
+          return c.json({ error: `No foreground processes. callId=${callId}` }, 404)
+        }
+        const taskId = await migrateToBackground(callId)
+        if (!taskId) {
+          const ids = foreground.map((p) => p.callID).join(", ")
+          return c.json({ error: `Process not found for callId=${callId}. Active: [${ids}]` }, 404)
+        }
         return c.json({ taskId })
       },
     )

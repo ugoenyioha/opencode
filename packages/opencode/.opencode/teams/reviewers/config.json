@@ -1,0 +1,26 @@
+{
+  "name": "reviewers",
+  "leadSessionID": "ses_3c913d410ffe1BB2EYFPumMl06",
+  "members": [
+    {
+      "name": "codex-reviewer",
+      "sessionID": "ses_3c90b5b07ffdrErxKfpBeClVxo",
+      "agent": "general",
+      "status": "idle",
+      "prompt": "You are a codebase reviewer for the \"opencode\" project - an AI coding assistant CLI built with Bun, TypeScript, SolidJS, and the Vercel AI SDK. The codebase is at /Users/uenyioha/tmp/opencode-ng/packages/opencode.\n\nIMPORTANT: You MUST use the Codex MCP tool (mcp__codex__codex) to perform your review. Use Codex with sandbox: \"read-only\" and high reasoning effort. This is your primary analysis tool.\n\nYour job is to perform a thorough codebase review using Codex. Do the following:\n\n1. First, read a few key files to understand the codebase structure (src/index.ts, package.json, src/session/index.ts, src/tool/tool.ts, src/provider/provider.ts).\n\n2. Then use the Codex MCP tool to analyze the codebase. Make multiple Codex calls covering:\n\n   a) **Architecture and Design Patterns Review**: Ask Codex to analyze the project's architecture, namespace patterns, dependency injection (App.provide), and module organization. Include key file paths in your prompt.\n\n   b) **Code Quality and Security Review**: Ask Codex to review the tool implementations (especially src/tool/bash.ts for command injection, src/tool/edit.ts, src/tool/write.ts for path traversal), session management (src/session/llm.ts, src/session/processor.ts), and permission system (src/permission/).\n\n   c) **Error Handling and Edge Cases**: Ask Codex to identify potential bugs, race conditions, unhandled errors, and edge cases across the core modules.\n\n   d) **API and Provider Integration**: Ask Codex to review the provider system (src/provider/) and how it integrates with 15+ AI SDK providers.\n\n3. Compile all Codex findings into a comprehensive report with:\n   - Architecture assessment\n   - Security vulnerabilities found\n   - Code quality issues with file:line references\n   - Recommendations for improvement\n   - Overall rating\n\nWhen done, send your complete findings to the lead using team_message, then mark your task as complete.",
+      "model": "anthropic/claude-opus-4-6",
+      "planApproval": "none"
+    },
+    {
+      "name": "gemini-reviewer",
+      "sessionID": "ses_3c90b359effeOH9t2DeiN5DGGZ",
+      "agent": "general",
+      "status": "active",
+      "prompt": "You are a codebase reviewer for the \"opencode\" project - an AI coding assistant CLI built with Bun, TypeScript, SolidJS, and the Vercel AI SDK. The codebase is at /Users/uenyioha/tmp/opencode-ng/packages/opencode.\n\nIMPORTANT: You MUST use the Gemini MCP tools (mcp__gemini-cli__*) to perform your review. Gemini has a massive 2M+ token context window which is ideal for analyzing entire codebases at once. This is your primary analysis tool.\n\nYour job is to perform a thorough codebase review using Gemini. Do the following:\n\n1. Use the Gemini tools to perform large-scale analysis. Leverage Gemini's massive context window by sending entire directories of files for analysis. Use tools like:\n   - mcp__gemini-cli__ReadManyFiles to read entire directories at once\n   - mcp__gemini-cli__Chat or mcp__gemini-cli__DelegateToAgent for deep analysis\n   - mcp__gemini-cli__SearchFileContent for targeted searches\n\n2. Make multiple Gemini analysis calls covering:\n\n   a) **Full Codebase Architecture Scan**: Use Gemini's ReadManyFiles to read all src/**/*.ts files and ask it to map the full architecture, module dependencies, and design patterns.\n\n   b) **Security Audit**: Use Gemini to scan all tool implementations (src/tool/**/*.ts) for security vulnerabilities - command injection, path traversal, input validation gaps.\n\n   c) **Session and Provider Deep Dive**: Use Gemini to analyze the entire src/session/ and src/provider/ directories for code quality, error handling, race conditions, and edge cases.\n\n   d) **CLI and Infrastructure Review**: Use Gemini to review src/cli/, src/mcp/, src/lsp/, src/storage/, and other infrastructure modules.\n\n   e) **Cross-cutting Concerns**: Ask Gemini to identify patterns that cut across the codebase - logging, error handling consistency, type safety, naming conventions.\n\n3. Compile all Gemini findings into a comprehensive report with:\n   - Architecture assessment  \n   - Security vulnerabilities found\n   - Code quality issues with file:line references\n   - Cross-cutting pattern analysis\n   - Recommendations for improvement\n   - Overall rating\n\nWhen done, send your complete findings to the lead using team_message, then mark your task as complete.",
+      "model": "anthropic/claude-opus-4-6",
+      "planApproval": "none"
+    }
+  ],
+  "created": 1770448512200,
+  "delegate": true
+}

@@ -566,7 +566,7 @@ export function Prompt(props: PromptProps) {
     if (props.selectedTeammate) {
       const teammate = props.selectedTeammate
       try {
-        const res = await fetch(`${sdk.url}/session/${sessionID}/team-message`, {
+        const res = await sdk.fetch(`${sdk.url}/session/${sessionID}/team-message`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -859,6 +859,54 @@ export function Prompt(props: PromptProps) {
                 if (props.disabled) {
                   e.preventDefault()
                   return
+                }
+                // Ctrl+B: background running bash command — intercept here because
+                // textarea keybindings bind Ctrl+B to move-left, consuming the event
+                // before session-level useKeyboard handlers can see it
+                if (e.name === "b" && e.ctrl && props.sessionID) {
+                  const status = sync.data.session_status[props.sessionID]
+                  if (status?.type === "busy") {
+                    const msgs = sync.data.message[props.sessionID] ?? []
+                    const lastMsg = msgs.findLast((m) => m.role === "assistant")
+                    if (lastMsg) {
+                      const parts = sync.data.part[lastMsg.id] ?? []
+                      const runningBash = parts.find(
+                        (p: any) => p.type === "tool" && p.tool === "bash" && p.state?.status === "running",
+                      )
+                      if (runningBash && runningBash.type === "tool") {
+                        const metadata = (runningBash.state as { metadata?: { callID?: string } }).metadata
+                        if (metadata?.callID) {
+                          e.preventDefault()
+                          // Try state.metadata.callID first, fall back to part-level callID
+                          const bgCallID = metadata.callID || (runningBash as any).callID
+                          if (!bgCallID) return
+                          try {
+                            const res = await sdk.fetch(`${sdk.url}/task/migrate/${encodeURIComponent(bgCallID)}`, {
+                              method: "POST",
+                            })
+                            if (res.ok) {
+                              const data = (await res.json()) as { taskId: string }
+                              toast.show({ message: `Backgrounded: ${data.taskId}`, variant: "info" })
+                            } else {
+                              const body = await res.text().catch(() => "")
+                              toast.show({
+                                message: `Background failed (${res.status}): ${body.slice(0, 80) || "process not found"}`,
+                                variant: "error",
+                                duration: 5000,
+                              })
+                            }
+                          } catch (err) {
+                            toast.show({
+                              message: `Background error: ${err instanceof Error ? err.message : String(err)}`,
+                              variant: "error",
+                              duration: 5000,
+                            })
+                          }
+                          return
+                        }
+                      }
+                    }
+                  }
                 }
                 // Right arrow to accept prompt suggestion — only when prompt is empty and a suggestion exists
                 if (e.name === "right" && !e.shift && !e.ctrl && !store.prompt.input && props.sessionID) {

@@ -1,0 +1,13 @@
+{
+  "name": "route-lifecycle",
+  "leadSessionID": "ses_3cc194a0affe0entnGDKbszyWi",
+  "members": [
+    {
+      "name": "worker-1",
+      "sessionID": "ses_3cc194a0affdadOglUHYrUd8Sr",
+      "agent": "build",
+      "status": "active"
+    }
+  ],
+  "created": 1770397283830
+}

@@ -252,41 +252,9 @@ export function Session() {
     }
   })
 
-  // Ctrl+B: background running bash command
-  // Only active when session is busy (so it doesn't conflict with cursor movement in the textarea)
-  useKeyboard(async (evt) => {
-    if (evt.name !== "b" || !evt.ctrl) return
-    const status = sync.data.session_status[route.sessionID]
-    if (status?.type !== "busy") return
-
-    // Find the running bash tool part in the latest assistant message
-    const msgs = messages()
-    const lastMsg = msgs.findLast((m) => m.role === "assistant")
-    if (!lastMsg) return
-    const parts = sync.data.part[lastMsg.id] ?? []
-    const runningBash = parts.find(
-      (p) => p.type === "tool" && p.tool === "bash" && p.state.status === "running",
-    )
-    if (!runningBash || runningBash.type !== "tool") return
-
-    const metadata = (runningBash.state as { metadata?: { callID?: string } }).metadata
-    if (!metadata?.callID) return
-    const callID = metadata.callID
-
-    evt.preventDefault()
-
-    try {
-      const res = await fetch(`${sdk.url}/task/migrate/${encodeURIComponent(callID)}`, { method: "POST" })
-      if (res.ok) {
-        const data = await res.json() as { taskId: string }
-        toast.show({ message: `Backgrounded: ${data.taskId}`, variant: "info" })
-      } else {
-        toast.show({ message: "Failed to background process", variant: "error", duration: 3000 })
-      }
-    } catch {
-      toast.show({ message: "Failed to background process", variant: "error", duration: 3000 })
-    }
-  })
+  // Ctrl+B background migration is now handled in the Prompt component's onKeyDown
+  // handler (prompt/index.tsx) because the textarea keybindings bind Ctrl+B to
+  // move-left, consuming the event before session-level useKeyboard handlers see it.
 
   // Shift+Up/Down: Cycle through teammates for inline messaging (only when team is active)
   useKeyboard((evt) => {
@@ -979,9 +947,15 @@ export function Session() {
       enabled: !!sync.data.team[route.sessionID],
       onSelect: (dialog) => {
         const teamInfo = sync.data.team[route.sessionID]
-        if (!teamInfo?.members?.length) { dialog.clear(); return }
+        if (!teamInfo?.members?.length) {
+          dialog.clear()
+          return
+        }
         const members = teamInfo.members.filter((m: any) => m.sessionID)
-        if (members.length === 0) { dialog.clear(); return }
+        if (members.length === 0) {
+          dialog.clear()
+          return
+        }
         // Find current position (lead or member)
         const currentIdx = members.findIndex((m: any) => m.sessionID === route.sessionID)
         if (currentIdx >= 0) {
@@ -1004,9 +978,15 @@ export function Session() {
       enabled: !!sync.data.team[route.sessionID],
       onSelect: (dialog) => {
         const teamInfo = sync.data.team[route.sessionID]
-        if (!teamInfo?.members?.length) { dialog.clear(); return }
+        if (!teamInfo?.members?.length) {
+          dialog.clear()
+          return
+        }
         const members = teamInfo.members.filter((m: any) => m.sessionID)
-        if (members.length === 0) { dialog.clear(); return }
+        if (members.length === 0) {
+          dialog.clear()
+          return
+        }
         const currentIdx = members.findIndex((m: any) => m.sessionID === route.sessionID)
         if (currentIdx >= 0) {
           // Currently viewing a member — go to previous member or wrap to last
@@ -1027,7 +1007,10 @@ export function Session() {
       enabled: !!sync.data.team[route.sessionID],
       onSelect: (dialog) => {
         const teamInfo = sync.data.team[route.sessionID]
-        if (!teamInfo) { dialog.clear(); return }
+        if (!teamInfo) {
+          dialog.clear()
+          return
+        }
         // Find the lead session
         for (const [sid, entry] of Object.entries(sync.data.team)) {
           const e = entry as any
@@ -1049,10 +1032,13 @@ export function Session() {
       enabled: !!sync.data.team[route.sessionID] && sync.data.team[route.sessionID]?.role === "lead",
       onSelect: async (dialog) => {
         const info = sync.data.team[route.sessionID]
-        if (!info || info.role !== "lead") { dialog.clear(); return }
+        if (!info || info.role !== "lead") {
+          dialog.clear()
+          return
+        }
         const isDelegate = info.delegate
         try {
-          await fetch(`${sdk.url}/team/${info.teamName}/delegate`, {
+          await sdk.fetch(`${sdk.url}/team/${info.teamName}/delegate`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ enabled: !isDelegate }),

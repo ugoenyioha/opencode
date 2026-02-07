@@ -36,9 +36,9 @@ export function DialogTasks() {
 
   const fetchTasks = async () => {
     try {
-      const res = await fetch(`${sdk.url}/task`)
+      const res = await sdk.fetch(`${sdk.url}/task`)
       if (res.ok) {
-        setTasks(await res.json() as TaskInfo[])
+        setTasks((await res.json()) as TaskInfo[])
       }
     } catch {
       // Silently retry on next interval — task list is non-critical
@@ -68,13 +68,10 @@ export function DialogTasks() {
             : task.status === "completed"
               ? `completed (exit: ${task.exitCode ?? 0})`
               : `failed (exit: ${task.exitCode ?? "?"})`
-        const category =
-          task.status === "running" ? "Running" : task.status === "completed" ? "Completed" : "Failed"
+        const category = task.status === "running" ? "Running" : task.status === "completed" ? "Completed" : "Failed"
 
         return {
-          title: isKilling
-            ? "Press again to confirm kill"
-            : task.description || task.command.substring(0, 60),
+          title: isKilling ? "Press again to confirm kill" : task.description || task.command.substring(0, 60),
           bg: isKilling ? theme.error : undefined,
           value: task.id,
           category,
@@ -93,7 +90,7 @@ export function DialogTasks() {
 
   const killTask = async (taskId: string) => {
     try {
-      const res = await fetch(`${sdk.url}/task/${taskId}/kill`, { method: "POST" })
+      const res = await sdk.fetch(`${sdk.url}/task/${taskId}/kill`, { method: "POST" })
       if (res.ok) {
         toast.show({ message: "Task killed", variant: "info" })
         fetchTasks()
@@ -108,9 +105,9 @@ export function DialogTasks() {
 
   const viewOutput = async (taskId: string) => {
     try {
-      const res = await fetch(`${sdk.url}/task/${taskId}/tail?lines=100`)
+      const res = await sdk.fetch(`${sdk.url}/task/${taskId}/tail?lines=100`)
       if (res.ok) {
-        const data = await res.json() as { output: string }
+        const data = (await res.json()) as { output: string }
         dialog.replace(() => <DialogTaskOutput taskId={taskId} output={data.output} />)
       }
     } catch {
@@ -130,9 +127,7 @@ export function DialogTasks() {
             <text fg={theme.textMuted}>esc</text>
           </box>
           <text fg={theme.textMuted}>No background tasks.</text>
-          <text fg={theme.textMuted}>
-            Press Ctrl+B while a bash command is running to send it to the background.
-          </text>
+          <text fg={theme.textMuted}>Press Ctrl+B while a bash command is running to send it to the background.</text>
         </box>
       }
     >

@@ -1,0 +1,26 @@
+[
+  {
+    "id": "1",
+    "content": "Codex reviewer: Deep code quality, architecture, and security analysis",
+    "status": "in_progress",
+    "priority": "high",
+    "assignee": "codex-reviewer"
+  },
+  {
+    "id": "2",
+    "content": "Gemini reviewer: Large-scale codebase analysis with massive context window",
+    "status": "in_progress",
+    "priority": "high",
+    "assignee": "gemini-reviewer"
+  },
+  {
+    "id": "3",
+    "content": "Synthesize findings from both reviewers into final report",
+    "status": "blocked",
+    "priority": "high",
+    "depends_on": [
+      "1",
+      "2"
+    ]
+  }
+]

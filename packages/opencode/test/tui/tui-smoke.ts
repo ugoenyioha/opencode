@@ -72,10 +72,7 @@ Bun.spawnSync(["git", "commit", "-m", "init", "--allow-empty"], { cwd: testProje
 // Write a minimal opencode.json config (no API keys — those go via env vars)
 const configDir = path.join(sandbox, "config", "opencode")
 await fs.mkdir(configDir, { recursive: true })
-await fs.writeFile(
-  path.join(configDir, "opencode.json"),
-  JSON.stringify({}),
-)
+await fs.writeFile(path.join(configDir, "opencode.json"), JSON.stringify({}))
 
 // Write cache version to prevent cache wipe
 const cacheDir = path.join(sandbox, "cache", "opencode")
@@ -91,13 +88,7 @@ const baseEnv: Record<string, string> = {
   OPENCODE_EXPERIMENTAL_AGENT_TEAMS: "1",
   ANTHROPIC_API_KEY: "sk-test-dummy-key-for-tui-smoke",
   // Models path for deterministic model list
-  OPENCODE_MODELS_PATH: path.join(
-    import.meta.dir,
-    "..",
-    "tool",
-    "fixtures",
-    "models-api.json",
-  ),
+  OPENCODE_MODELS_PATH: path.join(import.meta.dir, "..", "tool", "fixtures", "models-api.json"),
 }
 
 // ============================================================
@@ -257,10 +248,7 @@ await test("/team slash command opens team dialog", async () => {
 
     // Should show team dialog content
     const text = tui.text.toLowerCase()
-    const hasTeamContent =
-      text.includes("team") ||
-      text.includes("no active") ||
-      text.includes("agent team")
+    const hasTeamContent = text.includes("team") || text.includes("no active") || text.includes("agent team")
     assert(hasTeamContent, `Team dialog should appear via /team. Got: ${tui.text.slice(-800)}`)
   } finally {
     tui.kill()
@@ -352,8 +340,8 @@ await test("/memory command appears in command palette", async () => {
   }
 })
 
-// ---------- Test 10: /memory dialog shows file list ----------
-await test("/memory dialog shows memory files via command palette", async () => {
+// ---------- Test 10: /memory dialog finishes loading and shows file list ----------
+await test("/memory dialog loads and shows file list (not stuck on loading)", async () => {
   const tui = await TuiHarness.spawn({
     cwd: testProject,
     env: baseEnv,
@@ -369,25 +357,123 @@ await test("/memory dialog shows memory files via command palette", async () => 
     tui.write("/memory")
     await tui.settle(500)
     tui.write("\r")
-    await tui.settle(3000)
 
-    // Memory dialog should render — either the file list or loading state
+    // Wait for the dialog to finish loading — it should show "Memory Files"
+    // title or actual file entries (AGENTS.md, Project, Global), NOT stuck on
+    // "Loading memory files..."
+    let loaded = false
+    for (let i = 0; i < 30; i++) {
+      await tui.settle(200)
+      const text = tui.text
+      // If we see actual content (not just the loading message), it loaded
+      if (
+        text.includes("Memory Files") ||
+        text.includes("AGENTS.md") ||
+        text.includes("Project") ||
+        text.includes("Global")
+      ) {
+        loaded = true
+        break
+      }
+    }
+    assert(loaded, `Memory dialog should finish loading within 6s, not stuck. Got: ${tui.text.slice(-800)}`)
+
+    // Verify it's NOT showing the loading message anymore
     const text = tui.text
-    const hasMemoryContent =
-      text.includes("AGENTS.md") ||
-      text.includes("Memory Files") ||
-      text.includes("Loading memory") ||
-      text.includes("Project") ||
-      text.includes("Global") ||
-      text.includes("CLAUDE.md") ||
-      text.includes("create new")
-    assert(hasMemoryContent, `Memory dialog should render. Got: ${text.slice(-800)}`)
+    assert(
+      !text.includes("Loading memory files"),
+      `Memory dialog should not show loading message after load. Got: ${text.slice(-800)}`,
+    )
   } finally {
     tui.kill()
   }
 })
 
-// ---------- Test 11: TUI exits cleanly with Ctrl+C ----------
+// ---------- Test 10b: /memory dialog shows pre-created rules file ----------
+await test("/memory dialog lists .opencode/rules files", async () => {
+  // Create a rules file before launching TUI
+  const rulesDir = path.join(testProject, ".opencode", "rules")
+  await fs.mkdir(rulesDir, { recursive: true })
+  await fs.writeFile(path.join(rulesDir, "memory.md"), "- Test fact (2026-02-06)\n")
+
+  const tui = await TuiHarness.spawn({
+    cwd: testProject,
+    env: baseEnv,
+    spawnTimeout: 15000,
+  })
+
+  try {
+    await tui.settle(3000)
+
+    // Open memory dialog
+    tui.sendCtrl("k")
+    await tui.settle(1500)
+    tui.write("/memory")
+    await tui.settle(500)
+    tui.write("\r")
+
+    // Wait for it to load and show the rules file
+    let found = false
+    for (let i = 0; i < 30; i++) {
+      await tui.settle(200)
+      if (tui.text.includes("memory.md") || tui.text.includes("Rules")) {
+        found = true
+        break
+      }
+    }
+    assert(found, `Memory dialog should list memory.md from .opencode/rules/. Got: ${tui.text.slice(-800)}`)
+  } finally {
+    tui.kill()
+    // Clean up rules file
+    await fs.rm(rulesDir, { recursive: true, force: true }).catch(() => {})
+  }
+})
+
+// ---------- Test 11: Ctrl+B does not move cursor when session is idle ----------
+await test("Ctrl+B in prompt acts as cursor-left when session is idle (not backgrounding)", async () => {
+  const tui = await TuiHarness.spawn({
+    cwd: testProject,
+    env: baseEnv,
+    spawnTimeout: 15000,
+  })
+
+  try {
+    await tui.settle(3000)
+
+    // Type some text into the prompt
+    tui.write("hello world")
+    await tui.settle(500)
+
+    // Ctrl+B should act as cursor-left (textarea keybinding) since session is idle
+    // This verifies that our Ctrl+B background handler in the prompt only
+    // intercepts when session is busy — otherwise it falls through to move-left
+    tui.sendCtrl("b")
+    await tui.settle(300)
+
+    // The TUI should still be functional and showing the text
+    assert(
+      tui.text.includes("hello world"),
+      `Prompt should still contain typed text after Ctrl+B. Got: ${tui.text.slice(-800)}`,
+    )
+  } finally {
+    tui.kill()
+  }
+})
+
+// ---------- Test 12: input_move_left keybind includes ctrl+b ----------
+await test("input_move_left keybind defaults to 'left,ctrl+b'", async () => {
+  // Structural test: verify that Ctrl+B is part of the move-left keybind
+  // This is important because our background task handler must intercept
+  // Ctrl+B in the prompt's onKeyDown BEFORE the textarea keybinding consumes it
+  const { Config } = await import("../../src/config/config")
+  const defaultKeybinds = Config.Keybinds.parse({})
+  assert(
+    defaultKeybinds.input_move_left === "left,ctrl+b",
+    `input_move_left should default to 'left,ctrl+b', got: ${defaultKeybinds.input_move_left}`,
+  )
+})
+
+// ---------- Test 13: TUI exits cleanly with Ctrl+C ----------
 await test("TUI exits cleanly via Ctrl+C", async () => {
   const tui = await TuiHarness.spawn({
     cwd: testProject,
