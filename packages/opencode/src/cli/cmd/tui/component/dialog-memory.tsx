@@ -86,7 +86,7 @@ function collectFiles(dir: string, home: string): MemoryFile[] {
     })
   }
 
-  // Global files
+  // Global instruction files
   const configDir = process.env["XDG_CONFIG_HOME"]
     ? path.join(process.env["XDG_CONFIG_HOME"], "opencode")
     : path.join(home, ".config", "opencode")
@@ -101,6 +101,24 @@ function collectFiles(dir: string, home: string): MemoryFile[] {
       exists,
       label: p.replace(home, "~"),
       category: "Global",
+    })
+  }
+
+  // Global rules — ~/.config/opencode/rules/ and ~/.claude/rules/
+  for (const file of findMarkdownFiles(path.join(configDir, "rules"))) {
+    result.push({
+      path: file,
+      exists: true,
+      label: file.replace(home, "~"),
+      category: "Global Rules",
+    })
+  }
+  for (const file of findMarkdownFiles(path.join(home, ".claude", "rules"))) {
+    result.push({
+      path: file,
+      exists: true,
+      label: file.replace(home, "~"),
+      category: "Global Rules (.claude)",
     })
   }
 

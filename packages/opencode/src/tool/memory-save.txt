@@ -12,3 +12,7 @@ Do NOT use this tool:
 5. If you are unsure whether the information should be persisted — ask the user first
 
 Each saved fact is appended to a memory file in .opencode/rules/ and automatically loaded in future sessions.
+
+Memory and rules are loaded from multiple locations (project-level and global):
+- Project: .opencode/rules/ and .claude/rules/ in the project root
+- Global: ~/.config/opencode/rules/ and ~/.claude/rules/ (apply to all projects)

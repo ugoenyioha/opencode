@@ -49,56 +49,68 @@ interface RuleFile {
   paths: string[]
 }
 
-const RULES_DIRS = [
+const PROJECT_RULES_DIRS = [
   // .opencode/rules/ (native)
   { base: ".opencode", sub: "rules" },
   // .claude/rules/ (compatibility)
   { base: ".claude", sub: "rules" },
 ]
 
-async function scanRules(): Promise<RuleFile[]> {
-  if (Flag.OPENCODE_DISABLE_PROJECT_CONFIG) return []
-
+async function scanDir(rulesDir: string): Promise<RuleFile[]> {
   const rules: RuleFile[] = []
-  const root = Instance.directory
-
-  for (const { base, sub } of RULES_DIRS) {
-    const rulesDir = path.join(root, base, sub)
-    const glob = new Bun.Glob("**/*.md")
-    try {
-      for await (const file of glob.scan({ cwd: rulesDir, absolute: true, onlyFiles: true })) {
+  const glob = new Bun.Glob("**/*.md")
+  try {
+    for await (const file of glob.scan({ cwd: rulesDir, absolute: true, onlyFiles: true })) {
+      try {
+        const raw = await Bun.file(file).text()
+        let frontmatter: Record<string, unknown> = {}
+        let body = raw
         try {
-          const raw = await Bun.file(file).text()
-          let frontmatter: Record<string, unknown> = {}
-          let body = raw
-          try {
-            const parsed = matter(raw)
-            frontmatter = (parsed.data ?? {}) as Record<string, unknown>
-            body = parsed.content
-          } catch {
-            // No valid frontmatter — treat entire file as body
-          }
-
-          const paths: string[] = []
-          if (Array.isArray(frontmatter.paths)) {
-            for (const p of frontmatter.paths) {
-              if (typeof p === "string") paths.push(p)
-            }
-          } else if (typeof frontmatter.paths === "string") {
-            paths.push(frontmatter.paths)
-          }
-
-          const content = body.trim()
-          if (content) {
-            rules.push({ filepath: path.resolve(file), content, paths })
-          }
-        } catch (e) {
-          log.warn("failed to read rule file", { file, error: e })
+          const parsed = matter(raw)
+          frontmatter = (parsed.data ?? {}) as Record<string, unknown>
+          body = parsed.content
+        } catch {
+          // No valid frontmatter — treat entire file as body
         }
+
+        const paths: string[] = []
+        if (Array.isArray(frontmatter.paths)) {
+          for (const p of frontmatter.paths) {
+            if (typeof p === "string") paths.push(p)
+          }
+        } else if (typeof frontmatter.paths === "string") {
+          paths.push(frontmatter.paths)
+        }
+
+        const content = body.trim()
+        if (content) {
+          rules.push({ filepath: path.resolve(file), content, paths })
+        }
+      } catch (e) {
+        log.warn("failed to read rule file", { file, error: e })
       }
-    } catch {
-      // Rules directory doesn't exist — skip
     }
+  } catch {
+    // Rules directory doesn't exist — skip
+  }
+  return rules
+}
+
+async function scanRules(): Promise<RuleFile[]> {
+  const rules: RuleFile[] = []
+
+  // Project-local rules
+  if (!Flag.OPENCODE_DISABLE_PROJECT_CONFIG) {
+    const root = Instance.directory
+    for (const { base, sub } of PROJECT_RULES_DIRS) {
+      rules.push(...(await scanDir(path.join(root, base, sub))))
+    }
+  }
+
+  // Global rules — ~/.config/opencode/rules/ and ~/.claude/rules/
+  rules.push(...(await scanDir(path.join(Global.Path.config, "rules"))))
+  if (!Flag.OPENCODE_DISABLE_CLAUDE_CODE_PROMPT) {
+    rules.push(...(await scanDir(path.join(os.homedir(), ".claude", "rules"))))
   }
 
   return rules
