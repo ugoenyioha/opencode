@@ -1,16 +1,22 @@
 import { useSync } from "@tui/context/sync"
-import { createMemo, For, Show, Switch, Match } from "solid-js"
+import { createMemo, createSignal, For, Show, Switch, Match } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useTheme } from "../../context/theme"
 import { Locale } from "@/util/locale"
 import path from "path"
-import type { AssistantMessage } from "@opencode-ai/sdk/v2"
+import type { AssistantMessage, ToolPart } from "@opencode-ai/sdk/v2"
 import { Global } from "@/global"
 import { Installation } from "@/installation"
 import { useKeybind } from "../../context/keybind"
 import { useDirectory } from "../../context/directory"
 import { useKV } from "../../context/kv"
+import { useRoute } from "../../context/route"
 import { TodoItem } from "../../component/todo-item"
+import { Spinner } from "../../component/spinner"
+import { useTerminalDimensions } from "@opentui/solid"
+
+const MIN_WIDTH = 30
+const DEFAULT_WIDTH = 42
 
 export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
   const sync = useSync()
@@ -25,6 +31,7 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
     diff: true,
     todo: true,
     lsp: true,
+    team: true,
   })
 
   // Sort MCP servers alphabetically for consistent display order
@@ -62,6 +69,14 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
 
   const directory = useDirectory()
   const kv = useKV()
+  const nav = useRoute()
+  const [width, setWidth] = kv.signal("sidebar_width", DEFAULT_WIDTH)
+  const [dragging, setDragging] = createSignal(false)
+  const dragStart = { x: 0, width: 0 }
+  const dimensions = useTerminalDimensions()
+  const teamInfo = createMemo(() => sync.data.team[props.sessionID])
+  const teamMembers = createMemo(() => (teamInfo()?.members ?? []) as Array<{ name: string; sessionID: string; agent: string; status: string; model?: string; planApproval?: string }>)
+  const teamTasks = createMemo(() => (teamInfo()?.tasks ?? []) as Array<{ id: string; content: string; status: string; priority: string; assignee?: string; depends_on?: string[] }>)
 
   const hasProviders = createMemo(() =>
     sync.data.provider.some((x) => x.id !== "opencode" || Object.values(x.models).some((y) => y.cost?.input !== 0)),
@@ -71,15 +86,43 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
   return (
     <Show when={session()}>
       <box
-        backgroundColor={theme.backgroundPanel}
-        width={42}
+        flexDirection="row"
         height="100%"
-        paddingTop={1}
-        paddingBottom={1}
-        paddingLeft={2}
-        paddingRight={2}
         position={props.overlay ? "absolute" : "relative"}
       >
+        {/* Drag handle */}
+        <box
+          width={1}
+          height="100%"
+          backgroundColor={dragging() ? theme.primary : theme.border}
+          onMouseDown={(e: any) => {
+            setDragging(true)
+            dragStart.x = e.x
+            dragStart.width = width()
+          }}
+          onMouseDrag={(e: any) => {
+            const delta = dragStart.x - e.x
+            const maxWidth = Math.floor(dimensions().width * 0.75)
+            const next = Math.max(MIN_WIDTH, Math.min(maxWidth, dragStart.width + delta))
+            kv.set("sidebar_width", next)
+          }}
+          onMouseDragEnd={() => setDragging(false)}
+          onMouseUp={() => setDragging(false)}
+          flexShrink={0}
+        />
+        <box
+          backgroundColor={theme.backgroundPanel}
+          width={width() - 1}
+          height="100%"
+          paddingTop={1}
+          paddingBottom={1}
+          paddingLeft={2}
+          paddingRight={1}
+          border={["right"]}
+          borderColor={theme.border}
+          flexShrink={0}
+          overflow="hidden"
+        >
         <scrollbox flexGrow={1}>
           <box flexShrink={0} gap={1} paddingRight={1}>
             <box paddingRight={1}>
@@ -221,6 +264,98 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
                 </Show>
               </box>
             </Show>
+            <Show when={teamInfo() && teamMembers().length > 0}>
+              <box>
+                <box
+                  flexDirection="row"
+                  gap={1}
+                  onMouseDown={() => setExpanded("team", !expanded.team)}
+                >
+                  <text fg={theme.text}>{expanded.team ? "▼" : "▶"}</text>
+                  <text fg={theme.text}>
+                    <b>Team</b>
+                    <Show when={!expanded.team}>
+                      <span style={{ fg: theme.textMuted }}>
+                        {" "}({teamMembers().filter((m) => m.status === "active").length} active, {teamMembers().length} total)
+                      </span>
+                    </Show>
+                  </text>
+                </box>
+                <Show when={expanded.team}>
+                  {/* Task tree view when shared tasks exist */}
+                  <Show when={teamTasks().length > 0}>
+                    <For each={teamTasks()}>
+                      {(task) => {
+                        const assignee = createMemo(() => task.assignee ? teamMembers().find((m) => m.name === task.assignee) : undefined)
+                        return (
+                          <box
+                            flexDirection="column"
+                            onMouseUp={() => {
+                              const a = assignee()
+                              if (a?.sessionID) nav.navigate({ type: "session", sessionID: a.sessionID })
+                            }}
+                          >
+                            <box flexDirection="row" gap={1}>
+                              <text fg={teamTaskColor(task.status, theme)} flexShrink={0} wrapMode="none">
+                                {teamTaskIcon(task.status)}
+                              </text>
+                              <text fg={task.status === "in_progress" ? theme.text : theme.textMuted} wrapMode="word">
+                                {task.content}
+                              </text>
+                            </box>
+                            <Show when={task.assignee}>
+                              <text fg={theme.primary} paddingLeft={2} wrapMode="none">
+                                @{task.assignee}
+                              </text>
+                            </Show>
+                            <Show when={task.depends_on && task.depends_on.length > 0 && task.status === "blocked"}>
+                              <text fg={theme.textMuted} paddingLeft={2} wrapMode="none">
+                                blocked by {task.depends_on!.map((d) => `#${d}`).join(", ")}
+                              </text>
+                            </Show>
+                            <Show when={task.status === "in_progress" && assignee()?.status === "active"}>
+                              <TeammateActivity sessionID={assignee()!.sessionID} />
+                            </Show>
+                          </box>
+                        )
+                      }}
+                    </For>
+                    <text fg={theme.textMuted}>
+                      {teamTasks().filter((t) => t.status === "completed").length}/{teamTasks().length} completed
+                    </text>
+                  </Show>
+                  {/* Member list view when no shared tasks */}
+                  <Show when={teamTasks().length === 0}>
+                    <For each={teamMembers()}>
+                      {(member) => (
+                        <box
+                          flexDirection="column"
+                          onMouseUp={() => {
+                            if (member.sessionID) nav.navigate({ type: "session", sessionID: member.sessionID })
+                          }}
+                        >
+                          <box flexDirection="row" gap={1}>
+                            <text
+                              flexShrink={0}
+                              fg={member.status === "active" ? theme.success : member.status === "shutdown" ? theme.error : theme.textMuted}
+                            >
+                              •
+                            </text>
+                            <text fg={theme.text} wrapMode="word">
+                              {member.name}
+                              <span style={{ fg: theme.textMuted }}> ({member.agent})</span>
+                            </text>
+                          </box>
+                          <Show when={member.status === "active"}>
+                            <TeammateActivity sessionID={member.sessionID} />
+                          </Show>
+                        </box>
+                      )}
+                    </For>
+                  </Show>
+                </Show>
+              </box>
+            </Show>
             <Show when={diff().length > 0}>
               <box>
                 <box
@@ -308,6 +443,106 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
           </text>
         </box>
       </box>
+      </box>
+    </Show>
+  )
+}
+
+function teamTaskIcon(status: string): string {
+  switch (status) {
+    case "completed":
+      return "+"
+    case "in_progress":
+      return "■"
+    case "blocked":
+      return "□"
+    case "cancelled":
+      return "x"
+    default:
+      return "□"
+  }
+}
+
+function teamTaskColor(status: string, theme: any) {
+  switch (status) {
+    case "completed":
+      return theme.success
+    case "in_progress":
+      return theme.warning
+    case "blocked":
+      return theme.textMuted
+    case "cancelled":
+      return theme.error
+    default:
+      return theme.textMuted
+  }
+}
+
+function truncate(s: string, max: number): string {
+  if (s.length <= max) return s
+  return s.slice(0, max - 1) + "…"
+}
+
+function formatToolActivity(tp: ToolPart): string {
+  const name = tp.tool
+  const state = tp.state
+  if (state.status === "running") {
+    if (state.title) return `${name}: ${state.title}`
+    const input = state.input as Record<string, any>
+    if (name === "bash" && input.command) return truncate(`$ ${input.command}`, 36)
+    if (name === "read" && input.filePath) return `Read ${truncate(input.filePath, 30)}`
+    if (name === "grep" && input.pattern) return `Grep "${truncate(input.pattern, 28)}"`
+    if (name === "glob" && input.pattern) return `Glob "${truncate(input.pattern, 28)}"`
+    if (name === "write" && input.filePath) return `Write ${truncate(input.filePath, 30)}`
+    if (name === "edit" && input.filePath) return `Edit ${truncate(input.filePath, 30)}`
+    if ((name === "webfetch" || name === "mcp_webfetch") && input.url) return `Fetch ${truncate(input.url, 30)}`
+    if (name === "web_search" && input.query) return `Search "${truncate(input.query, 26)}"`
+    if (name === "team_message") return `Msg @${input.to ?? "..."}`
+    if (name === "team_tasks") return "Checking tasks"
+    return `${name}...`
+  }
+  if (state.status === "completed") {
+    if (state.title) return truncate(`${name}: ${state.title}`, 36)
+    return `${name} done`
+  }
+  if (state.status === "error") return `${name} error`
+  return `${name}...`
+}
+
+/** Shows the current tool activity for a teammate session */
+function TeammateActivity(props: { sessionID: string }) {
+  const sync = useSync()
+  const { theme } = useTheme()
+
+  const activity = createMemo(() => {
+    const msgs = sync.data.message[props.sessionID] ?? []
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const msg = msgs[i]
+      if (msg.role !== "assistant") continue
+      const parts = sync.data.part[msg.id] ?? []
+      for (let j = parts.length - 1; j >= 0; j--) {
+        const part = parts[j]
+        if (part.type !== "tool") continue
+        const tp = part as ToolPart
+        if (tp.state.status === "pending") continue
+        return tp
+      }
+    }
+    return undefined
+  })
+
+  return (
+    <Show when={activity()}>
+      {(tp) => (
+        <box paddingLeft={2}>
+          <Show
+            when={tp().state.status === "running"}
+            fallback={<text fg={theme.textMuted} wrapMode="none">{formatToolActivity(tp())}</text>}
+          >
+            <Spinner color={theme.textMuted}>{formatToolActivity(tp())}</Spinner>
+          </Show>
+        </box>
+      )}
     </Show>
   )
 }
