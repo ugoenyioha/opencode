@@ -203,6 +203,20 @@ export namespace Skill {
     return state().then((x) => x.skills[name])
   }
 
+  export async function preload(names: string[]) {
+    const skills = await state().then((x) => x.skills)
+    const result: Info[] = []
+    for (const name of names) {
+      const skill = skills[name]
+      if (!skill) {
+        log.warn("preloaded skill not found", { name })
+        continue
+      }
+      result.push(skill)
+    }
+    return result
+  }
+
   export async function all() {
     return state().then((x) => Object.values(x.skills))
   }

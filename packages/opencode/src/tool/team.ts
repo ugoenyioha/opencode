@@ -271,6 +271,15 @@ export const TeamSpawnTool = Tool.define("team_spawn", {
         ]
       : []
 
+    const skillContext = agent.skills?.length
+      ? [
+          "",
+          `Preloaded skills: ${agent.skills.join(", ")}`,
+          "These skills are already loaded into your context — you do not need to invoke the skill tool for them.",
+          "",
+        ]
+      : []
+
     const teamContext = [
       `You are "${params.name}", a teammate in team "${teamName}".`,
       `Your agent type is "${agentName}", using model ${modelLabel}.`,
@@ -283,6 +292,7 @@ export const TeamSpawnTool = Tool.define("team_spawn", {
       "",
       "You do NOT have access to team_create, team_spawn, team_shutdown, or team_cleanup.",
       "Only the team lead can manage the team structure.",
+      ...skillContext,
       ...planModeInstructions,
       "When you finish a task, use team_tasks with action 'complete' to mark it done.",
       "Send findings, questions, or status updates to the lead or other teammates with team_message.",

@@ -702,6 +702,10 @@ export namespace Config {
         .optional()
         .describe("Maximum number of agentic iterations before forcing text-only response"),
       maxSteps: z.number().int().positive().optional().describe("@deprecated Use 'steps' field instead."),
+      skills: z
+        .array(z.string())
+        .optional()
+        .describe("Skill names to preload into the agent's context at startup"),
       permission: Permission.optional(),
     })
     .catchall(z.any())
@@ -719,6 +723,7 @@ export namespace Config {
         "color",
         "steps",
         "maxSteps",
+        "skills",
         "options",
         "permission",
         "disable",

@@ -50,6 +50,7 @@ import { LLM } from "./llm"
 import { iife } from "@/util/iife"
 import { Shell } from "@/shell/shell"
 import { Truncate } from "@/tool/truncation"
+import { Skill } from "@/skill"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -698,6 +699,14 @@ export namespace SessionPrompt {
         system: [
           ...(await SystemPrompt.environment(model)),
           ...(await InstructionPrompt.system()),
+          ...(agent.skills?.length
+            ? await Skill.preload(agent.skills).then((loaded) =>
+                loaded.map(
+                  (s) =>
+                    `<skill_content name="${s.name}">\n${s.content}\n</skill_content>`,
+                ),
+              )
+            : []),
           ...(await Todo.systemContext(sessionID, msgs)),
         ],
         messages: [
