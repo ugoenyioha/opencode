@@ -166,9 +166,19 @@ export namespace SessionCompaction {
 
     // For partial compaction, only include messages before the boundary in the summary prompt.
     // The boundary message and everything after it will be preserved in the conversation.
-    const compactionMessages = input.boundaryMessageID
+    let compactionMessages = input.boundaryMessageID
       ? input.messages.filter((m) => m.info.id < input.boundaryMessageID!)
       : input.messages
+
+    // Skip messages before a prior summary to avoid re-summarizing already-compacted
+    // content (fixes upstream #12479). The last completed summary message already
+    // encapsulates everything before it, so we keep it and everything after.
+    const lastSummaryIndex = compactionMessages.findLastIndex(
+      (m) => m.info.role === "assistant" && m.info.summary && (m.info as MessageV2.Assistant).finish,
+    )
+    if (lastSummaryIndex > 0) {
+      compactionMessages = compactionMessages.slice(lastSummaryIndex)
+    }
 
     const result = await processor.process({
       user: userMessage,
