@@ -7,130 +7,127 @@
     </picture>
   </a>
 </p>
-<p align="center">The open source AI coding agent.</p>
-<p align="center">
-  <a href="https://opencode.ai/discord"><img alt="Discord" src="https://img.shields.io/discord/1391832426048651334?style=flat-square&label=discord" /></a>
-  <a href="https://www.npmjs.com/package/opencode-ai"><img alt="npm" src="https://img.shields.io/npm/v/opencode-ai?style=flat-square" /></a>
-  <a href="https://github.com/anomalyco/opencode/actions/workflows/publish.yml"><img alt="Build status" src="https://img.shields.io/github/actions/workflow/status/anomalyco/opencode/publish.yml?style=flat-square&branch=dev" /></a>
-</p>
-
-<p align="center">
-  <a href="README.md">English</a> |
-  <a href="README.zh.md">简体中文</a> |
-  <a href="README.zht.md">繁體中文</a> |
-  <a href="README.ko.md">한국어</a> |
-  <a href="README.de.md">Deutsch</a> |
-  <a href="README.es.md">Español</a> |
-  <a href="README.fr.md">Français</a> |
-  <a href="README.it.md">Italiano</a> |
-  <a href="README.da.md">Dansk</a> |
-  <a href="README.ja.md">日本語</a> |
-  <a href="README.pl.md">Polski</a> |
-  <a href="README.ru.md">Русский</a> |
-  <a href="README.bs.md">Bosanski</a> |
-  <a href="README.ar.md">العربية</a> |
-  <a href="README.no.md">Norsk</a> |
-  <a href="README.br.md">Português (Brasil)</a> |
-  <a href="README.th.md">ไทย</a> |
-  <a href="README.tr.md">Türkçe</a>
-</p>
-
-[![OpenCode Terminal UI](packages/web/src/assets/lander/screenshot.png)](https://opencode.ai)
+<p align="center">The open source AI coding agent — extended fork.</p>
 
 ---
 
-### Installation
-
-```bash
-# YOLO
-curl -fsSL https://opencode.ai/install | bash
-
-# Package managers
-npm i -g opencode-ai@latest        # or bun/pnpm/yarn
-scoop install opencode             # Windows
-choco install opencode             # Windows
-brew install anomalyco/tap/opencode # macOS and Linux (recommended, always up to date)
-brew install opencode              # macOS and Linux (official brew formula, updated less)
-paru -S opencode-bin               # Arch Linux
-mise use -g opencode               # Any OS
-nix run nixpkgs#opencode           # or github:anomalyco/opencode for latest dev branch
-```
-
-> [!TIP]
-> Remove versions older than 0.1.x before installing.
-
-### Desktop App (BETA)
-
-OpenCode is also available as a desktop application. Download directly from the [releases page](https://github.com/anomalyco/opencode/releases) or [opencode.ai/download](https://opencode.ai/download).
-
-| Platform              | Download                              |
-| --------------------- | ------------------------------------- |
-| macOS (Apple Silicon) | `opencode-desktop-darwin-aarch64.dmg` |
-| macOS (Intel)         | `opencode-desktop-darwin-x64.dmg`     |
-| Windows               | `opencode-desktop-windows-x64.exe`    |
-| Linux                 | `.deb`, `.rpm`, or AppImage           |
-
-```bash
-# macOS (Homebrew)
-brew install --cask opencode-desktop
-# Windows (Scoop)
-scoop bucket add extras; scoop install extras/opencode-desktop
-```
-
-#### Installation Directory
-
-The install script respects the following priority order for the installation path:
-
-1. `$OPENCODE_INSTALL_DIR` - Custom installation directory
-2. `$XDG_BIN_DIR` - XDG Base Directory Specification compliant path
-3. `$HOME/bin` - Standard user binary directory (if it exists or can be created)
-4. `$HOME/.opencode/bin` - Default fallback
-
-```bash
-# Examples
-OPENCODE_INSTALL_DIR=/usr/local/bin curl -fsSL https://opencode.ai/install | bash
-XDG_BIN_DIR=$HOME/.local/bin curl -fsSL https://opencode.ai/install | bash
-```
-
-### Agents
-
-OpenCode includes two built-in agents you can switch between with the `Tab` key.
-
-- **build** - Default, full-access agent for development work
-- **plan** - Read-only agent for analysis and code exploration
-  - Denies file edits by default
-  - Asks permission before running bash commands
-  - Ideal for exploring unfamiliar codebases or planning changes
-
-Also included is a **general** subagent for complex searches and multistep tasks.
-This is used internally and can be invoked using `@general` in messages.
-
-Learn more about [agents](https://opencode.ai/docs/agents).
-
-### Documentation
-
-For more info on how to configure OpenCode, [**head over to our docs**](https://opencode.ai/docs).
-
-### Contributing
-
-If you're interested in contributing to OpenCode, please read our [contributing docs](./CONTRIBUTING.md) before submitting a pull request.
-
-### Building on OpenCode
-
-If you are working on a project that's related to OpenCode and is using "opencode" as part of its name, for example "opencode-dashboard" or "opencode-mobile", please add a note to your README to clarify that it is not built by the OpenCode team and is not affiliated with us in any way.
-
-### FAQ
-
-#### How is this different from Claude Code?
-
-It's very similar to Claude Code in terms of capability. Here are the key differences:
-
-- 100% open source
-- Not coupled to any provider. Although we recommend the models we provide through [OpenCode Zen](https://opencode.ai/zen), OpenCode can be used with Claude, OpenAI, Google, or even local models. As models evolve, the gaps between them will close and pricing will drop, so being provider-agnostic is important.
-- Out-of-the-box LSP support
-- A focus on TUI. OpenCode is built by neovim users and the creators of [terminal.shop](https://terminal.shop); we are going to push the limits of what's possible in the terminal.
-- A client/server architecture. This, for example, can allow OpenCode to run on your computer while you drive it remotely from a mobile app, meaning that the TUI frontend is just one of the possible clients.
+> **This is a fork of [anomalyco/opencode](https://github.com/anomalyco/opencode)** with additional features ported from Claude Code and new capabilities not yet available upstream. It tracks the upstream `dev` branch and is intended for personal use and experimentation.
 
 ---
 
-**Join our community** [Discord](https://discord.gg/opencode) | [X.com](https://x.com/opencode)
+## What's different in this fork
+
+This fork adds **14,000+ lines** across **58+ files**, introducing features that bring OpenCode closer to parity with Claude Code while taking advantage of OpenCode's multi-model, provider-agnostic architecture.
+
+### Agent Teams (experimental)
+
+Coordinate multiple agents working in parallel, each with their own session, model, and context window. A lead agent spawns teammates, distributes work via a shared task list, and teammates communicate through bidirectional messaging.
+
+- Fire-and-forget spawning — lead stays interactive while teammates work in parallel
+- Auto-wake — teammates automatically wake the lead when they finish or encounter errors
+- Peer-to-peer messaging between any team members (not just lead)
+- Shared task list with dependencies, priorities, and status tracking
+- Multi-model support — mix Claude, Gemini, OpenAI, and local models on the same team
+- Live sidebar showing task progress and real-time tool activity per teammate
+
+Enable with `OPENCODE_EXPERIMENTAL_AGENT_TEAMS=1`.
+
+[Documentation](https://github.com/ugoenyioha/opencode/blob/dev/packages/web/src/content/docs/agent-teams.mdx)
+
+### Background Tasks
+
+Move long-running bash commands to the background with `Ctrl+B` so you can keep working. Output is buffered, and the agent can query task status and results at any time.
+
+- Send any running bash command to the background mid-execution
+- Task badge in the session header shows running task count
+- Query, search, and read task output through dedicated tools
+- Up to 5 MB output buffer per task
+
+[Documentation](https://github.com/ugoenyioha/opencode/blob/dev/packages/web/src/content/docs/background-tasks.mdx)
+
+### Persistent Memory
+
+The agent remembers preferences, project conventions, and important context across sessions through a `memory_save` tool and instruction file hierarchy.
+
+- `memory_save` tool writes facts to `.opencode/rules/` for automatic loading in future sessions
+- `/memory` command to browse and manage saved memories in the TUI
+- Loads instructions from `AGENTS.md`, `.opencode/AGENTS.md`, `CLAUDE.md`, and global `~/.opencode/AGENTS.md`
+
+[Documentation](https://github.com/ugoenyioha/opencode/blob/dev/packages/web/src/content/docs/memory.mdx)
+
+### Prompt Suggestions
+
+Context-aware suggestions appear after the agent finishes a response, showing natural follow-up actions. Accept with the `Right arrow` key.
+
+### Todo List with Dependencies
+
+Structured task tracking with `pending`, `in_progress`, `completed`, `cancelled`, and `blocked` states. Tasks can declare dependencies on other tasks, and blocked tasks automatically unblock when dependencies complete. The sidebar displays active todos.
+
+### Session Guards
+
+Configurable `max_turns` and `max_budget` limits per agent to prevent runaway sessions.
+
+### Resizable Sidebar with Team View
+
+The sidebar now includes a collapsible Team section showing task trees or member lists with live tool activity spinners. The sidebar is resizable via a drag handle on its left edge (up to 75% of terminal width), and the width persists across sessions.
+
+---
+
+## Building from source
+
+```bash
+# Clone
+git clone https://github.com/ugoenyioha/opencode.git
+cd opencode
+
+# Install dependencies
+bun install
+
+# Build (requires bun 1.3.8+, or temporarily relax the check in packages/script/src/index.ts)
+cd packages/opencode
+bun run build --single --skip-install
+
+# Install the binary
+cp dist/opencode-darwin-arm64/bin/opencode /usr/local/bin/opencode
+```
+
+### Running tests
+
+```bash
+cd packages/opencode
+bun test --timeout 60000    # Unit tests (1045 pass)
+bun run typecheck            # Type checking
+```
+
+---
+
+## Upstream
+
+This fork tracks [anomalyco/opencode](https://github.com/anomalyco/opencode) on the `dev` branch. Upstream features, bug fixes, and improvements are periodically merged in.
+
+For upstream documentation, installation, and community resources, see the [official OpenCode docs](https://opencode.ai/docs).
+
+---
+
+## Key differences from upstream OpenCode
+
+| Feature | Upstream | This fork |
+|---------|----------|-----------|
+| Agent teams | Not available | Multi-model parallel teams with shared tasks |
+| Background tasks | Not available | Ctrl+B to background any running command |
+| Persistent memory | Not available | memory_save tool + /memory browser |
+| Prompt suggestions | Not available | Context-aware follow-up suggestions |
+| Todo dependencies | Not available | Blocked/unblocked task states |
+| Session guards | Not available | max_turns and max_budget limits |
+| Sidebar team view | Not available | Live task tree + teammate activity |
+| Resizable sidebar | Fixed width | Drag handle, persisted width |
+
+---
+
+## Original README
+
+For the original upstream README content including installation via package managers, desktop app, agents overview, and FAQ, see the [upstream repository](https://github.com/anomalyco/opencode).
+
+---
+
+**Upstream:** [anomalyco/opencode](https://github.com/anomalyco/opencode) | **Docs:** [opencode.ai/docs](https://opencode.ai/docs) | **Discord:** [opencode.ai/discord](https://opencode.ai/discord)
