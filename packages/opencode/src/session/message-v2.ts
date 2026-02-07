@@ -806,6 +806,14 @@ export namespace MessageV2 {
           },
           { cause: e },
         ).toObject()
+      case e instanceof Error && /idle.?timeout|no data received/i.test(e.message):
+        return new MessageV2.APIError(
+          {
+            message: `Stream timed out: no data received for 60s`,
+            isRetryable: true,
+          },
+          { cause: e },
+        ).toObject()
       case e instanceof Error:
         return new NamedError.Unknown({ message: e.toString() }, { cause: e }).toObject()
       default:

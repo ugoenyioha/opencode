@@ -253,6 +253,21 @@ export namespace Session {
     return path.join(base, [input.time.created, input.slug].join("-") + ".md")
   }
 
+  /**
+   * Find a session's directory by scanning storage directly.
+   * This does NOT require Instance context — useful when the caller
+   * doesn't yet know which project the session belongs to.
+   */
+  export async function findDirectory(sessionID: string): Promise<string | undefined> {
+    const dir = path.join(Global.Path.data, "storage")
+    const glob = new Bun.Glob(`session/*/${sessionID}.json`)
+    for await (const match of glob.scan({ cwd: dir, absolute: true, onlyFiles: true })) {
+      const info = await Bun.file(match).json().catch(() => undefined)
+      if (info?.directory) return info.directory as string
+    }
+    return undefined
+  }
+
   export const get = fn(Identifier.schema("session"), async (id) => {
     const read = await Storage.read<Info>(["session", Instance.project.id, id])
     return read as Info

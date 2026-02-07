@@ -5,15 +5,11 @@ export namespace Binary {
 
     while (left <= right) {
       const mid = Math.floor((left + right) / 2)
-      const midId = compare(array[mid])
+      const cmp = compare(array[mid]).localeCompare(id)
 
-      if (midId === id) {
-        return { found: true, index: mid }
-      } else if (midId < id) {
-        left = mid + 1
-      } else {
-        right = mid - 1
-      }
+      if (cmp === 0) return { found: true, index: mid }
+      if (cmp < 0) left = mid + 1
+      else right = mid - 1
     }
 
     return { found: false, index: left }
@@ -26,13 +22,9 @@ export namespace Binary {
 
     while (left < right) {
       const mid = Math.floor((left + right) / 2)
-      const midId = compare(array[mid])
 
-      if (midId < id) {
-        left = mid + 1
-      } else {
-        right = mid
-      }
+      if (compare(array[mid]).localeCompare(id) < 0) left = mid + 1
+      else right = mid
     }
 
     array.splice(left, 0, item)
