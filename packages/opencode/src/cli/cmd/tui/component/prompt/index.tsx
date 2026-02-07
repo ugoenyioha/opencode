@@ -840,10 +840,8 @@ export function Prompt(props: PromptProps) {
           >
             <textarea
               placeholder={
-                props.sessionID
-                  ? (sync.data.suggestion[props.sessionID]
-                       ? `${sync.data.suggestion[props.sessionID]}  [→ to accept]`
-                      : undefined)
+                props.sessionID && sync.data.suggestion[props.sessionID]
+                  ? `${sync.data.suggestion[props.sessionID]}  [→ to accept]`
                   : `Ask anything... "${PLACEHOLDERS[store.placeholder]}"`
               }
               textColor={keybind.leader ? theme.textMuted : theme.text}
