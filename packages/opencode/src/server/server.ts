@@ -18,6 +18,7 @@ import { Vcs } from "../project/vcs"
 import { Agent } from "../agent/agent"
 import { Skill } from "../skill/skill"
 import { Auth } from "../auth"
+import { Session } from "../session"
 import { Flag } from "../flag/flag"
 import { Command } from "../command"
 import { Global } from "../global"
@@ -188,14 +189,21 @@ export namespace Server {
         )
         .use(async (c, next) => {
           if (c.req.path === "/log") return next()
-          const raw = c.req.query("directory") || c.req.header("x-opencode-directory") || process.cwd()
-          const directory = (() => {
+          const raw = c.req.query("directory") || c.req.header("x-opencode-directory")
+          let directory: string | undefined
+          if (raw) {
             try {
-              return decodeURIComponent(raw)
+              directory = decodeURIComponent(raw)
             } catch {
-              return raw
+              directory = raw
             }
-          })()
+          }
+          if (!directory) {
+            // For session-scoped routes, resolve directory from the stored session
+            const match = c.req.path.match(/^\/session\/(ses_[^/]+)/)
+            if (match) directory = await Session.findDirectory(match[1])
+          }
+          if (!directory) directory = process.cwd()
           return Instance.provide({
             directory,
             init: InstanceBootstrap,

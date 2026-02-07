@@ -23,6 +23,8 @@ export namespace SessionProcessor {
   export type Info = Awaited<ReturnType<typeof create>>
   export type Result = Awaited<ReturnType<Info["process"]>>
 
+  const MAX_IDLE_TIMEOUTS = 3
+
   export function create(input: {
     assistantMessage: MessageV2.Assistant
     sessionID: string
@@ -34,6 +36,7 @@ export namespace SessionProcessor {
     let blocked = false
     let attempt = 0
     let needsCompaction = false
+    let timeouts = 0
 
     const result = {
       get message() {
@@ -53,6 +56,7 @@ export namespace SessionProcessor {
             const stream = await LLM.stream(streamInput)
 
             for await (const value of stream.fullStream) {
+              timeouts = 0
               input.abort.throwIfAborted()
               switch (value.type) {
                 case "start":
@@ -346,25 +350,45 @@ export namespace SessionProcessor {
               stack: JSON.stringify(e.stack),
             })
             const error = MessageV2.fromError(e, { providerID: input.model.providerID })
-            const retry = SessionRetry.retryable(error)
-            if (retry !== undefined) {
-              attempt++
-              const delay = SessionRetry.delay(attempt, error.name === "APIError" ? error : undefined)
-              SessionStatus.set(input.sessionID, {
-                type: "retry",
-                attempt,
-                message: retry,
-                next: Date.now() + delay,
-              })
-              await SessionRetry.sleep(delay, input.abort).catch(() => {})
-              continue
+            if (
+              MessageV2.APIError.isInstance(error) &&
+              /idle.?timeout|no data received/i.test(error.data.message)
+            ) {
+              timeouts++
+              if (timeouts >= MAX_IDLE_TIMEOUTS) {
+                const msg = `Stream timed out ${timeouts} consecutive times. The provider may be buffering tool inputs without streaming deltas. Try a different model or provider.`
+                input.assistantMessage.error = new MessageV2.APIError(
+                  { message: msg, isRetryable: false },
+                ).toObject()
+                Bus.publish(Session.Event.Error, {
+                  sessionID: input.assistantMessage.sessionID,
+                  error: input.assistantMessage.error,
+                })
+                SessionStatus.set(input.sessionID, { type: "idle" })
+                // fall through to cleanup below
+              }
             }
-            input.assistantMessage.error = error
-            Bus.publish(Session.Event.Error, {
-              sessionID: input.assistantMessage.sessionID,
-              error: input.assistantMessage.error,
-            })
-            SessionStatus.set(input.sessionID, { type: "idle" })
+            if (!input.assistantMessage.error) {
+              const retry = SessionRetry.retryable(error)
+              if (retry !== undefined) {
+                attempt++
+                const delay = SessionRetry.delay(attempt, error.name === "APIError" ? error : undefined)
+                SessionStatus.set(input.sessionID, {
+                  type: "retry",
+                  attempt,
+                  message: retry,
+                  next: Date.now() + delay,
+                })
+                await SessionRetry.sleep(delay, input.abort).catch(() => {})
+                continue
+              }
+              input.assistantMessage.error = error
+              Bus.publish(Session.Event.Error, {
+                sessionID: input.assistantMessage.sessionID,
+                error: input.assistantMessage.error,
+              })
+              SessionStatus.set(input.sessionID, { type: "idle" })
+            }
           }
           if (snapshot) {
             const patch = await Snapshot.patch(snapshot)
