@@ -25,9 +25,7 @@ export const TeamCreateTool = Tool.define("team_create", {
     "You become the team lead. After creating a team, use team_spawn to add teammates, " +
     "and team_tasks to create a shared task list.",
   parameters: z.object({
-    name: z
-      .string()
-      .describe("Team name — lowercase, hyphens allowed. E.g. 'auth-review', 'feature-impl'"),
+    name: z.string().describe("Team name — lowercase, hyphens allowed. E.g. 'auth-review', 'feature-impl'"),
     tasks: z
       .array(
         z.object({
@@ -44,8 +42,8 @@ export const TeamCreateTool = Tool.define("team_create", {
       .optional()
       .describe(
         "If true, enables delegate mode: the lead is restricted to coordination-only tools " +
-        "(team_*, read, glob, grep, list). The lead cannot write, edit, or run bash commands. " +
-        "Use this when you want the lead to focus entirely on orchestration.",
+          "(team_*, read, glob, grep, list). The lead cannot write, edit, or run bash commands. " +
+          "Use this when you want the lead to focus entirely on orchestration.",
       ),
   }),
   async execute(params, ctx): Promise<{ title: string; output: string; metadata: Record<string, any> }> {
@@ -103,7 +101,9 @@ export const TeamCreateTool = Tool.define("team_create", {
         "- Use team_tasks to manage the shared task list",
         "- Use team_message to communicate with teammates",
         params.tasks?.length ? `\nInitial tasks: ${params.tasks.length}` : "",
-      ].filter(Boolean).join("\n"),
+      ]
+        .filter(Boolean)
+        .join("\n"),
       metadata: { teamName: params.name, delegate: !!params.delegate },
     }
   },
@@ -120,17 +120,14 @@ export const TeamSpawnTool = Tool.define("team_spawn", {
     "teammate (e.g. use Gemini for research and Claude for implementation).",
   parameters: z.object({
     name: z.string().describe("Unique name for this teammate, e.g. 'security-reviewer', 'frontend-impl'"),
-    agent: z
-      .string()
-      .optional()
-      .describe("Agent type to use (e.g. 'explore', 'general'). Defaults to 'general'."),
+    agent: z.string().optional().describe("Agent type to use (e.g. 'explore', 'general'). Defaults to 'general'."),
     model: z
       .string()
       .optional()
       .describe(
         "Model to use for this teammate in 'provider/model' format, e.g. 'anthropic/claude-sonnet-4-20250514', " +
-        "'google/gemini-2.5-pro', 'openai/gpt-4.1'. Must be a model available in your configured providers " +
-        "(the same models shown by /models). If omitted, inherits the agent's default or the lead's current model.",
+          "'google/gemini-2.5-pro', 'openai/gpt-4.1'. Must be a model available in your configured providers " +
+          "(the same models shown by /models). If omitted, inherits the agent's default or the lead's current model.",
       ),
     prompt: z.string().describe("Initial instructions for the teammate — what they should work on"),
     claim_task: z.string().optional().describe("Task ID to auto-claim for this teammate"),
@@ -139,9 +136,9 @@ export const TeamSpawnTool = Tool.define("team_spawn", {
       .optional()
       .describe(
         "If true, the teammate starts in read-only plan mode. " +
-        "They can read/search but cannot write/edit/bash until the lead approves their plan. " +
-        "The teammate should research, then send their plan to the lead via team_message. " +
-        "The lead can then use team_approve_plan to grant write access.",
+          "They can read/search but cannot write/edit/bash until the lead approves their plan. " +
+          "The teammate should research, then send their plan to the lead via team_message. " +
+          "The lead can then use team_approve_plan to grant write access.",
       ),
   }),
   async execute(params, ctx): Promise<{ title: string; output: string; metadata: Record<string, any> }> {
@@ -184,9 +181,7 @@ export const TeamSpawnTool = Tool.define("team_spawn", {
           await Provider.getModel(parsed.providerID, parsed.modelID)
         } catch (e: any) {
           if (Provider.ModelNotFoundError.isInstance(e)) {
-            const suggestions = e.data.suggestions?.length
-              ? ` Did you mean: ${e.data.suggestions.join(", ")}?`
-              : ""
+            const suggestions = e.data.suggestions?.length ? ` Did you mean: ${e.data.suggestions.join(", ")}?` : ""
             return { error: `Model not found: ${params.model}.${suggestions}` } as const
           }
           throw e
@@ -290,7 +285,11 @@ export const TeamSpawnTool = Tool.define("team_spawn", {
       "Only the team lead can manage the team structure.",
       ...planModeInstructions,
       "When you finish a task, use team_tasks with action 'complete' to mark it done.",
-      "Send findings, questions, or status updates to the lead with team_message.",
+      "Send findings, questions, or status updates to the lead or other teammates with team_message.",
+      "You can message any teammate by name — not just the lead. Coordinate directly with peers when useful.",
+      "",
+      "IMPORTANT: Your plain text output is NOT visible to the team lead or other teammates.",
+      "You MUST use team_message or team_broadcast to communicate. Just typing a response is not enough.",
       "",
       "Your instructions:",
       params.prompt,
@@ -323,9 +322,10 @@ export const TeamSpawnTool = Tool.define("team_spawn", {
           teamName,
           from: params.name,
           to: "lead",
-          text: status === "finished"
-            ? `I have finished my work and am now idle. Review my session (${session.id}) for results.`
-            : `I encountered an error and stopped: ${error ?? "unknown error"}. Review my session (${session.id}).`,
+          text:
+            status === "finished"
+              ? `I have finished my work and am now idle. Review my session (${session.id}) for results.`
+              : `I encountered an error and stopped: ${error ?? "unknown error"}. Review my session (${session.id}).`,
         })
       } catch (notifyErr: any) {
         log.warn("failed to notify lead of teammate completion", {
@@ -360,7 +360,13 @@ export const TeamSpawnTool = Tool.define("team_spawn", {
       ]
         .filter(Boolean)
         .join("\n"),
-      metadata: { teamName, memberName: params.name, sessionID: session.id, model: modelLabel, planApproval: params.require_plan_approval },
+      metadata: {
+        teamName,
+        memberName: params.name,
+        sessionID: session.id,
+        model: modelLabel,
+        planApproval: params.require_plan_approval,
+      },
     }
   },
 })
@@ -594,9 +600,7 @@ export const TeamApprovePlanTool = Tool.define("team_approve_plan", {
       // Update the session's permissions to remove write tool denials
       await Session.update(member.sessionID, (draft) => {
         if (draft.permission) {
-          draft.permission = draft.permission.filter(
-            (rule) => !WRITE_TOOLS.includes(rule.permission as any),
-          )
+          draft.permission = draft.permission.filter((rule) => !WRITE_TOOLS.includes(rule.permission as any))
         }
       })
 
