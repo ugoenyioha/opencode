@@ -103,6 +103,25 @@ export namespace Skill {
         })
     }
 
+    // Scan XDG-compliant skill directories (lowest priority)
+    // $XDG_DATA_HOME/opencode/skills/ and $XDG_CONFIG_HOME/opencode/skills/
+    for (const xdg of [Global.Path.data, Global.Path.config]) {
+      const root = path.join(xdg, "skills")
+      if (!(await Filesystem.isDir(root))) continue
+      await Array.fromAsync(
+        SKILL_GLOB.scan({
+          cwd: root,
+          absolute: true,
+          onlyFiles: true,
+          followSymlinks: true,
+        }),
+      )
+        .then((matches) => Promise.all(matches.map(addSkill)))
+        .catch((error) => {
+          log.error("failed to scan XDG skills", { dir: root, error })
+        })
+    }
+
     // Scan external skill directories (.claude/skills/, .agents/skills/, etc.)
     // Load global (home) first, then project-level (so project-level overwrites)
     // Each directory family has its own disable flag:
