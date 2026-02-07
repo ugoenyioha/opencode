@@ -23,6 +23,7 @@ export namespace ConfigMarkdown {
     const frontmatter = match[1]
     const lines = frontmatter.split("\n")
     const result: string[] = []
+    const seen = new Set<string>()
 
     for (const line of lines) {
       // skip comments and empty lines
@@ -45,6 +46,11 @@ export namespace ConfigMarkdown {
       }
 
       const key = kvMatch[1]
+
+      // skip duplicate top-level keys
+      if (seen.has(key)) continue
+      seen.add(key)
+
       const value = kvMatch[2].trim()
 
       // skip if value is empty, already quoted, or uses block scalar
@@ -69,22 +75,16 @@ export namespace ConfigMarkdown {
 
   export async function parse(filePath: string) {
     const template = await Bun.file(filePath).text()
-
     try {
-      const md = matter(template)
-      return md
-    } catch {
-      try {
-        return matter(fallbackSanitization(template))
-      } catch (err) {
-        throw new FrontmatterError(
-          {
-            path: filePath,
-            message: `${filePath}: Failed to parse YAML frontmatter: ${err instanceof Error ? err.message : String(err)}`,
-          },
-          { cause: err },
-        )
-      }
+      return matter(fallbackSanitization(template))
+    } catch (err) {
+      throw new FrontmatterError(
+        {
+          path: filePath,
+          message: `${filePath}: Failed to parse YAML frontmatter: ${err instanceof Error ? err.message : String(err)}`,
+        },
+        { cause: err },
+      )
     }
   }
 
