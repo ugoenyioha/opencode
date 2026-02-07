@@ -224,14 +224,29 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           break
 
         case "session.deleted": {
-          const result = Binary.search(store.session, event.properties.info.id, (s) => s.id)
+          const id = event.properties.info.id
+          const result = Binary.search(store.session, id, (s) => s.id)
           if (result.found) {
+            const messages = store.message[id]
             setStore(
-              "session",
               produce((draft) => {
-                draft.splice(result.index, 1)
+                draft.session.splice(result.index, 1)
+                if (messages) {
+                  for (const msg of messages) {
+                    if (msg?.id) delete draft.part[msg.id]
+                  }
+                }
+                delete draft.message[id]
+                delete draft.session_diff[id]
+                delete draft.todo[id]
+                delete draft.session_status[id]
+                delete draft.permission[id]
+                delete draft.question[id]
+                delete draft.suggestion[id]
+                delete draft.team[id]
               }),
             )
+            fullSyncedSessions.delete(id)
           }
           break
         }
@@ -305,10 +320,9 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           const result = Binary.search(messages, event.properties.messageID, (m) => m.id)
           if (result.found) {
             setStore(
-              "message",
-              event.properties.sessionID,
               produce((draft) => {
-                draft.splice(result.index, 1)
+                draft.message[event.properties.sessionID].splice(result.index, 1)
+                delete draft.part[event.properties.messageID]
               }),
             )
           }
