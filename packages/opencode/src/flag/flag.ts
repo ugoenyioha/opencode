@@ -21,10 +21,8 @@ export namespace Flag {
   export const OPENCODE_DISABLE_CLAUDE_CODE = truthy("OPENCODE_DISABLE_CLAUDE_CODE")
   export const OPENCODE_DISABLE_CLAUDE_CODE_PROMPT =
     OPENCODE_DISABLE_CLAUDE_CODE || truthy("OPENCODE_DISABLE_CLAUDE_CODE_PROMPT")
-  export const OPENCODE_DISABLE_CLAUDE_CODE_SKILLS =
-    OPENCODE_DISABLE_CLAUDE_CODE || truthy("OPENCODE_DISABLE_CLAUDE_CODE_SKILLS")
-  export const OPENCODE_DISABLE_EXTERNAL_SKILLS =
-    OPENCODE_DISABLE_CLAUDE_CODE_SKILLS || truthy("OPENCODE_DISABLE_EXTERNAL_SKILLS")
+  export declare const OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: boolean
+  export declare const OPENCODE_DISABLE_EXTERNAL_SKILLS: boolean
   export declare const OPENCODE_DISABLE_PROJECT_CONFIG: boolean
   export const OPENCODE_FAKE_VCS = process.env["OPENCODE_FAKE_VCS"]
   export declare const OPENCODE_CLIENT: string
@@ -88,6 +86,27 @@ Object.defineProperty(Flag, "OPENCODE_CONFIG_DIR", {
 Object.defineProperty(Flag, "OPENCODE_CLIENT", {
   get() {
     return process.env["OPENCODE_CLIENT"] ?? "cli"
+  },
+  enumerable: true,
+  configurable: false,
+})
+
+// Dynamic getter for OPENCODE_DISABLE_CLAUDE_CODE_SKILLS
+// Evaluated at access time so tests and external tooling can toggle it
+Object.defineProperty(Flag, "OPENCODE_DISABLE_CLAUDE_CODE_SKILLS", {
+  get() {
+    return truthy("OPENCODE_DISABLE_CLAUDE_CODE") || truthy("OPENCODE_DISABLE_CLAUDE_CODE_SKILLS")
+  },
+  enumerable: true,
+  configurable: false,
+})
+
+// Dynamic getter for OPENCODE_DISABLE_EXTERNAL_SKILLS
+// Independent of OPENCODE_DISABLE_CLAUDE_CODE so disabling Claude Code
+// doesn't block .agents/skills/ loading
+Object.defineProperty(Flag, "OPENCODE_DISABLE_EXTERNAL_SKILLS", {
+  get() {
+    return truthy("OPENCODE_DISABLE_EXTERNAL_SKILLS")
   },
   enumerable: true,
   configurable: false,

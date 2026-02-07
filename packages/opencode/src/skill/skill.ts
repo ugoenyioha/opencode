@@ -105,20 +105,26 @@ export namespace Skill {
 
     // Scan external skill directories (.claude/skills/, .agents/skills/, etc.)
     // Load global (home) first, then project-level (so project-level overwrites)
-    if (!Flag.OPENCODE_DISABLE_EXTERNAL_SKILLS) {
-      for (const dir of EXTERNAL_DIRS) {
-        const root = path.join(Global.Path.home, dir)
-        if (!(await Filesystem.isDir(root))) continue
-        await scanExternal(root, "global")
-      }
+    // Each directory family has its own disable flag:
+    //   .claude → OPENCODE_DISABLE_CLAUDE_CODE_SKILLS (also disabled by OPENCODE_DISABLE_CLAUDE_CODE)
+    //   .agents → OPENCODE_DISABLE_EXTERNAL_SKILLS (independent)
+    const enabledDirs = EXTERNAL_DIRS.filter((dir) => {
+      if (dir === ".claude") return !Flag.OPENCODE_DISABLE_CLAUDE_CODE_SKILLS
+      return !Flag.OPENCODE_DISABLE_EXTERNAL_SKILLS
+    })
 
-      for await (const root of Filesystem.up({
-        targets: EXTERNAL_DIRS,
-        start: Instance.directory,
-        stop: Instance.worktree,
-      })) {
-        await scanExternal(root, "project")
-      }
+    for (const dir of enabledDirs) {
+      const root = path.join(Global.Path.home, dir)
+      if (!(await Filesystem.isDir(root))) continue
+      await scanExternal(root, "global")
+    }
+
+    for await (const root of Filesystem.up({
+      targets: enabledDirs,
+      start: Instance.directory,
+      stop: Instance.worktree,
+    })) {
+      await scanExternal(root, "project")
     }
 
     // Scan .opencode/skill/ directories
