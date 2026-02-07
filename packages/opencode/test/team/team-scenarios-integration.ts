@@ -11,7 +11,7 @@
  *   bun run test/team/team-scenarios-integration.ts
  *
  * Requirements:
- *   - Claude Max subscription with working auth (opencode-claude-cli-auth plugin)
+ *   - Claude Max subscription with working auth (opencode-anthropic-auth plugin)
  *   - OPENCODE_EXPERIMENTAL_AGENT_TEAMS=1 (set below)
  *
  * Cost: ~8-15 small LLM calls worth of tokens.

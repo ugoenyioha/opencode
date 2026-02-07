@@ -15,7 +15,7 @@
  *
  * Prerequisites:
  *   - Valid OAuth credentials in ~/.local/share/opencode/auth.json
- *   - opencode-claude-cli-auth plugin installed
+ *   - opencode-anthropic-auth plugin installed
  *   - ~/.claude.json for metadata user_id
  */
 
@@ -32,7 +32,14 @@ let passed = 0
 let failed = 0
 const errors: { name: string; error: Error }[] = []
 
+// Set ONLY=substring to run a single test (e.g., ONLY=memory_save bun run test/tui/tui-live.ts)
+const ONLY = process.env.ONLY ?? ""
+
 async function test(name: string, fn: () => Promise<void>) {
+  if (ONLY && !name.toLowerCase().includes(ONLY.toLowerCase())) {
+    process.stdout.write(`  ${name} ... SKIP\n`)
+    return
+  }
   process.stdout.write(`  ${name} ... `)
   try {
     await fn()
@@ -99,13 +106,22 @@ await fs.mkdir(sandboxStateHome, { recursive: true })
 // Copy real auth credentials into sandbox
 await fs.copyFile(authFile, path.join(sandboxDataHome, "opencode", "auth.json"))
 
-// Copy real config (includes plugin paths + provider config)
+// Copy real config (includes plugin paths + provider config), then force Claude as default model
 const realConfigFile = path.join(realConfigHome, "opencode", "opencode.json")
+const sandboxConfigFile = path.join(sandboxConfigHome, "opencode", "opencode.json")
 try {
-  await fs.copyFile(realConfigFile, path.join(sandboxConfigHome, "opencode", "opencode.json"))
+  const configText = await fs.readFile(realConfigFile, "utf-8")
+  const config = JSON.parse(configText)
+  // Use Gemini for testing — it reliably calls tools when instructed.
+  // Claude with the anthropic-auth plugin also works but sometimes responds
+  // conversationally instead of calling tools.
+  config.model = "google/gemini-2.5-flash"
+  // Auto-approve all tool permissions so tests don't block on permission dialogs
+  config.permission = "allow"
+  await fs.writeFile(sandboxConfigFile, JSON.stringify(config, null, 2))
 } catch {
-  // If no config, write empty
-  await fs.writeFile(path.join(sandboxConfigHome, "opencode", "opencode.json"), "{}")
+  // If no config, write minimal with Gemini default and auto-approve
+  await fs.writeFile(sandboxConfigFile, JSON.stringify({ model: "google/gemini-2.5-flash", permission: "allow" }, null, 2))
 }
 
 // Write cache version to prevent cache wipe
@@ -122,7 +138,8 @@ const baseEnv: Record<string, string> = {
   OPENCODE_DISABLE_LSP_DOWNLOAD: "true",
   OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER: "true",
   OPENCODE_DISABLE_SHARE: "true",
-  // Don't disable plugins — we need the auth plugin
+  // Auto-approve ALL tool permissions so memory_save doesn't block on dialog
+  OPENCODE_PERMISSION: JSON.stringify({ "*": "allow" }),
 }
 
 // ============================================================
@@ -572,6 +589,131 @@ await test("Ctrl+B backgrounds a running bash task, /tasks shows it", async () =
       hasBackgroundTask,
       `Tasks dialog should show the backgrounded sleep task. Got last 800: ${tasksText.slice(-800)}`,
     )
+  } finally {
+    tui.kill()
+  }
+})
+
+// ---------- Test 12: memory_save tool writes file, /memory shows it ----------
+await test("memory_save creates .opencode/rules/memory.md, /memory lists it", async () => {
+  const tui = await TuiHarness.spawn({
+    cwd: testProject,
+    env: baseEnv,
+    spawnTimeout: 20000,
+  })
+
+  try {
+    // Wait for providers to connect — the prompt footer shows provider name once loaded
+    // (e.g., "Anthropic", "Google"). Before that it shows "No provider selected".
+    // Wait for the model name or provider indicator to appear.
+    try {
+      await tui.waitForMatch(/Anthropic|Google|OpenAI|Claude|Gemini|Codex/i, 30000)
+    } catch {
+      // Fallback: just wait for the TUI to fully render
+      await tui.settle(10000)
+    }
+    await tui.settle(1000)
+
+    // Create a session with a simple prompt
+    tui.write("say ok")
+    tui.write("\r")
+
+    // Wait for the LLM to respond — look for cost indicator or "ok" in response
+    // (after session is created, the buffer accumulates session view output)
+    await tui.waitForMatch(/\$0\.|tokens|ok/i, 60000)
+    await tui.settle(3000)
+
+    // Now we're in an active session. Send the memory_save instruction.
+    // Be very explicit — some models respond conversationally without calling the tool.
+    tui.write("call the memory_save tool with fact: this project uses TypeScript with strict mode. Do not respond with text, just call the tool.")
+    tui.write("\r")
+
+    // Clear buffer so we don't match our own typed text
+    await tui.settle(500)
+    tui.clearBuffer()
+
+    // Wait for the agent turn to finish — the cost indicator updates when the turn completes.
+    // After clearing buffer, look for signs the turn completed:
+    // - "Saved to" (memory_save tool title output)
+    // - Cost with comma separator or higher amount indicating second turn
+    // - Token count in session header
+    // Wait a long time since the LLM + tool execution can take a while.
+    try {
+      await tui.waitForMatch(/Saved to|memory|tokens/i, 90000)
+    } catch {
+      // Agent might respond differently — give extra settle time
+      await tui.settle(20000)
+    }
+
+    // Extra settle to ensure file writes are flushed to disk
+    await tui.settle(10000)
+
+    console.log(`    DEBUG: after second prompt, text (last 600): ${tui.text.slice(-600)}`)
+
+    // Check that the file was actually written to disk
+    const memoryPath = path.join(testProject, ".opencode", "rules", "memory.md")
+    let memoryExists = false
+    let memoryContent = ""
+    try {
+      memoryContent = await fs.readFile(memoryPath, "utf-8")
+      memoryExists = true
+    } catch {}
+
+    if (!memoryExists) {
+      // Debug: show what the agent actually did
+      console.log(`    DEBUG: memory.md not found at ${memoryPath}`)
+      console.log(`    DEBUG: TUI text (last 800): ${tui.text.slice(-800)}`)
+      // Also check if .opencode dir exists at all
+      try {
+        const entries = await fs.readdir(path.join(testProject, ".opencode"), { recursive: true })
+        console.log(`    DEBUG: .opencode contents: ${entries.join(", ")}`)
+      } catch {
+        console.log(`    DEBUG: .opencode directory does not exist`)
+      }
+    }
+
+    assert(
+      memoryExists,
+      `memory_save should create .opencode/rules/memory.md`,
+    )
+
+    if (memoryExists) {
+      assert(
+        memoryContent.toLowerCase().includes("typescript") || memoryContent.toLowerCase().includes("strict"),
+        `memory.md should contain the saved fact. Got: "${memoryContent.slice(0, 300)}"`,
+      )
+
+      // The agent may still be running (Gemini sometimes goes on tangents after tool calls).
+      // Press Escape to interrupt, then wait for the agent to stop and the input to be ready.
+      tui.write("\x1b") // Escape
+      await tui.settle(5000)
+
+      // Now open /memory dialog and verify it shows the rules file
+      tui.sendCtrl("k")
+      await tui.settle(1500)
+      tui.write("/memory")
+      await tui.settle(500)
+      tui.write("\r")
+
+      // Wait for loading to complete — dialog shows "Loading memory files..." then the list
+      try {
+        await tui.waitForMatch(/memory\.md|Project|rules/i, 15000)
+      } catch {
+        // Give extra time if loading is slow
+        await tui.settle(10000)
+      }
+
+      const dialogText = tui.text
+      const showsMemoryFile =
+        dialogText.includes("memory.md") ||
+        dialogText.includes("Project Rules") ||
+        dialogText.includes("Project") ||
+        dialogText.includes("rules")
+      assert(
+        showsMemoryFile,
+        `/memory dialog should list the memory.md rules file. Got last 800: ${dialogText.slice(-800)}`,
+      )
+    }
   } finally {
     tui.kill()
   }

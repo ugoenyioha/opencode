@@ -14,7 +14,7 @@
  *   bun run test/team/team-multi-model.ts
  *
  * Prerequisites:
- *   - opencode-claude-cli-auth plugin (Anthropic OAuth)
+ *   - opencode-anthropic-auth plugin (Anthropic OAuth)
  *   - opencode-gemini-auth plugin (Google OAuth)
  *   - opencode-openai-codex-auth plugin (OpenAI OAuth)
  *   - Valid credentials in ~/.local/share/opencode/auth.json
