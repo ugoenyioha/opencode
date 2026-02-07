@@ -195,6 +195,22 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
       }
     }
 
+    // Workaround: InputRenderable bulk-delete actions (delete-to-line-start,
+    // delete-to-line-end, delete-word-backward) don't emit the "input" event,
+    // so the filter signal never updates. Sync it manually after a microtask.
+    const bulk =
+      (evt.ctrl && (evt.name === "u" || evt.name === "k" || evt.name === "w")) ||
+      (evt.meta && evt.name === "backspace")
+    if (bulk) {
+      setTimeout(() => {
+        if (!input) return
+        batch(() => {
+          setStore("filter", input.value ?? "")
+          props.onFilter?.(input.value ?? "")
+        })
+      }, 0)
+    }
+
     for (const item of props.keybind ?? []) {
       if (item.disabled || !item.keybind) continue
       if (Keybind.match(item.keybind, keybind.parse(evt))) {
