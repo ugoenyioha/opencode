@@ -1393,6 +1393,8 @@ export class Session extends HeyApiClient {
       providerID?: string
       modelID?: string
       auto?: boolean
+      instructions?: string
+      boundaryMessageID?: string
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -1406,6 +1408,8 @@ export class Session extends HeyApiClient {
             { in: "body", key: "providerID" },
             { in: "body", key: "modelID" },
             { in: "body", key: "auto" },
+            { in: "body", key: "instructions" },
+            { in: "body", key: "boundaryMessageID" },
           ],
         },
       ],

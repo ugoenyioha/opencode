@@ -41,6 +41,10 @@ export type PromptProps = {
   ref?: (ref: PromptRef) => void
   hint?: JSX.Element
   showPlaceholder?: boolean
+  /** When set, submit sends a team message to this teammate instead of a normal prompt */
+  selectedTeammate?: string | null
+  /** Called after a team message is sent so the parent can reset selection state */
+  onTeammateMessageSent?: () => void
 }
 
 export type PromptRef = {
@@ -558,7 +562,28 @@ export function Prompt(props: PromptProps) {
     const currentMode = store.mode
     const variant = local.model.variant.current()
 
-    if (store.mode === "shell") {
+    // Team message interception: when a teammate is selected, send via team_message endpoint
+    if (props.selectedTeammate) {
+      const teammate = props.selectedTeammate
+      try {
+        const res = await sdk.fetch(`${sdk.url}/session/${sessionID}/team-message`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            agent: local.agent.current().name,
+            to: teammate,
+            text: inputText,
+          }),
+        })
+        if (!res.ok) {
+          toast.show({ message: `Failed to message @${teammate}`, variant: "error" })
+        }
+      } catch {
+        toast.show({ message: `Failed to message @${teammate}`, variant: "error" })
+      }
+      props.onTeammateMessageSent?.()
+      // Fall through to the clear logic below
+    } else if (store.mode === "shell") {
       sdk.client.session.shell({
         sessionID,
         agent: local.agent.current().name,
@@ -569,6 +594,23 @@ export function Prompt(props: PromptProps) {
         command: inputText,
       })
       setStore("mode", "normal")
+    } else if (
+      iife(() => {
+        if (!inputText.startsWith("/")) return false
+        const command = inputText.split(/\s/)[0].slice(1)
+        return command === "compact" || command === "summarize"
+      })
+    ) {
+      // Intercept /compact and /summarize — these are not registered commands,
+      // they trigger compaction directly via the summarize endpoint.
+      const firstSpace = inputText.indexOf(" ")
+      const instructions = firstSpace > 0 ? inputText.slice(firstSpace + 1).trim() : undefined
+      sdk.client.session.summarize({
+        sessionID,
+        modelID: selectedModel.modelID,
+        providerID: selectedModel.providerID,
+        ...(instructions ? { instructions } : {}),
+      })
     } else if (
       inputText.startsWith("/") &&
       iife(() => {
@@ -797,7 +839,11 @@ export function Prompt(props: PromptProps) {
             flexGrow={1}
           >
             <textarea
-              placeholder={props.sessionID ? undefined : `Ask anything... "${PLACEHOLDERS[store.placeholder]}"`}
+              placeholder={
+                props.sessionID && sync.data.suggestion[props.sessionID]
+                  ? `${sync.data.suggestion[props.sessionID]}  [→ to accept]`
+                  : `Ask anything... "${PLACEHOLDERS[store.placeholder]}"`
+              }
               textColor={keybind.leader ? theme.textMuted : theme.text}
               focusedTextColor={keybind.leader ? theme.textMuted : theme.text}
               minHeight={1}
@@ -813,6 +859,64 @@ export function Prompt(props: PromptProps) {
                 if (props.disabled) {
                   e.preventDefault()
                   return
+                }
+                // Ctrl+B: background running bash command — intercept here because
+                // textarea keybindings bind Ctrl+B to move-left, consuming the event
+                // before session-level useKeyboard handlers can see it
+                if (e.name === "b" && e.ctrl && props.sessionID) {
+                  const status = sync.data.session_status[props.sessionID]
+                  if (status?.type === "busy") {
+                    const msgs = sync.data.message[props.sessionID] ?? []
+                    const lastMsg = msgs.findLast((m) => m.role === "assistant")
+                    if (lastMsg) {
+                      const parts = sync.data.part[lastMsg.id] ?? []
+                      const runningBash = parts.find(
+                        (p: any) => p.type === "tool" && p.tool === "bash" && p.state?.status === "running",
+                      )
+                      if (runningBash && runningBash.type === "tool") {
+                        const metadata = (runningBash.state as { metadata?: { callID?: string } }).metadata
+                        if (metadata?.callID) {
+                          e.preventDefault()
+                          // Try state.metadata.callID first, fall back to part-level callID
+                          const bgCallID = metadata.callID || (runningBash as any).callID
+                          if (!bgCallID) return
+                          try {
+                            const res = await sdk.fetch(`${sdk.url}/task/migrate/${encodeURIComponent(bgCallID)}`, {
+                              method: "POST",
+                            })
+                            if (res.ok) {
+                              const data = (await res.json()) as { taskId: string }
+                              toast.show({ message: `Backgrounded: ${data.taskId}`, variant: "info" })
+                            } else {
+                              const body = await res.text().catch(() => "")
+                              toast.show({
+                                message: `Background failed (${res.status}): ${body.slice(0, 80) || "process not found"}`,
+                                variant: "error",
+                                duration: 5000,
+                              })
+                            }
+                          } catch (err) {
+                            toast.show({
+                              message: `Background error: ${err instanceof Error ? err.message : String(err)}`,
+                              variant: "error",
+                              duration: 5000,
+                            })
+                          }
+                          return
+                        }
+                      }
+                    }
+                  }
+                }
+                // Right arrow to accept prompt suggestion — only when prompt is empty and a suggestion exists
+                if (e.name === "right" && !e.shift && !e.ctrl && !store.prompt.input && props.sessionID) {
+                  const suggestion = sync.data.suggestion[props.sessionID]
+                  if (suggestion) {
+                    e.preventDefault()
+                    input.insertText(suggestion)
+                    setStore("prompt", "input", suggestion)
+                    return
+                  }
                 }
                 // Handle clipboard paste (Ctrl+V) - check for images first on Windows
                 // This is needed because Windows terminal doesn't properly send image data

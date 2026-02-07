@@ -47,6 +47,7 @@ export namespace Flag {
   export const OPENCODE_EXPERIMENTAL_LSP_TOOL = OPENCODE_EXPERIMENTAL || truthy("OPENCODE_EXPERIMENTAL_LSP_TOOL")
   export const OPENCODE_DISABLE_FILETIME_CHECK = truthy("OPENCODE_DISABLE_FILETIME_CHECK")
   export const OPENCODE_EXPERIMENTAL_PLAN_MODE = OPENCODE_EXPERIMENTAL || truthy("OPENCODE_EXPERIMENTAL_PLAN_MODE")
+  export declare const OPENCODE_EXPERIMENTAL_AGENT_TEAMS: boolean
   export const OPENCODE_EXPERIMENTAL_MARKDOWN = truthy("OPENCODE_EXPERIMENTAL_MARKDOWN")
   export const OPENCODE_MODELS_URL = process.env["OPENCODE_MODELS_URL"]
   export const OPENCODE_MODELS_PATH = process.env["OPENCODE_MODELS_PATH"]
@@ -87,6 +88,17 @@ Object.defineProperty(Flag, "OPENCODE_CONFIG_DIR", {
 Object.defineProperty(Flag, "OPENCODE_CLIENT", {
   get() {
     return process.env["OPENCODE_CLIENT"] ?? "cli"
+  },
+  enumerable: true,
+  configurable: false,
+})
+
+// Dynamic getter for OPENCODE_EXPERIMENTAL_AGENT_TEAMS
+// This must be evaluated at access time, not module load time,
+// because integration tests and external tooling may set this env var at runtime
+Object.defineProperty(Flag, "OPENCODE_EXPERIMENTAL_AGENT_TEAMS", {
+  get() {
+    return Flag.OPENCODE_EXPERIMENTAL || truthy("OPENCODE_EXPERIMENTAL_AGENT_TEAMS")
   },
   enumerable: true,
   configurable: false,

@@ -159,6 +159,8 @@ export namespace MessageV2 {
   export const CompactionPart = PartBase.extend({
     type: z.literal("compaction"),
     auto: z.boolean(),
+    instructions: z.string().optional(),
+    boundaryMessageID: z.string().optional(),
   }).meta({
     ref: "CompactionPart",
   })
@@ -504,7 +506,7 @@ export namespace MessageV2 {
         }
         result.push(userMessage)
         for (const part of msg.parts) {
-          if (part.type === "text" && !part.ignored)
+          if (part.type === "text" && !part.ignored && part.text)
             userMessage.parts.push({
               type: "text",
               text: part.text,
@@ -552,7 +554,7 @@ export namespace MessageV2 {
           parts: [],
         }
         for (const part of msg.parts) {
-          if (part.type === "text")
+          if (part.type === "text" && part.text)
             assistantMessage.parts.push({
               type: "text",
               text: part.text,
@@ -617,7 +619,7 @@ export namespace MessageV2 {
                 ...(differentModel ? {} : { callProviderMetadata: part.metadata }),
               })
           }
-          if (part.type === "reasoning") {
+          if (part.type === "reasoning" && part.text) {
             assistantMessage.parts.push({
               type: "reasoning",
               text: part.text,
@@ -697,14 +699,25 @@ export namespace MessageV2 {
   export async function filterCompacted(stream: AsyncIterable<MessageV2.WithParts>) {
     const result = [] as MessageV2.WithParts[]
     const completed = new Set<string>()
+    let boundaryMessageID: string | undefined
     for await (const msg of stream) {
+      // If we found a partial compaction boundary, stop collecting once we pass it
+      if (boundaryMessageID && msg.info.id < boundaryMessageID) break
       result.push(msg)
       if (
         msg.info.role === "user" &&
         completed.has(msg.info.id) &&
         msg.parts.some((part) => part.type === "compaction")
-      )
-        break
+      ) {
+        // Check if this is a partial compaction with a boundary
+        const compactionPart = msg.parts.find((part): part is MessageV2.CompactionPart => part.type === "compaction")
+        if (compactionPart?.boundaryMessageID) {
+          // Continue collecting messages back to the boundary
+          boundaryMessageID = compactionPart.boundaryMessageID
+        } else {
+          break
+        }
+      }
       if (msg.info.role === "assistant" && msg.info.summary && msg.info.finish) completed.add(msg.info.parentID)
     }
     result.reverse()

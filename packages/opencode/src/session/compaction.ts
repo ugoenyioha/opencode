@@ -95,6 +95,8 @@ export namespace SessionCompaction {
     sessionID: string
     abort: AbortSignal
     auto: boolean
+    instructions?: string
+    boundaryMessageID?: string
   }) {
     const userMessage = input.messages.findLast((m) => m.info.id === input.parentID)!.info as MessageV2.User
     const agent = await Agent.get("compaction")
@@ -137,11 +139,37 @@ export namespace SessionCompaction {
     const compacting = await Plugin.trigger(
       "experimental.session.compacting",
       { sessionID: input.sessionID },
-      { context: [], prompt: undefined },
+      { context: [] as string[], prompt: undefined as string | undefined },
     )
     const defaultPrompt =
       "Provide a detailed prompt for continuing our conversation above. Focus on information that would be helpful for continuing the conversation, including what we did, what we're doing, which files we're working on, and what we're going to do next considering new session will not have access to our conversation."
+
+    if (input.instructions) {
+      compacting.context.push("User instructions for this compaction: " + input.instructions)
+    }
+
+    if (input.boundaryMessageID) {
+      const boundaryExists = input.messages.some((m) => m.info.id === input.boundaryMessageID)
+      if (!boundaryExists) {
+        log.warn("boundary message not found, falling back to full compaction", {
+          boundaryMessageID: input.boundaryMessageID,
+        })
+        input.boundaryMessageID = undefined
+      } else {
+        compacting.context.push(
+          "Note: You are summarizing only the OLDER portion of the conversation (before a specific point chosen by the user). Messages after this point will be preserved verbatim.",
+        )
+      }
+    }
+
     const promptText = compacting.prompt ?? [defaultPrompt, ...compacting.context].join("\n\n")
+
+    // For partial compaction, only include messages before the boundary in the summary prompt.
+    // The boundary message and everything after it will be preserved in the conversation.
+    const compactionMessages = input.boundaryMessageID
+      ? input.messages.filter((m) => m.info.id < input.boundaryMessageID!)
+      : input.messages
+
     const result = await processor.process({
       user: userMessage,
       agent,
@@ -150,7 +178,7 @@ export namespace SessionCompaction {
       tools: {},
       system: [],
       messages: [
-        ...MessageV2.toModelMessages(input.messages, model),
+        ...MessageV2.toModelMessages(compactionMessages, model),
         {
           role: "user",
           content: [
@@ -202,6 +230,8 @@ export namespace SessionCompaction {
         modelID: z.string(),
       }),
       auto: z.boolean(),
+      instructions: z.string().optional(),
+      boundaryMessageID: z.string().optional(),
     }),
     async (input) => {
       const msg = await Session.updateMessage({
@@ -220,6 +250,8 @@ export namespace SessionCompaction {
         sessionID: msg.sessionID,
         type: "compaction",
         auto: input.auto,
+        instructions: input.instructions,
+        boundaryMessageID: input.boundaryMessageID,
       })
     },
   )

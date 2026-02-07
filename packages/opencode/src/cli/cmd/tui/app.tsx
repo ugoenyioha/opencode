@@ -18,6 +18,9 @@ import { DialogHelp } from "./ui/dialog-help"
 import { CommandProvider, useCommandDialog } from "@tui/component/dialog-command"
 import { DialogAgent } from "@tui/component/dialog-agent"
 import { DialogSessionList } from "@tui/component/dialog-session-list"
+import { DialogTasks } from "@tui/component/dialog-tasks"
+import { DialogTeam } from "@tui/component/dialog-team"
+import { DialogMemory } from "@tui/component/dialog-memory"
 import { KeybindProvider } from "@tui/context/keybind"
 import { ThemeProvider, useTheme } from "@tui/context/theme"
 import { Home } from "@tui/routes/home"
@@ -209,6 +212,46 @@ function App() {
     renderer.clearSelection()
   }
   const [terminalTitleEnabled, setTerminalTitleEnabled] = createSignal(kv.get("terminal_title_enabled", true))
+
+  // Session limit toasts (max turns / max budget)
+  sdk.event.listen((e) => {
+    const event = e.details as any
+    if (event?.type !== "session.limit") return
+    const { severity, message } = event.properties
+    toast.show({
+      title: severity === "warning" ? "Budget Warning" : "Limit Reached",
+      message,
+      variant: severity === "warning" ? "warning" : "error",
+      duration: severity === "warning" ? 5000 : 8000,
+    })
+  })
+
+  // Team event toasts
+  sdk.event.listen((e) => {
+    const event = e.details as any
+    if (typeof event?.type !== "string" || !event.type.startsWith("team.")) return
+
+    switch (event.type) {
+      case "team.member.status": {
+        const { memberName, status } = event.properties
+        if (status === "idle") {
+          toast.show({ message: `${memberName} is now idle`, variant: "info" })
+        } else if (status === "shutdown") {
+          toast.show({ message: `${memberName} has shut down`, variant: "warning" })
+        }
+        break
+      }
+      case "team.task.claimed": {
+        const { taskId, memberName } = event.properties
+        toast.show({ message: `${memberName} claimed task ${taskId}`, variant: "info" })
+        break
+      }
+      case "team.cleaned": {
+        toast.show({ message: `Team ${event.properties.teamName} cleaned up`, variant: "info" })
+        break
+      }
+    }
+  })
 
   createEffect(() => {
     console.log(JSON.stringify(route.data))
@@ -478,6 +521,40 @@ function App() {
       category: "System",
     },
     {
+      title: "Edit memory",
+      value: "memory.edit",
+      slash: {
+        name: "memory",
+      },
+      onSelect: () => {
+        dialog.replace(() => <DialogMemory />)
+      },
+      category: "System",
+    },
+    {
+      title: "Background tasks",
+      value: "task.list",
+      slash: {
+        name: "tasks",
+      },
+      onSelect: () => {
+        dialog.replace(() => <DialogTasks />)
+      },
+      category: "System",
+    },
+    {
+      title: "Agent team",
+      value: "team.show",
+      keybind: "team_show",
+      slash: {
+        name: "team",
+      },
+      onSelect: () => {
+        dialog.replace(() => <DialogTeam />)
+      },
+      category: "System",
+    },
+    {
       title: "Switch theme",
       value: "theme.switch",
       keybind: "theme_list",
@@ -644,6 +721,17 @@ function App() {
       type: "session",
       sessionID: evt.properties.sessionID,
     })
+  })
+
+  sdk.event.on("task.completed" as any, (evt: any) => {
+    const status = evt.properties?.status
+    const id = evt.properties?.id
+    if (id) {
+      toast.show({
+        variant: status === "completed" ? "info" : "warning",
+        message: `Background task ${status}: ${id}`,
+      })
+    }
   })
 
   sdk.event.on(SessionApi.Event.Deleted.type, (evt) => {

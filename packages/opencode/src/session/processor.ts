@@ -95,7 +95,9 @@ export namespace SessionProcessor {
                       end: Date.now(),
                     }
                     if (value.providerMetadata) part.metadata = value.providerMetadata
-                    await Session.updatePart(part)
+                    // Skip saving empty reasoning parts — they cause API errors
+                    // (e.g., Anthropic rejects messages with empty content)
+                    if (part.text) await Session.updatePart(part)
                     delete reasoningMap[value.id]
                   }
                   break
@@ -320,7 +322,9 @@ export namespace SessionProcessor {
                       end: Date.now(),
                     }
                     if (value.providerMetadata) currentText.metadata = value.providerMetadata
-                    await Session.updatePart(currentText)
+                    // Skip saving empty text parts — they cause API errors
+                    // (e.g., Anthropic rejects messages with empty content)
+                    if (currentText.text) await Session.updatePart(currentText)
                   }
                   currentText = undefined
                   break

@@ -17,11 +17,78 @@ import { Shell } from "@/shell/shell"
 import { BashArity } from "@/permission/arity"
 import { Truncate } from "./truncation"
 import { Plugin } from "@/plugin"
+import { TaskManager } from "@/task"
+import type { ChildProcess } from "child_process"
 
 const MAX_METADATA_LENGTH = 30_000
 const DEFAULT_TIMEOUT = Flag.OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
 
 export const log = Log.create({ service: "bash-tool" })
+
+// --- Foreground process registry ---
+// Tracks running bash tool processes so the TUI can migrate them to background.
+
+export interface ForegroundProcess {
+  callID: string
+  sessionID: string
+  pid: number
+  command: string
+  description: string
+  workdir: string
+  startTime: number
+  process: ChildProcess
+  output: string
+  /** Resolves the tool execution promise when migrated */
+  resolve: (result: { migrated: true; taskId: string }) => void
+  migrated: boolean
+}
+
+const foregroundProcesses = Instance.state(
+  () => new Map<string, ForegroundProcess>(),
+  async (processes) => {
+    for (const proc of processes.values()) {
+      if (!proc.migrated && proc.process.exitCode === null) {
+        try {
+          proc.process.kill()
+        } catch {}
+      }
+    }
+    processes.clear()
+  },
+)
+
+export function listForegroundProcesses(): ForegroundProcess[] {
+  return Array.from(foregroundProcesses().values()).filter(
+    (p) => !p.migrated && p.process.exitCode === null,
+  )
+}
+
+/**
+ * Migrate a foreground bash process to a background task.
+ * Returns the new task ID, or null if the process can't be migrated.
+ */
+export async function migrateToBackground(callID: string): Promise<string | null> {
+  const proc = foregroundProcesses().get(callID)
+  if (!proc || proc.migrated || proc.process.exitCode !== null) return null
+
+  log.info("migrating to background", { callID, pid: proc.pid, command: proc.command })
+
+  const task = await TaskManager.adopt({
+    process: proc.process,
+    command: proc.command,
+    workdir: proc.workdir,
+    description: proc.description,
+    initialOutput: proc.output,
+    startTime: proc.startTime,
+  })
+
+  proc.migrated = true
+  proc.resolve({ migrated: true, taskId: task.id })
+  foregroundProcesses().delete(callID)
+
+  log.info("migrated to background", { callID, taskId: task.id })
+  return task.id
+}
 
 const resolveWasm = (asset: string) => {
   if (asset.startsWith("file://")) return fileURLToPath(asset)
@@ -176,22 +243,31 @@ export const BashTool = Tool.define("bash", async () => {
       })
 
       let output = ""
+      const startTime = Date.now()
+      const callID = ctx.callID ?? `bash_${Date.now()}_${Math.random().toString(36).slice(2)}`
 
-      // Initialize metadata with empty output
+      // Initialize metadata with process info (callID enables background migration from TUI)
       ctx.metadata({
         metadata: {
           output: "",
           description: params.description,
+          callID,
+          running: true,
         },
       })
 
       const append = (chunk: Buffer) => {
         output += chunk.toString()
+        // Update foreground process output for migration
+        const fg = foregroundProcesses().get(callID)
+        if (fg) fg.output = output
         ctx.metadata({
           metadata: {
             // truncate the metadata to avoid GIANT blobs of data (has nothing to do w/ what agent can access)
             output: output.length > MAX_METADATA_LENGTH ? output.slice(0, MAX_METADATA_LENGTH) + "\n\n..." : output,
             description: params.description,
+            callID,
+            running: true,
           },
         })
       }
@@ -202,6 +278,8 @@ export const BashTool = Tool.define("bash", async () => {
       let timedOut = false
       let aborted = false
       let exited = false
+      let migrated = false
+      let migratedTaskId: string | null = null
 
       const kill = () => Shell.killTree(proc, { exited: () => exited })
 
@@ -222,11 +300,32 @@ export const BashTool = Tool.define("bash", async () => {
         void kill()
       }, timeout + 100)
 
-      await new Promise<void>((resolve, reject) => {
+      const result = await new Promise<void | { migrated: true; taskId: string }>((resolve, reject) => {
         const cleanup = () => {
           clearTimeout(timeoutTimer)
           ctx.abort.removeEventListener("abort", abortHandler)
+          foregroundProcesses().delete(callID)
         }
+
+        // Register for potential background migration
+        foregroundProcesses().set(callID, {
+          callID,
+          sessionID: ctx.sessionID,
+          pid: proc.pid!,
+          command: params.command,
+          description: params.description,
+          workdir: cwd,
+          startTime,
+          process: proc,
+          output,
+          resolve: (migrationResult) => {
+            migrated = true
+            migratedTaskId = migrationResult.taskId
+            cleanup()
+            resolve(migrationResult)
+          },
+          migrated: false,
+        })
 
         proc.once("exit", () => {
           exited = true
@@ -240,6 +339,23 @@ export const BashTool = Tool.define("bash", async () => {
           reject(error)
         })
       })
+
+      // Handle migration: return immediately with task info
+      if (migrated && migratedTaskId) {
+        const msg = `Process migrated to background task.\nTask ID: ${migratedTaskId}\nOutput so far (${output.length} bytes) preserved.\n\nUse process_query tool to check on this task later.`
+        return {
+          title: params.description,
+          metadata: {
+            output: msg,
+            exit: null as number | null,
+            description: params.description,
+            callID,
+            running: false,
+            taskId: migratedTaskId as string | undefined,
+          },
+          output: msg,
+        }
+      }
 
       const resultMetadata: string[] = []
 
@@ -261,6 +377,9 @@ export const BashTool = Tool.define("bash", async () => {
           output: output.length > MAX_METADATA_LENGTH ? output.slice(0, MAX_METADATA_LENGTH) + "\n\n..." : output,
           exit: proc.exitCode,
           description: params.description,
+          callID,
+          running: false,
+          taskId: undefined as string | undefined,
         },
         output,
       }

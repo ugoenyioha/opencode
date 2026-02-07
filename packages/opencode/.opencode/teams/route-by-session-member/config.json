@@ -1,0 +1,13 @@
+{
+  "name": "route-by-session-member",
+  "leadSessionID": "ses_3cc194a0dffeBBd89gHc5srQqG",
+  "members": [
+    {
+      "name": "reviewer",
+      "sessionID": "ses_3cc194a0dffd9yZFnNLJBoGBzw",
+      "agent": "general",
+      "status": "active"
+    }
+  ],
+  "created": 1770397283826
+}
