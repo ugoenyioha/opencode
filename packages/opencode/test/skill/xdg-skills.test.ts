@@ -37,10 +37,15 @@ describe("XDG skill directories", () => {
     }
   })
 
-  afterEach(() => {
+  afterEach(async () => {
     for (const key of envKeys) {
       if (saved[key] === undefined) delete process.env[key]
       else process.env[key] = saved[key]
+    }
+    // Clean up any skills written to the shared XDG test directories
+    const { rm } = await import("fs/promises")
+    for (const dir of [Global.Path.data, Global.Path.config]) {
+      await rm(path.join(dir, "skills"), { recursive: true, force: true }).catch(() => {})
     }
   })
 
