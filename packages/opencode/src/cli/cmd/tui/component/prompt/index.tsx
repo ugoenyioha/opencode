@@ -72,6 +72,17 @@ export function Prompt(props: PromptProps) {
   const dialog = useDialog()
   const toast = useToast()
   const status = createMemo(() => sync.data.session_status?.[props.sessionID ?? ""] ?? { type: "idle" })
+  const teamBusy = createMemo(() => {
+    const sid = props.sessionID
+    if (!sid) return 0
+    const team = sync.data.team?.[sid]
+    if (!team || team.role !== "lead") return 0
+    return team.members.filter((m) => {
+      if (m.status === "shutdown") return false
+      const s = sync.data.session_status?.[m.sessionID]
+      return s?.type === "busy"
+    }).length
+  })
   const history = usePromptHistory()
   const stash = usePromptStash()
   const command = useCommandDialog()
@@ -1125,7 +1136,21 @@ export function Prompt(props: PromptProps) {
           />
         </box>
         <box flexDirection="row" justifyContent="space-between">
-          <Show when={status().type !== "idle"} fallback={<text />}>
+          <Show
+            when={status().type !== "idle"}
+            fallback={
+              <Show when={teamBusy() > 0}>
+                <box flexDirection="row" gap={1} marginLeft={1}>
+                  <Show when={kv.get("animations_enabled", true)} fallback={<text fg={theme.textMuted}>[⋯]</text>}>
+                    <spinner color={spinnerDef().color} frames={spinnerDef().frames} interval={40} />
+                  </Show>
+                  <text fg={theme.textMuted}>
+                    {teamBusy()} teammate{teamBusy() > 1 ? "s" : ""} working
+                  </text>
+                </box>
+              </Show>
+            }
+          >
             <box
               flexDirection="row"
               gap={1}
