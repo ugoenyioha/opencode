@@ -117,14 +117,14 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
           paddingTop={1}
           paddingBottom={1}
           paddingLeft={2}
-          paddingRight={1}
+          paddingRight={2}
           border={["right"]}
           borderColor={theme.border}
           flexShrink={0}
           overflow="hidden"
         >
         <scrollbox flexGrow={1}>
-          <box flexShrink={0} gap={1} paddingRight={1}>
+          <box flexShrink={0} gap={1}>
             <box paddingRight={1}>
               <text fg={theme.text}>
                 <b>{session().title}</b>
