@@ -282,7 +282,46 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
                   </text>
                 </box>
                 <Show when={expanded.team}>
-                  {/* Task tree view when shared tasks exist */}
+                  {/* Member list — always shown */}
+                  <For each={teamMembers()}>
+                    {(member) => {
+                      const todos = createMemo(() =>
+                        (sync.data.todo[member.sessionID] ?? []).filter((t: any) => t.status !== "completed")
+                      )
+                      return (
+                        <box
+                          flexDirection="column"
+                          onMouseUp={() => {
+                            if (member.sessionID) nav.navigate({ type: "session", sessionID: member.sessionID })
+                          }}
+                        >
+                          <box flexDirection="row" gap={1}>
+                            <text
+                              flexShrink={0}
+                              fg={member.status === "active" ? theme.success : member.status === "interrupted" ? theme.warning : member.status === "shutdown" ? theme.error : theme.textMuted}
+                            >
+                              •
+                            </text>
+                            <text fg={theme.text} wrapMode="word">
+                              {member.name}
+                              <span style={{ fg: theme.textMuted }}> ({member.agent})</span>
+                            </text>
+                          </box>
+                          <Show when={member.status === "active"}>
+                            <TeammateActivity sessionID={member.sessionID} />
+                          </Show>
+                          <Show when={todos().length > 0}>
+                            <box paddingLeft={2}>
+                              <For each={todos()}>
+                                {(t: any) => <TodoItem status={t.status} content={t.content} />}
+                              </For>
+                            </box>
+                          </Show>
+                        </box>
+                      )
+                    }}
+                  </For>
+                  {/* Shared task list */}
                   <Show when={teamTasks().length > 0}>
                     <For each={teamTasks()}>
                       {(task) => {
@@ -323,35 +362,6 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
                     <text fg={theme.textMuted}>
                       {teamTasks().filter((t) => t.status === "completed").length}/{teamTasks().length} completed
                     </text>
-                  </Show>
-                  {/* Member list view when no shared tasks */}
-                  <Show when={teamTasks().length === 0}>
-                    <For each={teamMembers()}>
-                      {(member) => (
-                        <box
-                          flexDirection="column"
-                          onMouseUp={() => {
-                            if (member.sessionID) nav.navigate({ type: "session", sessionID: member.sessionID })
-                          }}
-                        >
-                          <box flexDirection="row" gap={1}>
-                            <text
-                              flexShrink={0}
-                              fg={member.status === "active" ? theme.success : member.status === "shutdown" ? theme.error : theme.textMuted}
-                            >
-                              •
-                            </text>
-                            <text fg={theme.text} wrapMode="word">
-                              {member.name}
-                              <span style={{ fg: theme.textMuted }}> ({member.agent})</span>
-                            </text>
-                          </box>
-                          <Show when={member.status === "active"}>
-                            <TeammateActivity sessionID={member.sessionID} />
-                          </Show>
-                        </box>
-                      )}
-                    </For>
                   </Show>
                 </Show>
               </box>

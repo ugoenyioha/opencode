@@ -163,7 +163,8 @@ export function Session() {
 
   const wide = createMemo(() => dimensions().width > 120)
   const sidebarVisible = createMemo(() => {
-    if (session()?.parentID) return false
+    // Hide sidebar for task subagents (child sessions) but not for teammates
+    if (session()?.parentID && !sync.data.team[route.sessionID]) return false
     if (sidebarOpen()) return true
     if (sidebar() === "auto" && wide()) return true
     return false
