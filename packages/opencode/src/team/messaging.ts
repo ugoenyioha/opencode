@@ -14,12 +14,7 @@ export namespace TeamMessaging {
    * Injects a synthetic user message into the recipient's session
    * so the LLM sees it and responds.
    */
-  export async function send(input: {
-    teamName: string
-    from: string
-    to: string
-    text: string
-  }): Promise<void> {
+  export async function send(input: { teamName: string; from: string; to: string; text: string }): Promise<void> {
     const team = await Team.get(input.teamName)
     if (!team) throw new Error(`Team "${input.teamName}" not found`)
 
@@ -55,27 +50,19 @@ export namespace TeamMessaging {
   /**
    * Broadcast a message from one member to all other members.
    */
-  export async function broadcast(input: {
-    teamName: string
-    from: string
-    text: string
-  }): Promise<void> {
+  export async function broadcast(input: { teamName: string; from: string; text: string }): Promise<void> {
     const team = await Team.get(input.teamName)
     if (!team) throw new Error(`Team "${input.teamName}" not found`)
 
     // Send to all active members except the sender
-    const targets: { name: string; sessionID: string }[] = []
+    const memberTargets = team.members
+      .filter((m) => m.name !== input.from && m.status !== "shutdown" && m.status !== "interrupted")
+      .map((m) => ({ name: m.name, sessionID: m.sessionID }))
 
-    // Include lead if sender isn't the lead
-    if (input.from !== "lead" && team.leadSessionID) {
-      targets.push({ name: "lead", sessionID: team.leadSessionID })
-    }
-
-    for (const member of team.members) {
-      if (member.name === input.from) continue
-      if (member.status === "shutdown") continue
-      targets.push({ name: member.name, sessionID: member.sessionID })
-    }
+    const targets =
+      input.from !== "lead" && team.leadSessionID
+        ? [{ name: "lead", sessionID: team.leadSessionID }, ...memberTargets]
+        : memberTargets
 
     for (const target of targets) {
       await injectMessage(target.sessionID, input.from, input.text).catch((err) => {
@@ -105,8 +92,8 @@ export namespace TeamMessaging {
     const status = SessionStatus.get(sessionID)
     if (status.type !== "idle") return
     log.info("auto-waking idle session", { sessionID, from })
-    SessionPrompt.loop({ sessionID }).catch((err: any) => {
-      log.warn("auto-wake failed", { sessionID, error: err.message })
+    SessionPrompt.loop({ sessionID }).catch((err: unknown) => {
+      log.warn("auto-wake failed", { sessionID, error: err instanceof Error ? err.message : String(err) })
     })
   }
 
@@ -115,11 +102,7 @@ export namespace TeamMessaging {
    * This is how teammates "receive" messages — as user messages
    * with a TeamMessagePart that the prompt loop will process.
    */
-  async function injectMessage(
-    sessionID: string,
-    fromName: string,
-    text: string,
-  ): Promise<void> {
+  async function injectMessage(sessionID: string, fromName: string, text: string): Promise<void> {
     // Get the session to find the current agent and model
     // Don't limit — we need to find the last user message which may not be the most recent
     const msgs = await Session.messages({ sessionID })

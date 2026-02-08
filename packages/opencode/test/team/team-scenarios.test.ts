@@ -71,12 +71,15 @@ function anthropicSSE(text: string) {
     { type: "message_stop" },
   ]
   const payload = chunks.map((c) => `event: ${c.type}\ndata: ${JSON.stringify(c)}`).join("\n\n") + "\n\n"
-  return new Response(new ReadableStream<Uint8Array>({
-    start(controller) {
-      controller.enqueue(new TextEncoder().encode(payload))
-      controller.close()
-    },
-  }), { status: 200, headers: { "Content-Type": "text/event-stream" } })
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(payload))
+        controller.close()
+      },
+    }),
+    { status: 200, headers: { "Content-Type": "text/event-stream" } },
+  )
 }
 
 beforeAll(() => {
@@ -85,7 +88,9 @@ beforeAll(() => {
     async fetch(req) {
       // Log the request
       let body: any = null
-      try { body = await req.clone().json() } catch {}
+      try {
+        body = await req.clone().json()
+      } catch {}
       serverState.requestLog.push({ body, timestamp: Date.now() })
 
       // Return default response (simple text)
@@ -236,15 +241,18 @@ describe("Scenario 1: Parallel code review — 3 reviewers, 6 tasks", () => {
         tasks = await TeamTasks.list("review-team")
         const claimed = tasks.filter((t) => t.status === "in_progress")
         expect(claimed).toHaveLength(3)
-        expect(claimed.map((t) => t.assignee).sort()).toEqual(
-          ["perf-reviewer", "security-reviewer", "test-reviewer"],
-        )
+        expect(claimed.map((t) => t.assignee).sort()).toEqual(["perf-reviewer", "security-reviewer", "test-reviewer"])
 
         // Wait for all 3 to go idle (their SessionPrompt.loop() hits mock server and finishes)
-        const allIdle = await waitFor(async () => {
-          const team = await Team.get("review-team")
-          return team!.members.every((m) => m.status === "idle")
-        }, 30000, 200, "all 3 reviewers idle")
+        const allIdle = await waitFor(
+          async () => {
+            const team = await Team.get("review-team")
+            return team!.members.every((m) => m.status === "idle")
+          },
+          30000,
+          200,
+          "all 3 reviewers idle",
+        )
         expect(allIdle).toBe(true)
 
         // Now simulate each reviewer completing their tasks and claiming the next
@@ -394,10 +402,15 @@ describe("Scenario 2: Self-claim waterfall — single worker cascading through d
         expect(reClaim).toBe(false)
 
         // Wait for loop to finish
-        await waitFor(async () => {
-          const team = await Team.get("waterfall-team")
-          return team!.members.find((m) => m.name === "worker")?.status === "idle"
-        }, 15000, 200, "worker idle")
+        await waitFor(
+          async () => {
+            const team = await Team.get("waterfall-team")
+            return team!.members.find((m) => m.name === "worker")?.status === "idle"
+          },
+          15000,
+          200,
+          "worker idle",
+        )
 
         // Cleanup
         await Team.setMemberStatus("waterfall-team", "worker", "shutdown")
@@ -462,16 +475,15 @@ describe("Scenario 3: Teammate-to-teammate debate — cross-session message exch
           teamName: "debate-team",
           from: "hypothesis-b",
           to: "hypothesis-a",
-          text: "I disagree. The nginx timeout would cause a 504, not a clean close. " +
+          text:
+            "I disagree. The nginx timeout would cause a 504, not a clean close. " +
             "I think the client-side heartbeat interval (30s) mismatches the server keep-alive (25s), " +
             "causing the server to close the connection before the next heartbeat.",
         })
 
         // Verify A received B's challenge
         let aMsgs = await Session.messages({ sessionID: sess1.id })
-        const bToA = aMsgs.find((m) =>
-          m.parts.some((p) => p.type === "text" && p.text.includes("heartbeat interval")),
-        )
+        const bToA = aMsgs.find((m) => m.parts.some((p) => p.type === "text" && p.text.includes("heartbeat interval")))
         expect(bToA).toBeDefined()
 
         // Round 3: A concedes and refines
@@ -479,7 +491,8 @@ describe("Scenario 3: Teammate-to-teammate debate — cross-session message exch
           teamName: "debate-team",
           from: "hypothesis-a",
           to: "hypothesis-b",
-          text: "Good point about the 504 vs clean close distinction. " +
+          text:
+            "Good point about the 504 vs clean close distinction. " +
             "Let me check — the keep-alive mismatch would explain the logs showing connection_closed event without error.",
         })
 
@@ -488,22 +501,22 @@ describe("Scenario 3: Teammate-to-teammate debate — cross-session message exch
           teamName: "debate-team",
           from: "hypothesis-a",
           to: "lead",
-          text: "FINDING: Root cause is likely keep-alive mismatch (server 25s vs client heartbeat 30s). " +
+          text:
+            "FINDING: Root cause is likely keep-alive mismatch (server 25s vs client heartbeat 30s). " +
             "Hypothesis-b convinced me the nginx timeout theory doesn't match the clean-close behavior.",
         })
         await TeamMessaging.send({
           teamName: "debate-team",
           from: "hypothesis-b",
           to: "lead",
-          text: "FINDING: Both teammates converged on keep-alive mismatch as root cause. " +
+          text:
+            "FINDING: Both teammates converged on keep-alive mismatch as root cause. " +
             "Recommend setting client heartbeat to 20s (below server 25s keep-alive).",
         })
 
         // Verify lead received both findings
         const leadMsgs = await Session.messages({ sessionID: lead.id })
-        const findings = leadMsgs.filter((m) =>
-          m.parts.some((p) => p.type === "text" && p.text.includes("FINDING")),
-        )
+        const findings = leadMsgs.filter((m) => m.parts.some((p) => p.type === "text" && p.text.includes("FINDING")))
         expect(findings).toHaveLength(2)
 
         // Verify the debate had multiple rounds (messages accumulated in each session)
@@ -552,22 +565,35 @@ describe("Scenario 4: Error recovery — teammate loop finishes, lead spawns rep
         const spawnTool = await TeamSpawnTool.init()
         const leadMsgs = await Session.messages({ sessionID: lead.id })
         const result1 = await spawnTool.execute(
-          { name: "investigator-1", agent: "general", prompt: "Investigate the memory leak", claim_task: "investigate" },
+          {
+            name: "investigator-1",
+            agent: "general",
+            prompt: "Investigate the memory leak",
+            claim_task: "investigate",
+          },
           mockCtx(lead.id, leadMsgs),
         )
         expect(result1.title).toContain("Spawned")
 
         // Wait for it to go idle (mock server returns quick response)
-        const idle1 = await waitFor(async () => {
-          const team = await Team.get("recovery-team")
-          return team!.members.find((m) => m.name === "investigator-1")?.status === "idle"
-        }, 15000, 200, "investigator-1 idle")
+        const idle1 = await waitFor(
+          async () => {
+            const team = await Team.get("recovery-team")
+            return team!.members.find((m) => m.name === "investigator-1")?.status === "idle"
+          },
+          15000,
+          200,
+          "investigator-1 idle",
+        )
         expect(idle1).toBe(true)
 
         // Verify lead got idle notification
         const leadMsgsAfterIdle = await Session.messages({ sessionID: lead.id })
         const idleNotif = leadMsgsAfterIdle.find((m) =>
-          m.parts.some((p) => p.type === "text" && p.text.includes("[Team message from investigator-1]") && p.text.includes("finished")),
+          m.parts.some(
+            (p) =>
+              p.type === "text" && p.text.includes("[Team message from investigator-1]") && p.text.includes("finished"),
+          ),
         )
         expect(idleNotif).toBeDefined()
 
@@ -607,10 +633,15 @@ describe("Scenario 4: Error recovery — teammate loop finishes, lead spawns rep
         expect(["active", "idle"]).toContain(inv2.status)
 
         // Wait for replacement to finish
-        await waitFor(async () => {
-          const t = await Team.get("recovery-team")
-          return t!.members.find((m) => m.name === "investigator-2")?.status === "idle"
-        }, 15000, 200, "investigator-2 idle")
+        await waitFor(
+          async () => {
+            const t = await Team.get("recovery-team")
+            return t!.members.find((m) => m.name === "investigator-2")?.status === "idle"
+          },
+          15000,
+          200,
+          "investigator-2 idle",
+        )
 
         // Cleanup
         await Team.setMemberStatus("recovery-team", "investigator-2", "shutdown")
@@ -650,7 +681,7 @@ describe("Scenario 5: Cleanup with active members blocked", () => {
         // Attempt 1: cleanup with active members → fail
         const attempt1 = await cleanupTool.execute({ name: "cleanup-team" }, mockCtx(lead.id))
         expect(attempt1.title).toBe("Cleanup failed")
-        expect(attempt1.output).toContain("active member")
+        expect(attempt1.output).toContain("active/interrupted member")
 
         // Shutdown one active member
         await Team.setMemberStatus("cleanup-team", "active-1", "shutdown")
@@ -658,7 +689,7 @@ describe("Scenario 5: Cleanup with active members blocked", () => {
         // Attempt 2: still one active member → fail
         const attempt2 = await cleanupTool.execute({ name: "cleanup-team" }, mockCtx(lead.id))
         expect(attempt2.title).toBe("Cleanup failed")
-        expect(attempt2.output).toContain("active member")
+        expect(attempt2.output).toContain("active/interrupted member")
 
         // Shutdown second active member (idle members don't block cleanup)
         await Team.setMemberStatus("cleanup-team", "active-2", "shutdown")
@@ -690,7 +721,7 @@ describe("Scenario 5: Cleanup with active members blocked", () => {
         await Team.addMember("direct-cleanup", { name: "worker", sessionID: s1.id, agent: "general", status: "active" })
 
         // Direct call should throw
-        await expect(Team.cleanup("direct-cleanup")).rejects.toThrow("active member")
+        await expect(Team.cleanup("direct-cleanup")).rejects.toThrow("active/interrupted member")
 
         // After shutdown, cleanup works
         await Team.setMemberStatus("direct-cleanup", "worker", "shutdown")
@@ -738,7 +769,12 @@ describe("Scenario 6: Large team scaling — 5 teammates concurrently", () => {
         const spawns = await Promise.all(
           names.map((name, i) =>
             spawnTool.execute(
-              { name, agent: "general", prompt: `Refactor Module ${String.fromCharCode(65 + i)}`, claim_task: `t${i + 1}` },
+              {
+                name,
+                agent: "general",
+                prompt: `Refactor Module ${String.fromCharCode(65 + i)}`,
+                claim_task: `t${i + 1}`,
+              },
               mockCtx(lead.id, leadMsgs),
             ),
           ),
@@ -759,10 +795,15 @@ describe("Scenario 6: Large team scaling — 5 teammates concurrently", () => {
         expect(assignees.size).toBe(5) // all unique
 
         // Wait for all 5 to go idle
-        const allIdle = await waitFor(async () => {
-          const t = await Team.get("large-team")
-          return t!.members.every((m) => m.status === "idle")
-        }, 45000, 200, "all 5 teammates idle")
+        const allIdle = await waitFor(
+          async () => {
+            const t = await Team.get("large-team")
+            return t!.members.every((m) => m.status === "idle")
+          },
+          45000,
+          200,
+          "all 5 teammates idle",
+        )
         expect(allIdle).toBe(true)
 
         // Verify lead received 5 idle notifications
@@ -794,9 +835,7 @@ describe("Scenario 6: Large team scaling — 5 teammates concurrently", () => {
         }
 
         // Concurrent task completion from all 5
-        await Promise.all(
-          names.map((_, i) => TeamTasks.complete("large-team", `t${i + 1}`)),
-        )
+        await Promise.all(names.map((_, i) => TeamTasks.complete("large-team", `t${i + 1}`)))
         tasks = await TeamTasks.list("large-team")
         expect(tasks.every((t) => t.status === "completed")).toBe(true)
 
@@ -833,11 +872,31 @@ describe("Scenario: Cross-layer coordination — frontend, backend, tests with d
               { id: "api-schema", content: "Define REST API schema", priority: "high" },
               { id: "db-migration", content: "Write database migration", priority: "high" },
               // Layer 2: depends on layer 1
-              { id: "backend-impl", content: "Implement API handlers", priority: "high", depends_on: ["api-schema", "db-migration"] },
-              { id: "frontend-api", content: "Generate TypeScript API client", priority: "high", depends_on: ["api-schema"] },
+              {
+                id: "backend-impl",
+                content: "Implement API handlers",
+                priority: "high",
+                depends_on: ["api-schema", "db-migration"],
+              },
+              {
+                id: "frontend-api",
+                content: "Generate TypeScript API client",
+                priority: "high",
+                depends_on: ["api-schema"],
+              },
               // Layer 3: depends on layer 2
-              { id: "frontend-ui", content: "Build React components", priority: "medium", depends_on: ["frontend-api"] },
-              { id: "integration-tests", content: "Write E2E tests", priority: "medium", depends_on: ["backend-impl", "frontend-ui"] },
+              {
+                id: "frontend-ui",
+                content: "Build React components",
+                priority: "medium",
+                depends_on: ["frontend-api"],
+              },
+              {
+                id: "integration-tests",
+                content: "Write E2E tests",
+                priority: "medium",
+                depends_on: ["backend-impl", "frontend-ui"],
+              },
             ],
           },
           mockCtx(lead.id),
@@ -950,16 +1009,12 @@ describe("Scenario: 5-way concurrent claim race", () => {
         ])
 
         // All 5 race for prize-1
-        const raceResults1 = await Promise.all(
-          members.map((name) => TeamTasks.claim("race-5", "prize-1", name)),
-        )
+        const raceResults1 = await Promise.all(members.map((name) => TeamTasks.claim("race-5", "prize-1", name)))
         const winners1 = raceResults1.filter(Boolean).length
         expect(winners1).toBe(1)
 
         // All 5 race for prize-2 (the winner of prize-1 might also try but should fail)
-        const raceResults2 = await Promise.all(
-          members.map((name) => TeamTasks.claim("race-5", "prize-2", name)),
-        )
+        const raceResults2 = await Promise.all(members.map((name) => TeamTasks.claim("race-5", "prize-2", name)))
         const winners2 = raceResults2.filter(Boolean).length
         expect(winners2).toBe(1)
 
@@ -970,7 +1025,7 @@ describe("Scenario: 5-way concurrent claim race", () => {
         // The same person could win both races since we don't prevent multi-claim.
         // Just verify both have an assignee from our member list.
         for (const t of inProgress) {
-          expect(members).toContain(t.assignee!);
+          expect(members).toContain(t.assignee!)
         }
 
         // Cleanup

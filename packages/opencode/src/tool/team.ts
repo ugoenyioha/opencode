@@ -1,6 +1,6 @@
 import z from "zod"
 import { Tool } from "./tool"
-import { Team, TeamTasks, type TeamTask } from "../team"
+import { Team, TeamTasks, WRITE_TOOLS, type TeamTask } from "../team"
 import { TeamMessaging } from "../team/messaging"
 import { Session } from "../session"
 import { SessionPrompt } from "../session/prompt"
@@ -12,9 +12,6 @@ import { Bus } from "../bus"
 import { TeamEvent } from "../team/events"
 
 const log = Log.create({ service: "tool.team" })
-
-/** Write tools that are denied during plan-approval mode */
-const WRITE_TOOLS = ["bash", "write", "edit", "apply_patch"] as const
 
 /**
  * Create a new agent team. Only the lead session should call this.
@@ -142,6 +139,15 @@ export const TeamSpawnTool = Tool.define("team_spawn", {
       ),
   }),
   async execute(params, ctx): Promise<{ title: string; output: string; metadata: Record<string, any> }> {
+    // Reserve "lead" — it's used as a routing keyword in messaging
+    if (params.name === "lead") {
+      return {
+        title: "Error",
+        output: `Name "lead" is reserved. Choose a different name for this teammate.`,
+        metadata: {},
+      }
+    }
+
     // Constraint: only the lead can spawn — teammates cannot spawn (no nesting)
     const teamInfo = await Team.findBySession(ctx.sessionID)
     if (!teamInfo) {
@@ -179,7 +185,7 @@ export const TeamSpawnTool = Tool.define("team_spawn", {
         const parsed = Provider.parseModel(params.model)
         try {
           await Provider.getModel(parsed.providerID, parsed.modelID)
-        } catch (e: any) {
+        } catch (e: unknown) {
           if (Provider.ModelNotFoundError.isInstance(e)) {
             const suggestions = e.data.suggestions?.length ? ` Did you mean: ${e.data.suggestions.join(", ")}?` : ""
             return { error: `Model not found: ${params.model}.${suggestions}` } as const
@@ -224,11 +230,12 @@ export const TeamSpawnTool = Tool.define("team_spawn", {
       { permission: "todoread", pattern: "*", action: "deny" },
     ]
 
-    // Plan approval: deny write tools until the lead approves
+    // Plan approval: deny write tools until the lead approves.
+    // Uses a tagged pattern so only these rules are removed on approval.
     if (params.require_plan_approval) {
-      for (const tool of WRITE_TOOLS) {
-        permissionRules.push({ permission: tool, pattern: "*", action: "deny" })
-      }
+      permissionRules.push(
+        ...WRITE_TOOLS.map((tool) => ({ permission: tool, pattern: "*:plan-approval", action: "deny" as const })),
+      )
     }
 
     // Create a child session for the teammate
@@ -343,11 +350,11 @@ export const TeamSpawnTool = Tool.define("team_spawn", {
               ? `I have finished my current work and am now idle. Review my session (${session.id}) for detailed results.`
               : `I encountered an error and stopped: ${error ?? "unknown error"}. Review my session (${session.id}).`,
         })
-      } catch (notifyErr: any) {
+      } catch (notifyErr: unknown) {
         log.warn("failed to notify lead of teammate completion", {
           teamName,
           name: params.name,
-          error: notifyErr.message,
+          error: notifyErr instanceof Error ? notifyErr.message : String(notifyErr),
         })
       }
     }
@@ -514,7 +521,8 @@ export const TeamTasksTool = Tool.define("team_tasks", {
         if (!params.tasks?.length) {
           return { title: "Error", output: "No tasks provided to add.", metadata: {} }
         }
-        await TeamTasks.add(teamName, params.tasks as TeamTask[])
+        const newTasks: TeamTask[] = params.tasks.map((t) => ({ ...t, status: "pending" as const }))
+        await TeamTasks.add(teamName, newTasks)
         return {
           title: `Added ${params.tasks.length} tasks`,
           output: `Added ${params.tasks.length} task(s) to the shared list.`,
@@ -606,7 +614,7 @@ export const TeamApprovePlanTool = Tool.define("team_approve_plan", {
     if (!member) {
       return { title: "Error", output: `Teammate "${params.name}" not found.`, metadata: {} }
     }
-    if (member.planApproval !== "pending") {
+    if (member.planApproval !== "pending" && member.planApproval !== "rejected") {
       return {
         title: "Error",
         output: `Teammate "${params.name}" is not awaiting plan approval (current: ${member.planApproval ?? "none"}).`,
@@ -615,10 +623,10 @@ export const TeamApprovePlanTool = Tool.define("team_approve_plan", {
     }
 
     if (params.approved) {
-      // Update the session's permissions to remove write tool denials
+      // Remove only plan-approval deny rules (tagged with "*:plan-approval" pattern)
       await Session.update(member.sessionID, (draft) => {
         if (draft.permission) {
-          draft.permission = draft.permission.filter((rule) => !WRITE_TOOLS.includes(rule.permission as any))
+          draft.permission = draft.permission.filter((rule) => rule.pattern !== "*:plan-approval")
         }
       })
 
@@ -648,12 +656,9 @@ export const TeamApprovePlanTool = Tool.define("team_approve_plan", {
         metadata: { approved: true },
       }
     } else {
-      // Rejected — keep read-only mode, update state
+      // Rejected — keep read-only mode, mark as rejected.
+      // The teammate's next plan submission resets to "pending".
       await Team.setMemberPlanApproval(teamInfo.team.name, params.name, "rejected")
-
-      // After rejection, reset to pending so they can resubmit
-      // (we keep planApproval as "pending" so the flow continues)
-      await Team.setMemberPlanApproval(teamInfo.team.name, params.name, "pending")
 
       await TeamMessaging.send({
         teamName: teamInfo.team.name,
@@ -754,7 +759,17 @@ export const TeamCleanupTool = Tool.define("team_cleanup", {
   parameters: z.object({
     name: z.string().describe("Team name to clean up"),
   }),
-  async execute(params, ctx): Promise<{ title: string; output: string; metadata: Record<string, any> }> {
+  async execute(params, ctx) {
+    // Authorization: only the lead of this specific team can clean it up
+    const teamInfo = await Team.findBySession(ctx.sessionID)
+    if (!teamInfo || teamInfo.role !== "lead" || teamInfo.team.name !== params.name) {
+      return {
+        title: "Error",
+        output: "Only the lead of this team can clean it up.",
+        metadata: {},
+      }
+    }
+
     try {
       await Team.cleanup(params.name)
       return {
@@ -762,10 +777,11 @@ export const TeamCleanupTool = Tool.define("team_cleanup", {
         output: `Team "${params.name}" has been cleaned up. All resources removed.`,
         metadata: {},
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
       return {
         title: "Cleanup failed",
-        output: `Failed to clean up team: ${err.message}`,
+        output: `Failed to clean up team: ${msg}`,
         metadata: {},
       }
     }

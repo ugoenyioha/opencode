@@ -19,12 +19,12 @@ function uniqueName(base: string): string {
   return `${base}-${Date.now()}-${++counter}`
 }
 
-const WRITE_TOOLS = ["bash", "write", "edit", "apply_patch"] as const
+const WRITE_TOOLS = ["bash", "write", "edit", "multiedit", "apply_patch"] as const
 
 function denyWriteRules() {
   return WRITE_TOOLS.map((tool) => ({
     permission: tool,
-    pattern: "*",
+    pattern: "*:plan-approval",
     action: "deny" as const,
   }))
 }
@@ -129,12 +129,10 @@ describe("TeamApprovePlanTool.execute", () => {
         expect(result.output).toContain("Write tools are now unlocked")
         expect(result.metadata.approved).toBe(true)
 
-        // 7. Verify session permissions: WRITE_TOOLS deny rules removed
+        // 7. Verify session permissions: plan-approval deny rules removed
         const updated = await Session.get(childSession.id)
-        for (const tool of WRITE_TOOLS) {
-          const hasDeny = updated.permission?.some((r) => r.permission === tool && r.action === "deny")
-          expect(hasDeny).toBe(false)
-        }
+        const planRules = updated.permission?.filter((r) => r.pattern === "*:plan-approval")
+        expect(planRules?.length ?? 0).toBe(0)
         // Base member deny rules should still be present
         expect(updated.permission?.some((r) => r.permission === "team_create" && r.action === "deny")).toBe(true)
 
@@ -203,17 +201,15 @@ describe("TeamApprovePlanTool.execute", () => {
         expect(result.output).toContain("read-only")
         expect(result.metadata.approved).toBe(false)
 
-        // Verify session permissions: WRITE_TOOLS deny rules still present
+        // Verify session permissions: plan-approval deny rules still present
         const updated = await Session.get(childSession.id)
-        for (const t of WRITE_TOOLS) {
-          const hasDeny = updated.permission?.some((r) => r.permission === t && r.action === "deny")
-          expect(hasDeny).toBe(true)
-        }
+        const planRules = updated.permission?.filter((r) => r.pattern === "*:plan-approval")
+        expect(planRules!.length).toBe(WRITE_TOOLS.length)
 
-        // Verify member planApproval reset to pending (rejected → pending round-trip)
+        // Verify member planApproval is "rejected" (stays rejected until teammate resubmits)
         const team = await Team.get(name)
         const member = team!.members.find((m) => m.name === "planner")
-        expect(member!.planApproval).toBe("pending")
+        expect(member!.planApproval).toBe("rejected")
 
         // Verify Bus event
         expect(busEvent).not.toBeNull()

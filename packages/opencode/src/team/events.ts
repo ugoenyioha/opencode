@@ -4,8 +4,13 @@ import { BusEvent } from "../bus/bus-event"
 export const MemberStatus = z.enum(["active", "idle", "shutdown", "interrupted"])
 export type MemberStatus = z.infer<typeof MemberStatus>
 
+/** Validates safe identifiers for team/member names — prevents path traversal */
+const SafeName = z
+  .string()
+  .regex(/^[a-z0-9][a-z0-9-]{0,63}$/, "Must be lowercase alphanumeric with hyphens, 1-64 chars")
+
 export const TeamMemberSchema = z.object({
-  name: z.string(),
+  name: SafeName,
   sessionID: z.string(),
   agent: z.string(),
   status: MemberStatus,
@@ -17,7 +22,7 @@ export const TeamMemberSchema = z.object({
 export type TeamMember = z.infer<typeof TeamMemberSchema>
 
 export const TeamInfoSchema = z.object({
-  name: z.string(),
+  name: SafeName,
   leadSessionID: z.string(),
   members: z.array(TeamMemberSchema),
   created: z.number(),

@@ -68,9 +68,9 @@ describe("Team", () => {
       },
       fn: async () => {
         await Team.create({ name: "dup-team", leadSessionID: "ses_1" })
-        await expect(
-          Team.create({ name: "dup-team", leadSessionID: "ses_2" }),
-        ).rejects.toThrow('Team "dup-team" already exists')
+        await expect(Team.create({ name: "dup-team", leadSessionID: "ses_2" })).rejects.toThrow(
+          'Team "dup-team" already exists',
+        )
 
         await Team.cleanup("dup-team")
       },
@@ -163,7 +163,7 @@ describe("Team", () => {
           status: "active",
         })
 
-        await expect(Team.cleanup("active-team")).rejects.toThrow("active member")
+        await expect(Team.cleanup("active-team")).rejects.toThrow("active/interrupted member")
 
         // Fix: shut down the worker, then clean up
         await Team.setMemberStatus("active-team", "busy-worker", "shutdown")
@@ -239,9 +239,7 @@ describe("TeamTasks", () => {
       },
       fn: async () => {
         await Team.create({ name: "claim-team", leadSessionID: "ses_lead" })
-        await TeamTasks.add("claim-team", [
-          { id: "t1", content: "Do work", status: "pending", priority: "high" },
-        ])
+        await TeamTasks.add("claim-team", [{ id: "t1", content: "Do work", status: "pending", priority: "high" }])
 
         const claimed = await TeamTasks.claim("claim-team", "t1", "worker-a")
         expect(claimed).toBe(true)
@@ -333,9 +331,7 @@ describe("TeamTasks", () => {
       },
       fn: async () => {
         await Team.create({ name: "update-team", leadSessionID: "ses_lead" })
-        await TeamTasks.add("update-team", [
-          { id: "old", content: "Old task", status: "pending", priority: "low" },
-        ])
+        await TeamTasks.add("update-team", [{ id: "old", content: "Old task", status: "pending", priority: "low" }])
 
         await TeamTasks.update("update-team", [
           { id: "new1", content: "New task 1", status: "pending", priority: "high" },
@@ -363,9 +359,9 @@ describe("Team constraints", () => {
         await Team.create({ name: "lead-team-1", leadSessionID: "ses_lead_single" })
 
         // Same session cannot lead a second team
-        await expect(
-          Team.create({ name: "lead-team-2", leadSessionID: "ses_lead_single" }),
-        ).rejects.toThrow("Only one team per session")
+        await expect(Team.create({ name: "lead-team-2", leadSessionID: "ses_lead_single" })).rejects.toThrow(
+          "Only one team per session",
+        )
 
         await Team.cleanup("lead-team-1")
       },
@@ -388,9 +384,9 @@ describe("Team constraints", () => {
         })
 
         // Worker session cannot create a team (no nesting)
-        await expect(
-          Team.create({ name: "nested-team", leadSessionID: "ses_worker_nest" }),
-        ).rejects.toThrow("Teammates cannot create new teams")
+        await expect(Team.create({ name: "nested-team", leadSessionID: "ses_worker_nest" })).rejects.toThrow(
+          "Teammates cannot create new teams",
+        )
 
         await Team.setMemberStatus("parent-team", "worker", "shutdown")
         await Team.cleanup("parent-team")
@@ -475,18 +471,15 @@ describe("Team tool definitions", () => {
         })
 
         const tool = await TeamCreateTool.init()
-        const result = await tool.execute(
-          { name: "nested-attempt" },
-          {
-            sessionID: "ses_guarded_worker",
-            messageID: "msg_1",
-            agent: "general",
-            abort: new AbortController().signal,
-            messages: [],
-            metadata: () => {},
-            ask: async () => {},
-          } as any,
-        )
+        const result = await tool.execute({ name: "nested-attempt" }, {
+          sessionID: "ses_guarded_worker",
+          messageID: "msg_1",
+          agent: "general",
+          abort: new AbortController().signal,
+          messages: [],
+          metadata: () => {},
+          ask: async () => {},
+        } as any)
 
         expect(result.title).toBe("Error")
         expect(result.output).toContain("Teammates cannot create new teams")
@@ -507,18 +500,15 @@ describe("Team tool definitions", () => {
         await Team.create({ name: "existing-lead-team", leadSessionID: "ses_existing_lead" })
 
         const tool = await TeamCreateTool.init()
-        const result = await tool.execute(
-          { name: "second-team" },
-          {
-            sessionID: "ses_existing_lead",
-            messageID: "msg_1",
-            agent: "general",
-            abort: new AbortController().signal,
-            messages: [],
-            metadata: () => {},
-            ask: async () => {},
-          } as any,
-        )
+        const result = await tool.execute({ name: "second-team" }, {
+          sessionID: "ses_existing_lead",
+          messageID: "msg_1",
+          agent: "general",
+          abort: new AbortController().signal,
+          messages: [],
+          metadata: () => {},
+          ask: async () => {},
+        } as any)
 
         expect(result.title).toBe("Error")
         expect(result.output).toContain("already leading team")
@@ -546,18 +536,15 @@ describe("Team tool definitions", () => {
         const tool = await TeamShutdownTool.init()
 
         // Member tries to shutdown another member — should fail
-        const result = await tool.execute(
-          { name: "worker-x" },
-          {
-            sessionID: "ses_worker_x",
-            messageID: "msg_1",
-            agent: "general",
-            abort: new AbortController().signal,
-            messages: [],
-            metadata: () => {},
-            ask: async () => {},
-          } as any,
-        )
+        const result = await tool.execute({ name: "worker-x" }, {
+          sessionID: "ses_worker_x",
+          messageID: "msg_1",
+          agent: "general",
+          abort: new AbortController().signal,
+          messages: [],
+          metadata: () => {},
+          ask: async () => {},
+        } as any)
 
         expect(result.title).toBe("Error")
         expect(result.output).toContain("Only the team lead")
@@ -576,18 +563,15 @@ describe("Team tool definitions", () => {
       },
       fn: async () => {
         const tool = await TeamClaimTool.init()
-        const result = await tool.execute(
-          { task_id: "t1" },
-          {
-            sessionID: "ses_orphan",
-            messageID: "msg_1",
-            agent: "general",
-            abort: new AbortController().signal,
-            messages: [],
-            metadata: () => {},
-            ask: async () => {},
-          } as any,
-        )
+        const result = await tool.execute({ task_id: "t1" }, {
+          sessionID: "ses_orphan",
+          messageID: "msg_1",
+          agent: "general",
+          abort: new AbortController().signal,
+          messages: [],
+          metadata: () => {},
+          ask: async () => {},
+        } as any)
 
         expect(result.title).toBe("Error")
         expect(result.output).toContain("not part of any team")
@@ -609,18 +593,15 @@ describe("Team tool definitions", () => {
         ])
 
         const tool = await TeamTasksTool.init()
-        const result = await tool.execute(
-          { action: "list" },
-          {
-            sessionID: "ses_tasks_lead",
-            messageID: "msg_1",
-            agent: "general",
-            abort: new AbortController().signal,
-            messages: [],
-            metadata: () => {},
-            ask: async () => {},
-          } as any,
-        )
+        const result = await tool.execute({ action: "list" }, {
+          sessionID: "ses_tasks_lead",
+          messageID: "msg_1",
+          agent: "general",
+          abort: new AbortController().signal,
+          messages: [],
+          metadata: () => {},
+          ask: async () => {},
+        } as any)
 
         expect(result.title).toBe("Task list")
         expect(result.output).toContain("First task")

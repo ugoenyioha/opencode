@@ -1,4 +1,5 @@
 import path from "path"
+import { mkdir, readdir, rm } from "fs/promises"
 import { Log } from "../util/log"
 import { Lock } from "../util/lock"
 import { Bus } from "../bus"
@@ -15,6 +16,9 @@ import {
 
 export { TeamEvent, TeamInfoSchema, TeamTaskSchema, type TeamInfo, type TeamMember, type TeamTask } from "./events"
 
+/** Write tools that are denied during plan-approval or delegate mode */
+export const WRITE_TOOLS = ["bash", "write", "edit", "multiedit", "apply_patch"] as const
+
 const log = Log.create({ service: "team" })
 
 function teamsDir(): string {
@@ -22,7 +26,11 @@ function teamsDir(): string {
 }
 
 function teamDir(teamName: string): string {
-  return path.join(teamsDir(), teamName)
+  const resolved = path.resolve(teamsDir(), teamName)
+  if (!resolved.startsWith(teamsDir())) {
+    throw new Error(`Invalid team name: "${teamName}" — path traversal detected`)
+  }
+  return resolved
 }
 
 function configPath(teamName: string): string {
@@ -34,7 +42,6 @@ function tasksPath(teamName: string): string {
 }
 
 async function ensureDir(dir: string) {
-  const { mkdir } = await import("fs/promises")
   await mkdir(dir, { recursive: true })
 }
 
@@ -42,11 +49,8 @@ export namespace Team {
   /**
    * Create a new team. The lead session is the caller's session.
    */
-  export async function create(input: {
-    name: string
-    leadSessionID: string
-    delegate?: boolean
-  }): Promise<TeamInfo> {
+  export async function create(input: { name: string; leadSessionID: string; delegate?: boolean }): Promise<TeamInfo> {
+    using _lock = await Lock.write("team-create")
     const existing = await get(input.name)
     if (existing) {
       throw new Error(`Team "${input.name}" already exists`)
@@ -55,7 +59,9 @@ export namespace Team {
     // One team per lead session — prevent a session from leading multiple teams
     const existingLead = await findBySession(input.leadSessionID)
     if (existingLead && existingLead.role === "lead") {
-      throw new Error(`Session is already leading team "${existingLead.team.name}". Only one team per session is allowed.`)
+      throw new Error(
+        `Session is already leading team "${existingLead.team.name}". Only one team per session is allowed.`,
+      )
     }
     // Prevent teammates from creating teams (no nesting)
     if (existingLead && existingLead.role === "member") {
@@ -98,16 +104,11 @@ export namespace Team {
    * List all teams in this project.
    */
   export async function list(): Promise<TeamInfo[]> {
-    const { readdir } = await import("fs/promises")
     const dir = teamsDir()
     try {
       const entries = await readdir(dir)
-      const teams: TeamInfo[] = []
-      for (const entry of entries) {
-        const team = await get(entry)
-        if (team) teams.push(team)
-      }
-      return teams
+      const results = await Promise.all(entries.map((entry) => get(entry)))
+      return results.filter((t): t is TeamInfo => t !== undefined)
     } catch {
       return []
     }
@@ -116,10 +117,7 @@ export namespace Team {
   /**
    * Add a member to a team. Writes config and publishes event.
    */
-  export async function addMember(
-    teamName: string,
-    member: TeamMember,
-  ): Promise<void> {
+  export async function addMember(teamName: string, member: TeamMember): Promise<void> {
     using _ = await Lock.write(`team:${teamName}`)
     const team = await get(teamName)
     if (!team) throw new Error(`Team "${teamName}" not found`)
@@ -141,11 +139,7 @@ export namespace Team {
   /**
    * Update a member's status.
    */
-  export async function setMemberStatus(
-    teamName: string,
-    memberName: string,
-    status: MemberStatus,
-  ): Promise<void> {
+  export async function setMemberStatus(teamName: string, memberName: string, status: MemberStatus): Promise<void> {
     using _ = await Lock.write(`team:${teamName}`)
     const team = await get(teamName)
     if (!team) return
@@ -193,10 +187,7 @@ export namespace Team {
   /**
    * Remove a member from a team.
    */
-  export async function removeMember(
-    teamName: string,
-    memberName: string,
-  ): Promise<void> {
+  export async function removeMember(teamName: string, memberName: string): Promise<void> {
     using _ = await Lock.write(`team:${teamName}`)
     const team = await get(teamName)
     if (!team) return
@@ -210,7 +201,9 @@ export namespace Team {
   /**
    * Find which team a session belongs to (as lead or member).
    */
-  export async function findBySession(sessionID: string): Promise<{ team: TeamInfo; role: "lead" | "member"; memberName?: string } | undefined> {
+  export async function findBySession(
+    sessionID: string,
+  ): Promise<{ team: TeamInfo; role: "lead" | "member"; memberName?: string } | undefined> {
     const teams = await list()
     for (const team of teams) {
       if (team.leadSessionID === sessionID) {
@@ -232,14 +225,13 @@ export namespace Team {
     const team = await get(teamName)
     if (!team) throw new Error(`Team "${teamName}" not found`)
 
-    const active = team.members.filter((m) => m.status === "active")
-    if (active.length > 0) {
+    const alive = team.members.filter((m) => m.status === "active" || m.status === "interrupted")
+    if (alive.length > 0) {
       throw new Error(
-        `Cannot clean up team "${teamName}": ${active.length} active member(s): ${active.map((m) => m.name).join(", ")}. Shut them down first.`,
+        `Cannot clean up team "${teamName}": ${alive.length} active/interrupted member(s): ${alive.map((m) => m.name).join(", ")}. Shut them down first.`,
       )
     }
 
-    const { rm } = await import("fs/promises")
     await rm(teamDir(teamName), { recursive: true, force: true })
 
     log.info("team cleaned up", { teamName })
@@ -297,10 +289,10 @@ export namespace Team {
             synthetic: true,
           })
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         log.warn("failed to notify lead of interrupted teammates", {
           teamName: team.name,
-          error: err.message,
+          error: err instanceof Error ? err.message : String(err),
         })
       }
     }
@@ -359,11 +351,7 @@ export namespace TeamTasks {
   /**
    * Atomically claim a task. Returns true if claimed, false if already taken.
    */
-  export async function claim(
-    teamName: string,
-    taskId: string,
-    memberName: string,
-  ): Promise<boolean> {
+  export async function claim(teamName: string, taskId: string, memberName: string): Promise<boolean> {
     using _ = await Lock.write(`team-tasks:${teamName}`)
     let tasks: TeamTask[]
     try {

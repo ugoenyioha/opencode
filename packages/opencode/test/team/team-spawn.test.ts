@@ -53,7 +53,7 @@ const BASE_DENY_PERMISSIONS = [
   "todoread",
 ]
 
-const WRITE_TOOLS = ["bash", "write", "edit", "apply_patch"]
+const WRITE_TOOLS = ["bash", "write", "edit", "multiedit", "apply_patch"]
 
 describe("TeamSpawnTool.execute", () => {
   // ── Error: non-lead (member) trying to spawn ──────────────────────
@@ -324,11 +324,11 @@ describe("TeamSpawnTool.execute", () => {
           })
         }
 
-        // Write tools MUST be denied when plan approval is required
+        // Write tools MUST be denied when plan approval is required (tagged pattern)
         for (const wt of WRITE_TOOLS) {
           expect(childSession.permission).toContainEqual({
             permission: wt,
-            pattern: "*",
+            pattern: "*:plan-approval",
             action: "deny",
           })
         }
