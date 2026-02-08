@@ -187,7 +187,7 @@ const ContextInfo = (props: { context: Accessor<string | undefined>; cost: Acces
   )
 }
 
-export function Header() {
+export function Header(props: { sidebarVisible?: boolean }) {
   const route = useRouteData("session")
   const sync = useSync()
   const session = createMemo(() => sync.session.get(route.sessionID)!)
@@ -306,7 +306,7 @@ export function Header() {
           </Match>
         </Switch>
       </box>
-      <Show when={teamInfo()}>
+      <Show when={teamInfo() && !props.sidebarVisible}>
         <TeamStatusBar teamInfo={teamInfo()} />
       </Show>
     </box>
