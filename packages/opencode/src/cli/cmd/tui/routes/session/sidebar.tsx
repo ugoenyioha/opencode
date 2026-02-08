@@ -264,107 +264,21 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
                 </Show>
               </box>
             </Show>
-            <Show when={teamInfo() && teamMembers().length > 0}>
-              <box>
-                <box
-                  flexDirection="row"
-                  gap={1}
-                  onMouseDown={() => setExpanded("team", !expanded.team)}
-                >
-                  <text fg={theme.text}>{expanded.team ? "▼" : "▶"}</text>
-                  <text fg={theme.text}>
-                    <b>Team</b>
-                    <Show when={!expanded.team}>
-                      <span style={{ fg: theme.textMuted }}>
-                        {" "}({teamMembers().filter((m) => m.status === "active").length} active, {teamMembers().length} total)
-                      </span>
-                    </Show>
-                  </text>
-                </box>
-                <Show when={expanded.team}>
-                  {/* Member list — always shown */}
-                  <For each={teamMembers()}>
-                    {(member) => {
-                      const todos = createMemo(() =>
-                        (sync.data.todo[member.sessionID] ?? []).filter((t: any) => t.status !== "completed")
-                      )
-                      return (
-                        <box
-                          flexDirection="column"
-                          onMouseUp={() => {
-                            if (member.sessionID) nav.navigate({ type: "session", sessionID: member.sessionID })
-                          }}
-                        >
-                          <box flexDirection="row" gap={1}>
-                            <text
-                              flexShrink={0}
-                              fg={member.status === "active" ? theme.success : member.status === "interrupted" ? theme.warning : member.status === "shutdown" ? theme.error : theme.textMuted}
-                            >
-                              •
-                            </text>
-                            <text fg={theme.text} wrapMode="word">
-                              {member.name}
-                              <span style={{ fg: theme.textMuted }}> ({member.agent})</span>
-                            </text>
-                          </box>
-                          <Show when={member.status === "active"}>
-                            <TeammateActivity sessionID={member.sessionID} />
-                          </Show>
-                          <Show when={todos().length > 0}>
-                            <box paddingLeft={2}>
-                              <For each={todos()}>
-                                {(t: any) => <TodoItem status={t.status} content={t.content} />}
-                              </For>
-                            </box>
-                          </Show>
-                        </box>
-                      )
-                    }}
-                  </For>
-                  {/* Shared task list */}
-                  <Show when={teamTasks().length > 0}>
-                    <For each={teamTasks()}>
-                      {(task) => {
-                        const assignee = createMemo(() => task.assignee ? teamMembers().find((m) => m.name === task.assignee) : undefined)
-                        return (
-                          <box
-                            flexDirection="column"
-                            onMouseUp={() => {
-                              const a = assignee()
-                              if (a?.sessionID) nav.navigate({ type: "session", sessionID: a.sessionID })
-                            }}
-                          >
-                            <box flexDirection="row" gap={1}>
-                              <text fg={teamTaskColor(task.status, theme)} flexShrink={0} wrapMode="none">
-                                {teamTaskIcon(task.status)}
-                              </text>
-                              <text fg={task.status === "in_progress" ? theme.text : theme.textMuted} wrapMode="word">
-                                {task.content}
-                              </text>
-                            </box>
-                            <Show when={task.assignee}>
-                              <text fg={theme.primary} paddingLeft={2} wrapMode="none">
-                                @{task.assignee}
-                              </text>
-                            </Show>
-                            <Show when={task.depends_on && task.depends_on.length > 0 && task.status === "blocked"}>
-                              <text fg={theme.textMuted} paddingLeft={2} wrapMode="none">
-                                blocked by {task.depends_on!.map((d) => `#${d}`).join(", ")}
-                              </text>
-                            </Show>
-                            <Show when={task.status === "in_progress" && assignee()?.status === "active"}>
-                              <TeammateActivity sessionID={assignee()!.sessionID} />
-                            </Show>
-                          </box>
-                        )
-                      }}
-                    </For>
-                    <text fg={theme.textMuted}>
-                      {teamTasks().filter((t) => t.status === "completed").length}/{teamTasks().length} completed
-                    </text>
-                  </Show>
-                </Show>
-              </box>
+            <Show when={teamInfo()}>
+              <Show when={(teamInfo() as any)?.role === "member"}>
+                <TeamMemberSidebar
+                  teamInfo={teamInfo()}
+                  sessionID={props.sessionID}
+                  teamTasks={teamTasks()}
+                />
+              </Show>
+              <Show when={(teamInfo() as any)?.role !== "member" && teamMembers().length > 0}>
+                <TeamLeadSidebar
+                  teamInfo={teamInfo()}
+                  teamMembers={teamMembers()}
+                  teamTasks={teamTasks()}
+                />
+              </Show>
             </Show>
             <Show when={diff().length > 0}>
               <box>
@@ -462,6 +376,238 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
       />
       </box>
     </Show>
+  )
+}
+
+function memberColor(status: string, theme: any) {
+  switch (status) {
+    case "active":
+      return theme.success
+    case "interrupted":
+      return theme.warning
+    case "shutdown":
+      return theme.error
+    default:
+      return theme.textMuted
+  }
+}
+
+/** Lead's team sidebar — compact overview with truncated per-member todos */
+function TeamLeadSidebar(props: {
+  teamInfo: any
+  teamMembers: Array<{ name: string; sessionID: string; agent: string; status: string; model?: string }>
+  teamTasks: Array<{ id: string; content: string; status: string; priority: string; assignee?: string; depends_on?: string[] }>
+}) {
+  const sync = useSync()
+  const { theme } = useTheme()
+  const nav = useRoute()
+  const [expanded, setExpanded] = createSignal(true)
+
+  return (
+    <box>
+      <box
+        flexDirection="row"
+        gap={1}
+        onMouseDown={() => setExpanded(!expanded())}
+      >
+        <text fg={theme.text}>{expanded() ? "▼" : "▶"}</text>
+        <text fg={theme.text}>
+          <b>Team</b>
+          <Show when={!expanded()}>
+            <span style={{ fg: theme.textMuted }}>
+              {" "}({props.teamMembers.filter((m) => m.status === "active").length} active, {props.teamMembers.length} total)
+            </span>
+          </Show>
+        </text>
+      </box>
+      <Show when={expanded()}>
+        <For each={props.teamMembers}>
+          {(member) => {
+            const todos = createMemo(() =>
+              (sync.data.todo[member.sessionID] ?? []).filter((t: any) => t.status !== "completed")
+            )
+            const visible = createMemo(() => todos().slice(0, 2))
+            const remaining = createMemo(() => Math.max(0, todos().length - 2))
+            return (
+              <box
+                flexDirection="column"
+                onMouseUp={() => {
+                  if (member.sessionID) nav.navigate({ type: "session", sessionID: member.sessionID })
+                }}
+              >
+                <box flexDirection="row" gap={1}>
+                  <text flexShrink={0} fg={memberColor(member.status, theme)}>•</text>
+                  <text fg={theme.text} wrapMode="word">
+                    {member.name}
+                    <span style={{ fg: theme.textMuted }}> ({member.agent})</span>
+                  </text>
+                </box>
+                <Show when={member.status === "active"}>
+                  <TeammateActivity sessionID={member.sessionID} />
+                </Show>
+                <Show when={visible().length > 0}>
+                  <box paddingLeft={2}>
+                    <For each={visible()}>
+                      {(t: any) => <TodoItem status={t.status} content={t.content} />}
+                    </For>
+                    <Show when={remaining() > 0}>
+                      <text fg={theme.textMuted}>+{remaining()} more</text>
+                    </Show>
+                  </box>
+                </Show>
+              </box>
+            )
+          }}
+        </For>
+        <Show when={props.teamTasks.length > 0}>
+          <For each={props.teamTasks}>
+            {(task) => {
+              const assignee = createMemo(() => task.assignee ? props.teamMembers.find((m) => m.name === task.assignee) : undefined)
+              return (
+                <box
+                  flexDirection="column"
+                  onMouseUp={() => {
+                    const a = assignee()
+                    if (a?.sessionID) nav.navigate({ type: "session", sessionID: a.sessionID })
+                  }}
+                >
+                  <box flexDirection="row" gap={1}>
+                    <text fg={teamTaskColor(task.status, theme)} flexShrink={0} wrapMode="none">
+                      {teamTaskIcon(task.status)}
+                    </text>
+                    <text fg={task.status === "in_progress" ? theme.text : theme.textMuted} wrapMode="word">
+                      {task.content}
+                    </text>
+                  </box>
+                  <Show when={task.assignee}>
+                    <text fg={theme.primary} paddingLeft={2} wrapMode="none">
+                      @{task.assignee}
+                    </text>
+                  </Show>
+                  <Show when={task.depends_on && task.depends_on.length > 0 && task.status === "blocked"}>
+                    <text fg={theme.textMuted} paddingLeft={2} wrapMode="none">
+                      blocked by {task.depends_on!.map((d) => `#${d}`).join(", ")}
+                    </text>
+                  </Show>
+                  <Show when={task.status === "in_progress" && assignee()?.status === "active"}>
+                    <TeammateActivity sessionID={assignee()!.sessionID} />
+                  </Show>
+                </box>
+              )
+            }}
+          </For>
+          <text fg={theme.textMuted}>
+            {props.teamTasks.filter((t) => t.status === "completed").length}/{props.teamTasks.length} completed
+          </text>
+        </Show>
+      </Show>
+    </box>
+  )
+}
+
+/** Teammate's team sidebar — full detail for this member, compact view of others */
+function TeamMemberSidebar(props: {
+  teamInfo: any
+  sessionID: string
+  teamTasks: Array<{ id: string; content: string; status: string; priority: string; assignee?: string; depends_on?: string[] }>
+}) {
+  const sync = useSync()
+  const { theme } = useTheme()
+  const nav = useRoute()
+  const [expanded, setExpanded] = createSignal(true)
+
+  const info = () => props.teamInfo as { teamName: string; role: string; memberName: string; members: any[]; tasks: any[] }
+  const members = createMemo(() => (info().members ?? []) as Array<{ name: string; sessionID: string; agent: string; status: string }>)
+  const todos = createMemo(() =>
+    (sync.data.todo[props.sessionID] ?? []).filter((t: any) => t.status !== "completed")
+  )
+  const completedCount = createMemo(() =>
+    (sync.data.todo[props.sessionID] ?? []).filter((t: any) => t.status === "completed").length
+  )
+  const totalCount = createMemo(() => (sync.data.todo[props.sessionID] ?? []).length)
+
+  return (
+    <box>
+      <box
+        flexDirection="row"
+        gap={1}
+        onMouseDown={() => setExpanded(!expanded())}
+      >
+        <text fg={theme.text}>{expanded() ? "▼" : "▶"}</text>
+        <text fg={theme.text}>
+          <b>Team: {info().teamName}</b>
+        </text>
+      </box>
+      <Show when={expanded()}>
+        <text fg={theme.textMuted}>
+          Role: member ({info().memberName})
+        </text>
+        {/* Full individual todo list */}
+        <Show when={todos().length > 0}>
+          <box paddingTop={1}>
+            <text fg={theme.text}><b>My Tasks</b></text>
+            <For each={todos()}>
+              {(t: any) => <TodoItem status={t.status} content={t.content} />}
+            </For>
+            <Show when={totalCount() > 0}>
+              <text fg={theme.textMuted}>
+                {completedCount()}/{totalCount()} completed
+              </text>
+            </Show>
+          </box>
+        </Show>
+        {/* Compact teammate list */}
+        <Show when={members().length > 0}>
+          <box paddingTop={1}>
+            <text fg={theme.text}><b>Teammates</b></text>
+            <For each={members()}>
+              {(member) => (
+                <box
+                  flexDirection="row"
+                  gap={1}
+                  onMouseUp={() => {
+                    if (member.sessionID) nav.navigate({ type: "session", sessionID: member.sessionID })
+                  }}
+                >
+                  <text flexShrink={0} fg={memberColor(member.status, theme)}>•</text>
+                  <text fg={member.name === info().memberName ? theme.primary : theme.text} wrapMode="word">
+                    {member.name}
+                    <Show when={member.name === info().memberName}>
+                      <span style={{ fg: theme.textMuted }}> (you)</span>
+                    </Show>
+                    <span style={{ fg: theme.textMuted }}> — {member.status}</span>
+                  </text>
+                </box>
+              )}
+            </For>
+          </box>
+        </Show>
+        {/* Shared task list */}
+        <Show when={props.teamTasks.length > 0}>
+          <box paddingTop={1}>
+            <text fg={theme.text}><b>Shared Tasks</b></text>
+            <For each={props.teamTasks}>
+              {(task) => (
+                <box flexDirection="row" gap={1}>
+                  <text fg={teamTaskColor(task.status, theme)} flexShrink={0} wrapMode="none">
+                    {teamTaskIcon(task.status)}
+                  </text>
+                  <text fg={task.status === "in_progress" ? theme.text : theme.textMuted} wrapMode="word">
+                    {task.content}
+                    <Show when={task.assignee}>
+                      <span style={{ fg: theme.primary }}> @{task.assignee}</span>
+                    </Show>
+                  </text>
+                </box>
+              )}
+            </For>
+            <text fg={theme.textMuted}>
+              {props.teamTasks.filter((t) => t.status === "completed").length}/{props.teamTasks.length} completed
+            </text>
+          </box>
+        </Show>
+      </Show>
+    </box>
   )
 }
 
