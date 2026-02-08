@@ -357,6 +357,7 @@ export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
         if (auth.type !== "oauth") return {}
 
         // Filter models to only allowed Codex models for OAuth
+        // Check both the model key and the underlying api.id to support config aliases
         const allowedModels = new Set([
           "gpt-5.1-codex-max",
           "gpt-5.1-codex-mini",
@@ -365,8 +366,8 @@ export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
           "gpt-5.3-codex",
           "gpt-5.1-codex",
         ])
-        for (const modelId of Object.keys(provider.models)) {
-          if (!allowedModels.has(modelId)) {
+        for (const [modelId, model] of Object.entries(provider.models)) {
+          if (!allowedModels.has(modelId) && !allowedModels.has(model.api?.id ?? modelId)) {
             delete provider.models[modelId]
           }
         }
