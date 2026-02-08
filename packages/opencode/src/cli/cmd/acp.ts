@@ -6,6 +6,7 @@ import { ACP } from "@/acp/agent"
 import { Server } from "@/server/server"
 import { createOpencodeClient } from "@opencode-ai/sdk/v2"
 import { withNetworkOptions, resolveNetworkOptions } from "../network"
+import { socketStream, websocketStream } from "@/acp/stream"
 
 const log = Log.create({ service: "acp-command" })
 
@@ -13,11 +14,22 @@ export const AcpCommand = cmd({
   command: "acp",
   describe: "start ACP (Agent Client Protocol) server",
   builder: (yargs) => {
-    return withNetworkOptions(yargs).option("cwd", {
-      describe: "working directory",
-      type: "string",
-      default: process.cwd(),
-    })
+    return withNetworkOptions(yargs)
+      .option("cwd", {
+        describe: "working directory",
+        type: "string",
+        default: process.cwd(),
+      })
+      .option("transport", {
+        describe: "ACP transport: stdio (default), socket (NDJSON over unix socket), websocket (WS over unix socket)",
+        type: "string",
+        choices: ["stdio", "socket", "websocket"] as const,
+        default: "stdio",
+      })
+      .option("acp-socket", {
+        describe: "unix socket path for ACP protocol (used with --transport socket or websocket)",
+        type: "string",
+      })
   },
   handler: async (args) => {
     process.env.OPENCODE_CLIENT = "acp"
@@ -35,6 +47,31 @@ export const AcpCommand = cmd({
             baseUrl: `http://${server.hostname}:${server.port}`,
           })
 
+      const agent = await ACP.init({ sdk })
+      const transport = args.transport as "stdio" | "socket" | "websocket"
+
+      if (transport === "socket" || transport === "websocket") {
+        const path = args["acp-socket"]
+        if (!path) {
+          console.error("--acp-socket is required when using --transport socket or websocket")
+          process.exit(1)
+        }
+
+        const result = transport === "socket" ? await socketStream(path) : await websocketStream(path)
+
+        log.info("acp transport ready", { transport, path })
+
+        new AgentSideConnection((conn) => {
+          return agent.create(conn, { sdk })
+        }, result.stream)
+
+        log.info("acp connection established", { transport })
+        await new Promise(() => {}) // keep alive
+        result.cleanup()
+        return
+      }
+
+      // Default: stdio transport
       const input = new WritableStream<Uint8Array>({
         write(chunk) {
           return new Promise<void>((resolve, reject) => {
@@ -59,13 +96,12 @@ export const AcpCommand = cmd({
       })
 
       const stream = ndJsonStream(input, output)
-      const agent = await ACP.init({ sdk })
 
       new AgentSideConnection((conn) => {
         return agent.create(conn, { sdk })
       }, stream)
 
-      log.info("setup connection")
+      log.info("acp connection established", { transport: "stdio" })
       process.stdin.resume()
       await new Promise((resolve, reject) => {
         process.stdin.on("end", resolve)
