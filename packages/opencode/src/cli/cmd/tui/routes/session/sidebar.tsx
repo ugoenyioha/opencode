@@ -112,14 +112,12 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
         />
         <box
           backgroundColor={theme.backgroundPanel}
-          width={width() - 1}
+          width={width() - 2}
           height="100%"
           paddingTop={1}
           paddingBottom={1}
           paddingLeft={2}
-          paddingRight={2}
-          border={["right"]}
-          borderColor={theme.border}
+          paddingRight={1}
           flexShrink={0}
           overflow="hidden"
         >
@@ -443,6 +441,13 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
           </text>
         </box>
       </box>
+      {/* Right border */}
+      <box
+        width={1}
+        height="100%"
+        backgroundColor={theme.border}
+        flexShrink={0}
+      />
       </box>
     </Show>
   )
