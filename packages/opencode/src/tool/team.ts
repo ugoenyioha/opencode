@@ -771,10 +771,16 @@ export const TeamCleanupTool = Tool.define("team_cleanup", {
     }
 
     try {
+      const wasDelegate = teamInfo.team.delegate === true
       await Team.cleanup(params.name)
       return {
         title: `Team cleaned up: ${params.name}`,
-        output: `Team "${params.name}" has been cleaned up. All resources removed.`,
+        output: [
+          `Team "${params.name}" has been cleaned up. All resources removed.`,
+          wasDelegate ? "Delegate mode restrictions have been removed. You can now use all tools again." : "",
+        ]
+          .filter(Boolean)
+          .join("\n"),
         metadata: {},
       }
     } catch (err: unknown) {

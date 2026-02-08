@@ -220,6 +220,7 @@ export namespace Team {
   /**
    * Clean up a team — removes config and task files.
    * Fails if any members are still active.
+   * Restores lead session permissions if delegate mode was active.
    */
   export async function cleanup(teamName: string): Promise<void> {
     const team = await get(teamName)
@@ -230,6 +231,24 @@ export namespace Team {
       throw new Error(
         `Cannot clean up team "${teamName}": ${alive.length} active/interrupted member(s): ${alive.map((m) => m.name).join(", ")}. Shut them down first.`,
       )
+    }
+
+    // Restore lead session permissions if delegate mode was active
+    if (team.delegate) {
+      try {
+        const { Session } = await import("../session")
+        await Session.update(team.leadSessionID, (draft) => {
+          draft.permission = (draft.permission ?? []).filter(
+            (rule) => !((WRITE_TOOLS as readonly string[]).includes(rule.permission) && rule.action === "deny"),
+          )
+        })
+        log.info("restored lead session permissions", { teamName, sessionID: team.leadSessionID })
+      } catch (err: unknown) {
+        log.warn("failed to restore lead session permissions", {
+          teamName,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
     }
 
     await rm(teamDir(teamName), { recursive: true, force: true })
