@@ -298,6 +298,10 @@ export const TeamSpawnTool = Tool.define("team_spawn", {
       "Send findings, questions, or status updates to the lead or other teammates with team_message.",
       "You can message any teammate by name — not just the lead. Coordinate directly with peers when useful.",
       "",
+      "SUBAGENT RELAY: If you use the task tool to spawn subagents, they CANNOT communicate with the team.",
+      "Subagents are your private utilities — they return results only to you. You are responsible for",
+      "relaying any relevant findings from your subagents to the team via team_message or team_broadcast.",
+      "",
       "IMPORTANT: Your plain text output is NOT visible to the team lead or other teammates.",
       "You MUST use team_message or team_broadcast to communicate. Just typing a response is not enough.",
       "",
@@ -390,7 +394,8 @@ export const TeamSpawnTool = Tool.define("team_spawn", {
 export const TeamMessageTool = Tool.define("team_message", {
   description:
     "Send a message to a specific teammate or the team lead. " +
-    "Use this to share findings, ask questions, or coordinate work.",
+    "Use this to share findings, ask questions, or coordinate work. " +
+    "Note: task subagents cannot use this tool — only teammates and the lead.",
   parameters: z.object({
     to: z.string().describe("Name of the recipient teammate, or 'lead' to message the team lead"),
     text: z.string().describe("The message content"),

@@ -11,6 +11,20 @@ import { defer } from "@/util/defer"
 import { Config } from "../config/config"
 import { PermissionNext } from "@/permission/next"
 
+/** All team tools that must be denied for task subagents to prevent
+ *  accidental bridge into the team communication graph. */
+const TEAM_TOOLS = [
+  "team_create",
+  "team_spawn",
+  "team_message",
+  "team_broadcast",
+  "team_tasks",
+  "team_claim",
+  "team_approve_plan",
+  "team_shutdown",
+  "team_cleanup",
+] as const
+
 const parameters = z.object({
   description: z.string().describe("A short (3-5 words) description of the task"),
   prompt: z.string().describe("The task for the agent to perform"),
@@ -82,7 +96,7 @@ export const TaskTool = Tool.define("task", async (ctx) => {
             ...(caller?.permission ?? []),
             // Inherit parent session's accumulated permission rules
             ...(parentSession?.permission ?? []),
-            // Subagent-specific overrides (deny todowrite/todoread/task)
+            // Subagent-specific overrides (deny todowrite/todoread/task/team tools)
             {
               permission: "todowrite",
               pattern: "*",
@@ -102,6 +116,13 @@ export const TaskTool = Tool.define("task", async (ctx) => {
                     action: "deny" as const,
                   },
                 ]),
+            // Deny all team tools — subagents are private utilities,
+            // not participants in the team communication graph.
+            ...TEAM_TOOLS.map((t) => ({
+              permission: t,
+              pattern: "*" as const,
+              action: "deny" as const,
+            })),
             ...(config.experimental?.primary_tools?.map((t) => ({
               pattern: "*",
               action: "allow" as const,
@@ -147,6 +168,9 @@ export const TaskTool = Tool.define("task", async (ctx) => {
           todowrite: false,
           todoread: false,
           ...(hasTaskPermission ? {} : { task: false }),
+          // Hide all team tools from subagents — they communicate
+          // only with their parent, never directly with the team.
+          ...Object.fromEntries(TEAM_TOOLS.map((t) => [t, false])),
           ...Object.fromEntries((config.experimental?.primary_tools ?? []).map((t) => [t, false])),
         },
         parts: promptParts,

@@ -54,6 +54,14 @@ Preloaded skills are injected into the system prompt array in `packages/opencode
 - **Team spawn** (`team.ts`): When a teammate is spawned, the resolved agent's `skills` are preloaded via the same system prompt injection. The teammate's context message also mentions which skills are preloaded.
 - Subagents do NOT inherit skills from the parent agent — skills must be listed explicitly on each agent.
 
+### Tool isolation: task subagents vs teammates
+
+Task subagents and teammates have different tool access:
+
+- **Teammates** get team communication tools (`team_message`, `team_broadcast`, `team_tasks`, `team_claim`) but NOT lead-only tools (`team_create`, `team_spawn`, `team_shutdown`, `team_cleanup`, `team_approve_plan`).
+- **Task subagents** get NO team tools at all. All 9 team tools are denied via permission rules and hidden from the LLM's tool list. Subagents are private utilities of the agent that spawned them.
+- **Relay pattern**: Teammates are responsible for relaying relevant subagent findings to the team via `team_message` or `team_broadcast`. This is intentional — it prevents uncoordinated noise in team communication and keeps teammates as single points of accountability for their work.
+
 ### Key files
 
 | File | Role |
