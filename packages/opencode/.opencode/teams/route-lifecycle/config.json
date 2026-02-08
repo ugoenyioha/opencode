@@ -6,7 +6,7 @@
       "name": "worker-1",
       "sessionID": "ses_3cc194a0affdadOglUHYrUd8Sr",
       "agent": "build",
-      "status": "active"
+      "status": "interrupted"
     }
   ],
   "created": 1770397283830

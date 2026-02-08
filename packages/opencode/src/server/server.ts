@@ -578,6 +578,7 @@ export namespace Server {
   export function listen(opts: {
     port: number
     hostname: string
+    unix?: string
     mdns?: boolean
     mdnsDomain?: string
     cors?: string[]
@@ -585,14 +586,36 @@ export namespace Server {
     _corsWhitelist = opts.cors ?? []
 
     const args = {
-      hostname: opts.hostname,
       idleTimeout: 0,
       fetch: App().fetch,
       websocket: websocket,
     } as const
+
+    // Unix socket mode
+    if (opts.unix) {
+      // Remove stale socket file if it exists
+      try {
+        const { unlinkSync } = require("fs")
+        unlinkSync(opts.unix)
+      } catch {}
+      const server = Bun.serve({ fetch: args.fetch, websocket: args.websocket, unix: opts.unix })
+      _url = new URL(`unix://${opts.unix}`)
+      const originalStop = server.stop.bind(server)
+      server.stop = async (closeActiveConnections?: boolean) => {
+        try {
+          const { unlinkSync } = require("fs")
+          unlinkSync(opts.unix!)
+        } catch {}
+        return originalStop(closeActiveConnections)
+      }
+      return server
+    }
+
+    // TCP mode
+    const tcpArgs = { ...args, hostname: opts.hostname }
     const tryServe = (port: number) => {
       try {
-        return Bun.serve({ ...args, port })
+        return Bun.serve({ ...tcpArgs, port })
       } catch {
         return undefined
       }

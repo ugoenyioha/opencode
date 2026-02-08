@@ -12,6 +12,10 @@ const options = {
     describe: "hostname to listen on",
     default: "127.0.0.1",
   },
+  unix: {
+    type: "string" as const,
+    describe: "unix socket path to listen on (overrides port/hostname)",
+  },
   mdns: {
     type: "boolean" as const,
     describe: "enable mDNS service discovery (defaults hostname to 0.0.0.0)",
@@ -40,10 +44,12 @@ export async function resolveNetworkOptions(args: NetworkOptions) {
   const config = await Config.global()
   const portExplicitlySet = process.argv.includes("--port")
   const hostnameExplicitlySet = process.argv.includes("--hostname")
+  const unixExplicitlySet = process.argv.includes("--unix")
   const mdnsExplicitlySet = process.argv.includes("--mdns")
   const mdnsDomainExplicitlySet = process.argv.includes("--mdns-domain")
   const corsExplicitlySet = process.argv.includes("--cors")
 
+  const unix = unixExplicitlySet ? args.unix : config?.server?.unix
   const mdns = mdnsExplicitlySet ? args.mdns : (config?.server?.mdns ?? args.mdns)
   const mdnsDomain = mdnsDomainExplicitlySet ? args["mdns-domain"] : (config?.server?.mdnsDomain ?? args["mdns-domain"])
   const port = portExplicitlySet ? args.port : (config?.server?.port ?? args.port)
@@ -56,5 +62,5 @@ export async function resolveNetworkOptions(args: NetworkOptions) {
   const argsCors = Array.isArray(args.cors) ? args.cors : args.cors ? [args.cors] : []
   const cors = [...configCors, ...argsCors]
 
-  return { hostname, port, mdns, mdnsDomain, cors }
+  return { hostname, port, unix, mdns, mdnsDomain, cors }
 }

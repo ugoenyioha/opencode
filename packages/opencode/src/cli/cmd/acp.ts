@@ -25,9 +25,15 @@ export const AcpCommand = cmd({
       const opts = await resolveNetworkOptions(args)
       const server = Server.listen(opts)
 
-      const sdk = createOpencodeClient({
-        baseUrl: `http://${server.hostname}:${server.port}`,
-      })
+      const sdk = opts.unix
+        ? createOpencodeClient({
+            baseUrl: "http://opencode.internal",
+            fetch: ((input: RequestInfo | URL, init?: RequestInit) =>
+              fetch(input, { ...init, unix: opts.unix } as any)) as typeof fetch,
+          })
+        : createOpencodeClient({
+            baseUrl: `http://${server.hostname}:${server.port}`,
+          })
 
       const input = new WritableStream<Uint8Array>({
         write(chunk) {

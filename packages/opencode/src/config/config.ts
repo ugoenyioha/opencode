@@ -702,10 +702,7 @@ export namespace Config {
         .optional()
         .describe("Maximum number of agentic iterations before forcing text-only response"),
       maxSteps: z.number().int().positive().optional().describe("@deprecated Use 'steps' field instead."),
-      skills: z
-        .array(z.string())
-        .optional()
-        .describe("Skill names to preload into the agent's context at startup"),
+      skills: z.array(z.string()).optional().describe("Skill names to preload into the agent's context at startup"),
       permission: Permission.optional(),
     })
     .catchall(z.any())
@@ -918,7 +915,11 @@ export namespace Config {
       team_show: z.string().optional().default("<leader>w").describe("Show agent team status and tasks"),
       team_next: z.string().optional().default("<leader>j").describe("Navigate to next teammate session"),
       team_previous: z.string().optional().default("<leader>k").describe("Navigate to previous teammate session"),
-      team_delegate: z.string().optional().default("<leader>d").describe("Toggle delegate mode (lead coordination-only)"),
+      team_delegate: z
+        .string()
+        .optional()
+        .default("<leader>d")
+        .describe("Toggle delegate mode (lead coordination-only)"),
     })
     .strict()
     .meta({
@@ -943,6 +944,7 @@ export namespace Config {
     .object({
       port: z.number().int().positive().optional().describe("Port to listen on"),
       hostname: z.string().optional().describe("Hostname to listen on"),
+      unix: z.string().optional().describe("Unix socket path to listen on (overrides port/hostname)"),
       mdns: z.boolean().optional().describe("Enable mDNS service discovery"),
       mdnsDomain: z.string().optional().describe("Custom domain name for mDNS service (default: opencode.local)"),
       cors: z.array(z.string()).optional().describe("Additional domains to allow for CORS"),
@@ -1196,7 +1198,9 @@ export namespace Config {
             .int()
             .positive()
             .optional()
-            .describe("Maximum number of turns (LLM calls) per session before auto-stopping. Safety guard against infinite loops."),
+            .describe(
+              "Maximum number of turns (LLM calls) per session before auto-stopping. Safety guard against infinite loops.",
+            ),
           max_budget_usd: z
             .number()
             .positive()

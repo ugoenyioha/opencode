@@ -1,0 +1,36 @@
+[
+  {
+    "id": "opening",
+    "content": "Opening statements from all debaters (2-3 key arguments each)",
+    "status": "completed",
+    "priority": "high",
+    "assignee": "senator-cruz"
+  },
+  {
+    "id": "rebuttal",
+    "content": "Rebuttals - each debater responds to opposing arguments",
+    "status": "completed",
+    "priority": "high",
+    "depends_on": [
+      "opening"
+    ]
+  },
+  {
+    "id": "cross-exam",
+    "content": "Cross-examination - direct questions between sides",
+    "status": "completed",
+    "priority": "medium",
+    "depends_on": [
+      "rebuttal"
+    ]
+  },
+  {
+    "id": "closing",
+    "content": "Closing statements summarizing strongest arguments",
+    "status": "completed",
+    "priority": "medium",
+    "depends_on": [
+      "cross-exam"
+    ]
+  }
+]

@@ -116,10 +116,10 @@ export const rpc = {
       body,
     }
   },
-  async server(input: { port: number; hostname: string; mdns?: boolean; cors?: string[] }) {
+  async server(input: { port: number; hostname: string; unix?: string; mdns?: boolean; cors?: string[] }) {
     if (server) await server.stop(true)
     server = Server.listen(input)
-    return { url: server.url.toString() }
+    return { url: input.unix ? `unix://${input.unix}` : server.url.toString() }
   },
   async checkUpgrade(input: { directory: string }) {
     await Instance.provide({
