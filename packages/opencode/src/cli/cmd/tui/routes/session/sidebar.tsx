@@ -130,7 +130,7 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
                 <b>{session().title}</b>
               </text>
               <Show when={session().share?.url}>
-                <text fg={theme.textMuted}>{session().share!.url}</text>
+                <text fg={theme.textMuted} wrapMode="char">{session().share!.url}</text>
               </Show>
             </box>
             <box>
@@ -375,7 +375,7 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
                     {(item) => {
                       return (
                         <box flexDirection="row" gap={1} justifyContent="space-between">
-                          <text fg={theme.textMuted} wrapMode="none">
+                          <text fg={theme.textMuted} wrapMode="char">
                             {item.file}
                           </text>
                           <box flexDirection="row" gap={1} flexShrink={0}>
@@ -430,7 +430,7 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
               </box>
             </box>
           </Show>
-          <text>
+          <text wrapMode="char">
             <span style={{ fg: theme.textMuted }}>{directory().split("/").slice(0, -1).join("/")}/</span>
             <span style={{ fg: theme.text }}>{directory().split("/").at(-1)}</span>
           </text>
