@@ -245,6 +245,72 @@ export namespace Team {
     log.info("team cleaned up", { teamName })
     await Bus.publish(TeamEvent.Cleaned, { teamName })
   }
+
+  /**
+   * Mark teammates that were active when the server died as "interrupted"
+   * and inject a notification into the lead session so the LLM knows to
+   * resume them when the user next sends a message.
+   *
+   * Called once during InstanceBootstrap.
+   */
+  export async function recover(): Promise<{ interrupted: number }> {
+    const teams = await list()
+    let interrupted = 0
+
+    for (const team of teams) {
+      const active = team.members.filter((m) => m.status === "active")
+      if (active.length === 0) continue
+
+      log.info("marking interrupted teammates", { teamName: team.name, count: active.length })
+
+      const names: string[] = []
+      for (const member of active) {
+        await setMemberStatus(team.name, member.name, "interrupted")
+        names.push(member.name)
+        interrupted++
+      }
+
+      // Inject a notification into the lead session so the LLM knows
+      // teammates were interrupted and can resume them on the next prompt.
+      try {
+        const { Session } = await import("../session")
+        const { Identifier } = await import("../id/id")
+        const msgs = await Session.messages({ sessionID: team.leadSessionID })
+        const lastUser = msgs.findLast((m) => m.info.role === "user")
+        if (lastUser) {
+          const info = lastUser.info as { agent: string; model: { providerID: string; modelID: string } }
+          const msgId = Identifier.ascending("message")
+          await Session.updateMessage({
+            id: msgId,
+            sessionID: team.leadSessionID,
+            role: "user",
+            agent: info.agent,
+            model: info.model,
+            time: { created: Date.now() },
+          })
+          await Session.updatePart({
+            id: Identifier.ascending("part"),
+            messageID: msgId,
+            sessionID: team.leadSessionID,
+            type: "text",
+            text: `[System]: Server was restarted. The following teammates in team "${team.name}" were interrupted and need to be resumed: ${names.join(", ")}. Use team_message or team_broadcast to tell them to continue their work.`,
+            synthetic: true,
+          })
+        }
+      } catch (err: any) {
+        log.warn("failed to notify lead of interrupted teammates", {
+          teamName: team.name,
+          error: err.message,
+        })
+      }
+    }
+
+    if (interrupted > 0) {
+      log.info("team recovery complete", { interrupted })
+    }
+
+    return { interrupted }
+  }
 }
 
 export namespace TeamTasks {

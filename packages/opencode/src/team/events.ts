@@ -1,7 +1,7 @@
 import z from "zod"
 import { BusEvent } from "../bus/bus-event"
 
-export const MemberStatus = z.enum(["active", "idle", "shutdown"])
+export const MemberStatus = z.enum(["active", "idle", "shutdown", "interrupted"])
 export type MemberStatus = z.infer<typeof MemberStatus>
 
 export const TeamMemberSchema = z.object({
