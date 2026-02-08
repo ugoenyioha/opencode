@@ -14,6 +14,8 @@ function statusIcon(status: string): string {
       return "*"
     case "idle":
       return "o"
+    case "interrupted":
+      return "!"
     case "shutdown":
       return "x"
     case "completed":
@@ -37,6 +39,8 @@ function statusColor(status: string, theme: any): string {
       return theme.primary
     case "idle":
       return theme.textMuted
+    case "interrupted":
+      return theme.warning
     case "shutdown":
       return theme.error
     case "completed":
@@ -66,7 +70,7 @@ export function DialogTeam() {
   // Refresh team data on open
   onMount(() => {
     dialog.setSize("large")
-    fetch(`${sdk.url}/team/by-session/${route.sessionID}`)
+    sdk.fetch(`${sdk.url}/team/by-session/${route.sessionID}`)
       .then((r) => r.json())
       .then((data: any) => {
         if (!data) return

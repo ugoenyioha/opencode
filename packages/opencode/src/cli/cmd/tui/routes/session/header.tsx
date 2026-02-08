@@ -18,6 +18,8 @@ function memberStatusIcon(status: string): string {
       return "*"
     case "idle":
       return "o"
+    case "interrupted":
+      return "!"
     case "shutdown":
       return "x"
     default:
@@ -86,6 +88,8 @@ function TeamStatusBar(props: { teamInfo: any }) {
                 return theme.success
               case "idle":
                 return theme.textMuted
+              case "interrupted":
+                return theme.warning
               case "shutdown":
                 return theme.error
               default:
