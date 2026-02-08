@@ -87,7 +87,9 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
     <Show when={session()}>
       <box
         flexDirection="row"
+        width={width()}
         height="100%"
+        flexShrink={0}
         position={props.overlay ? "absolute" : "relative"}
       >
         {/* Drag handle */}
@@ -441,11 +443,11 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
           </text>
         </box>
       </box>
-      {/* Right border */}
+      {/* Right border — matches panel background so it's invisible */}
       <box
         width={1}
         height="100%"
-        backgroundColor={theme.border}
+        backgroundColor={theme.backgroundPanel}
         flexShrink={0}
       />
       </box>

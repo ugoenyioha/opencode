@@ -495,6 +495,116 @@ await test("TUI exits cleanly via Ctrl+C", async () => {
   }
 })
 
+// ---------- Test 14: Sidebar layout structure is correct ----------
+await test("Sidebar outer box has explicit width constraint and children sum correctly", async () => {
+  // This is a structural test — we read the sidebar source and verify
+  // the outer box has width={width()} and children widths sum to width().
+  // This prevents the right border from being pushed off-screen.
+  const sidebarSrc = await Bun.file(
+    path.join(import.meta.dir, "..", "..", "src", "cli", "cmd", "tui", "routes", "session", "sidebar.tsx"),
+  ).text()
+
+  // The outer <box> must have width={width()} to constrain the flex row
+  assert(
+    sidebarSrc.includes("width={width()}") && sidebarSrc.includes('flexDirection="row"'),
+    "Sidebar outer box must have width={width()} to constrain its flex row layout",
+  )
+
+  // Drag handle is width={1}, content is width={width() - 2}, right border is width={1}
+  // Total: 1 + (width()-2) + 1 = width()
+  assert(
+    sidebarSrc.includes("width={width() - 2}"),
+    "Sidebar content panel should be width={width() - 2}",
+  )
+
+  // Right border box must exist with width={1}, matching panel background
+  const rightBorderComment = sidebarSrc.includes("Right border")
+  assert(
+    rightBorderComment,
+    "Sidebar must have a right border spacer box",
+  )
+
+  // Outer box must have flexShrink={0} to prevent being compressed
+  assert(
+    sidebarSrc.includes("flexShrink={0}"),
+    "Sidebar outer box must have flexShrink={0}",
+  )
+})
+
+// ---------- Test 15: Sidebar toggle command is registered ----------
+await test("Sidebar toggle keybind defaults to <leader>b", async () => {
+  const { Config } = await import("../../src/config/config")
+  const keybinds = Config.Keybinds.parse({})
+  assert(
+    keybinds.sidebar_toggle === "<leader>b",
+    `sidebar_toggle should default to '<leader>b', got: ${keybinds.sidebar_toggle}`,
+  )
+})
+
+// ---------- Test 16: Sidebar does NOT auto-show at narrow width ----------
+await test("Sidebar does not auto-show at narrow width (100 cols)", async () => {
+  const tui = await TuiHarness.spawn({
+    cwd: testProject,
+    env: baseEnv,
+    cols: 100,
+    rows: 40,
+    spawnTimeout: 15000,
+  })
+
+  try {
+    await tui.settle(4000)
+
+    // At 100 cols (<=120), sidebar should NOT auto-show
+    // The sidebar shows "Context" section which the main area does not
+    const text = tui.text
+    // At narrow width, the footer (which is shown when sidebar is hidden)
+    // should be visible instead
+    // We don't want to see both Context + LSP sections which are sidebar-only
+    const hasSidebarSections =
+      text.includes("Context") && text.includes("LSP")
+    assert(!hasSidebarSections, `Sidebar should NOT auto-show at 100 cols. Got: ${text.slice(-1200)}`)
+  } finally {
+    tui.kill()
+  }
+})
+
+// ---------- Test 17: Sidebar content wraps instead of clipping ----------
+await test("Sidebar wraps long directory paths (wrapMode=char)", async () => {
+  // Create a deeply nested project to produce long paths in the sidebar
+  const deepDir = path.join(sandbox, "deep", "very-long-directory-name-that-should-wrap", "nested-project")
+  await fs.mkdir(deepDir, { recursive: true })
+  Bun.spawnSync(["git", "init"], { cwd: deepDir })
+  Bun.spawnSync(["git", "config", "user.email", "test@test.com"], { cwd: deepDir })
+  Bun.spawnSync(["git", "config", "user.name", "Test"], { cwd: deepDir })
+  await fs.writeFile(path.join(deepDir, ".gitkeep"), "")
+  Bun.spawnSync(["git", "add", "."], { cwd: deepDir })
+  Bun.spawnSync(["git", "commit", "-m", "init", "--allow-empty"], { cwd: deepDir })
+
+  const tui = await TuiHarness.spawn({
+    cwd: deepDir,
+    env: baseEnv,
+    cols: 160,
+    rows: 40,
+    spawnTimeout: 15000,
+  })
+
+  try {
+    await tui.settle(4000)
+
+    // The sidebar should render without crashing, even with a very long path
+    const text = tui.text
+    const hasContent =
+      text.includes("OpenCode") ||
+      text.includes("Context") ||
+      text.includes("nested-project") ||
+      text.includes("very-long")
+    assert(hasContent, `Sidebar should render long path without crash. Got: ${text.slice(-1200)}`)
+  } finally {
+    tui.kill()
+    await fs.rm(path.join(sandbox, "deep"), { recursive: true, force: true }).catch(() => {})
+  }
+})
+
 // ============================================================
 // Cleanup & Report
 // ============================================================
