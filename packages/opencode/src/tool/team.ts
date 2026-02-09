@@ -384,7 +384,7 @@ export const TeamClaimTool = Tool.define("team_claim", {
   description:
     "Claim a pending task from the team's shared task list. " +
     "Only pending, unassigned tasks with resolved dependencies can be claimed. " +
-    "Uses file locking to prevent race conditions.",
+    "Atomic operation — prevents race conditions.",
   parameters: z.object({
     task_id: z.string().describe("The ID of the task to claim"),
   }),
