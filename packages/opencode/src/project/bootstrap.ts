@@ -13,6 +13,7 @@ import { Log } from "@/util/log"
 import { ShareNext } from "@/share/share-next"
 import { Snapshot } from "../snapshot"
 import { Truncate } from "../tool/truncation"
+import { Flag } from "@/flag/flag"
 
 export async function InstanceBootstrap() {
   Log.Default.info("bootstrapping", { directory: Instance.directory })
@@ -32,4 +33,14 @@ export async function InstanceBootstrap() {
       await Project.setInitialized(Instance.project.id)
     }
   })
+
+  // Mark interrupted teammates after a server restart.
+  // Fire-and-forget: don't block bootstrap completion.
+  if (Flag.OPENCODE_EXPERIMENTAL_AGENT_TEAMS) {
+    import("../team").then(({ Team }) =>
+      Team.recover().catch((err) => {
+        Log.Default.warn("team recovery failed", { error: err instanceof Error ? err.message : err })
+      }),
+    )
+  }
 }
