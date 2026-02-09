@@ -34,6 +34,35 @@ function tasksKey(name: string): string[] {
 
 export namespace Team {
   /**
+   * Subscribe to member status changes and auto-cleanup teams
+   * when all members have reached "shutdown" status.
+   * Called once during InstanceBootstrap.
+   */
+  export function autoCleanup(): () => void {
+    return Bus.subscribe(TeamEvent.MemberStatusChanged, async (event) => {
+      if (event.properties.status !== "shutdown") return
+
+      const team = await get(event.properties.teamName)
+      if (!team) return
+      if (team.members.length === 0) return
+
+      // All members must be shutdown — any active/idle/interrupted member blocks cleanup
+      const pending = team.members.some((m) => m.status !== "shutdown")
+      if (pending) return
+
+      log.info("all members shutdown, auto-cleaning team", { teamName: team.name })
+      try {
+        await cleanup(team.name)
+      } catch (err: unknown) {
+        log.warn("auto-cleanup failed", {
+          teamName: team.name,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    })
+  }
+
+  /**
    * Create a new team. The lead session is the caller's session.
    */
   export const create = fn(

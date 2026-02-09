@@ -348,6 +348,131 @@ describe("TeamTasks", () => {
   })
 })
 
+describe("Team auto-cleanup", () => {
+  test("auto-cleanup triggers when all members reach shutdown", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      init: async () => {
+        Env.set("ANTHROPIC_API_KEY", "test-key")
+      },
+      fn: async () => {
+        // Enable auto-cleanup subscriber
+        const unsub = Team.autoCleanup()
+
+        await Team.create({ name: "auto-clean-team", leadSessionID: "ses_lead_ac" })
+        await Team.addMember("auto-clean-team", {
+          name: "worker-a",
+          sessionID: "ses_ac_a",
+          agent: "general",
+          status: "active",
+        })
+        await Team.addMember("auto-clean-team", {
+          name: "worker-b",
+          sessionID: "ses_ac_b",
+          agent: "general",
+          status: "active",
+        })
+
+        // Shut down first member — team still has active members
+        await Team.setMemberStatus("auto-clean-team", "worker-a", "shutdown")
+
+        // Small delay to let async subscriber process
+        await new Promise((r) => setTimeout(r, 50))
+
+        // Team should still exist because worker-b is active
+        const stillExists = await Team.get("auto-clean-team")
+        expect(stillExists).toBeDefined()
+
+        // Shut down second member — all members now shutdown
+        await Team.setMemberStatus("auto-clean-team", "worker-b", "shutdown")
+
+        // Allow async subscriber to process
+        await new Promise((r) => setTimeout(r, 100))
+
+        // Team should be auto-cleaned
+        const gone = await Team.get("auto-clean-team")
+        expect(gone).toBeUndefined()
+
+        unsub()
+      },
+    })
+  })
+
+  test("auto-cleanup does not trigger when some members are still active", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      init: async () => {
+        Env.set("ANTHROPIC_API_KEY", "test-key")
+      },
+      fn: async () => {
+        const unsub = Team.autoCleanup()
+
+        await Team.create({ name: "no-clean-team", leadSessionID: "ses_lead_nc" })
+        await Team.addMember("no-clean-team", {
+          name: "worker-1",
+          sessionID: "ses_nc_1",
+          agent: "general",
+          status: "active",
+        })
+        await Team.addMember("no-clean-team", {
+          name: "worker-2",
+          sessionID: "ses_nc_2",
+          agent: "general",
+          status: "active",
+        })
+
+        // Shut down only one
+        await Team.setMemberStatus("no-clean-team", "worker-1", "shutdown")
+        await new Promise((r) => setTimeout(r, 100))
+
+        // Team should still exist
+        const team = await Team.get("no-clean-team")
+        expect(team).toBeDefined()
+        expect(team!.members).toHaveLength(2)
+
+        // Manual cleanup
+        await Team.setMemberStatus("no-clean-team", "worker-2", "shutdown")
+        await new Promise((r) => setTimeout(r, 100))
+
+        unsub()
+      },
+    })
+  })
+
+  test("auto-cleanup does not trigger on idle status changes", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      init: async () => {
+        Env.set("ANTHROPIC_API_KEY", "test-key")
+      },
+      fn: async () => {
+        const unsub = Team.autoCleanup()
+
+        await Team.create({ name: "idle-team", leadSessionID: "ses_lead_idle" })
+        await Team.addMember("idle-team", {
+          name: "worker-idle",
+          sessionID: "ses_idle_1",
+          agent: "general",
+          status: "active",
+        })
+
+        // Set to idle — should NOT trigger cleanup
+        await Team.setMemberStatus("idle-team", "worker-idle", "idle")
+        await new Promise((r) => setTimeout(r, 100))
+
+        const team = await Team.get("idle-team")
+        expect(team).toBeDefined()
+
+        // Manual cleanup
+        await Team.setMemberStatus("idle-team", "worker-idle", "shutdown")
+        await new Promise((r) => setTimeout(r, 100))
+
+        unsub()
+      },
+    })
+  })
+})
+
 describe("Team constraints", () => {
   test("one team per lead session", async () => {
     await Instance.provide({

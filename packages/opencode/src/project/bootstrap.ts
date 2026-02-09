@@ -34,13 +34,14 @@ export async function InstanceBootstrap() {
     }
   })
 
-  // Mark interrupted teammates after a server restart.
+  // Team features: recover interrupted teammates and enable auto-cleanup.
   // Fire-and-forget: don't block bootstrap completion.
   if (Flag.OPENCODE_EXPERIMENTAL_AGENT_TEAMS) {
-    import("../team").then(({ Team }) =>
+    import("../team").then(({ Team }) => {
+      Team.autoCleanup()
       Team.recover().catch((err) => {
         Log.Default.warn("team recovery failed", { error: err instanceof Error ? err.message : err })
-      }),
-    )
+      })
+    })
   }
 }
