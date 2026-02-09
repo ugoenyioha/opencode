@@ -121,7 +121,10 @@ export namespace LLM {
       mergeDeep(input.agent.options),
       mergeDeep(variant),
     )
-    if (isCodex && !input.teammate) {
+    if (isCodex) {
+      // The Codex/Responses API requires the instructions field.
+      // For teammates the provider prompt is also in the system messages
+      // (additive prompting), but instructions must still be present.
       options.instructions = SystemPrompt.instructions()
     }
 
