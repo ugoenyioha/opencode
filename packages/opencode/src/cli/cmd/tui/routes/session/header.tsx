@@ -213,7 +213,8 @@ export function Header(props: { sidebarVisible?: boolean }) {
     const model = sync.data.provider.find((x) => x.id === last.providerID)?.models[last.modelID]
     let result = total.toLocaleString()
     if (last.tokens.cache.read > 0) {
-      const pct = Math.round((last.tokens.cache.read / (last.tokens.input + last.tokens.cache.read)) * 100)
+      const totalInput = last.tokens.input + last.tokens.cache.read + last.tokens.cache.write
+      const pct = Math.round((last.tokens.cache.read / totalInput) * 100)
       result += ` (${pct}% cached)`
     }
     if (model?.limit.context) {

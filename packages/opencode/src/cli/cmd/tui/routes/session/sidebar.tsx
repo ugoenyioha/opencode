@@ -163,7 +163,7 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
                 <Show when={context()}>
                   <text fg={theme.textMuted}>
                     {"  "}
-                    {context()!.input.toLocaleString()} input
+                    {(context()!.input + context()!.cacheRead + context()!.cacheWrite).toLocaleString()} input
                     {context()!.cacheRead > 0 ? ` (${context()!.cacheRead.toLocaleString()} cached)` : ""}
                   </text>
                   <text fg={theme.textMuted}>
