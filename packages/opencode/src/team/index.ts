@@ -1,9 +1,9 @@
-import path from "path"
-import { mkdir, readdir, rm } from "fs/promises"
+import z from "zod"
 import { Log } from "../util/log"
-import { Lock } from "../util/lock"
 import { Bus } from "../bus"
 import { Instance } from "../project/instance"
+import { Storage } from "../storage/storage"
+import { fn } from "../util/fn"
 import {
   TeamEvent,
   TeamInfoSchema,
@@ -21,138 +21,120 @@ export const WRITE_TOOLS = ["bash", "write", "edit", "multiedit", "apply_patch"]
 
 const log = Log.create({ service: "team" })
 
-function teamsDir(): string {
-  return path.join(Instance.directory, ".opencode", "teams")
+/** Storage key for a team's config */
+function configKey(name: string): string[] {
+  return ["team", Instance.project.id, name]
 }
 
-function teamDir(teamName: string): string {
-  if (/[/\\]|\.\./.test(teamName)) {
-    throw new Error(`Invalid team name: "${teamName}" — must not contain path separators or '..'`)
-  }
-  const base = teamsDir()
-  const resolved = path.resolve(base, teamName)
-  if (!resolved.startsWith(base + path.sep)) {
-    throw new Error(`Invalid team name: "${teamName}" — path traversal detected`)
-  }
-  return resolved
-}
-
-function configPath(teamName: string): string {
-  return path.join(teamDir(teamName), "config.json")
-}
-
-function tasksPath(teamName: string): string {
-  return path.join(teamDir(teamName), "tasks.json")
-}
-
-async function ensureDir(dir: string) {
-  await mkdir(dir, { recursive: true })
+/** Storage key for a team's task list */
+function tasksKey(name: string): string[] {
+  return ["team_tasks", Instance.project.id, name]
 }
 
 export namespace Team {
   /**
    * Create a new team. The lead session is the caller's session.
    */
-  export async function create(input: { name: string; leadSessionID: string; delegate?: boolean }): Promise<TeamInfo> {
-    using _lock = await Lock.write("team-create")
-    const existing = await get(input.name)
-    if (existing) {
-      throw new Error(`Team "${input.name}" already exists`)
-    }
+  export const create = fn(
+    z.object({
+      name: z.string(),
+      leadSessionID: z.string(),
+      delegate: z.boolean().optional(),
+    }),
+    async (input) => {
+      const existing = await get(input.name)
+      if (existing) throw new Error(`Team "${input.name}" already exists`)
 
-    // One team per lead session — prevent a session from leading multiple teams
-    const existingLead = await findBySession(input.leadSessionID)
-    if (existingLead && existingLead.role === "lead") {
-      throw new Error(
-        `Session is already leading team "${existingLead.team.name}". Only one team per session is allowed.`,
-      )
-    }
-    // Prevent teammates from creating teams (no nesting)
-    if (existingLead && existingLead.role === "member") {
-      throw new Error(`This session is a teammate in "${existingLead.team.name}". Teammates cannot create new teams.`)
-    }
+      const lead = await findBySession(input.leadSessionID)
+      if (lead?.role === "lead")
+        throw new Error(`Session is already leading team "${lead.team.name}". Only one team per session is allowed.`)
+      if (lead?.role === "member")
+        throw new Error(`This session is a teammate in "${lead.team.name}". Teammates cannot create new teams.`)
 
-    const dir = teamDir(input.name)
-    await ensureDir(dir)
+      const team: TeamInfo = {
+        name: input.name,
+        leadSessionID: input.leadSessionID,
+        members: [],
+        created: Date.now(),
+        ...(input.delegate ? { delegate: true } : {}),
+      }
 
-    const team: TeamInfo = {
-      name: input.name,
-      leadSessionID: input.leadSessionID,
-      members: [],
-      created: Date.now(),
-      ...(input.delegate ? { delegate: true } : {}),
-    }
+      await Storage.write(configKey(input.name), team)
+      await Storage.write(tasksKey(input.name), [] as TeamTask[])
 
-    await Bun.write(configPath(input.name), JSON.stringify(team, null, 2))
-    await Bun.write(tasksPath(input.name), JSON.stringify([], null, 2))
-
-    log.info("team created", { name: input.name, leadSessionID: input.leadSessionID })
-    await Bus.publish(TeamEvent.Created, { team })
-
-    return team
-  }
+      log.info("team created", { name: input.name, leadSessionID: input.leadSessionID })
+      await Bus.publish(TeamEvent.Created, { team })
+      return team
+    },
+  )
 
   /**
    * Get a team by name. Returns undefined if not found.
    */
-  export async function get(teamName: string): Promise<TeamInfo | undefined> {
+  export const get = fn(z.string(), async (name) => {
     try {
-      const text = await Bun.file(configPath(teamName)).text()
-      return TeamInfoSchema.parse(JSON.parse(text))
+      return await Storage.read<TeamInfo>(configKey(name))
     } catch {
       return undefined
     }
-  }
+  })
 
   /**
    * List all teams in this project.
    */
   export async function list(): Promise<TeamInfo[]> {
-    const dir = teamsDir()
     try {
-      const entries = await readdir(dir)
-      const results = await Promise.all(entries.map((entry) => get(entry)))
-      return results.filter((t): t is TeamInfo => t !== undefined)
+      const keys = await Storage.list(["team", Instance.project.id])
+      return (await Promise.all(keys.map((key) => Storage.read<TeamInfo>(key).catch(() => undefined)))).filter(
+        (t): t is TeamInfo => t !== undefined,
+      )
     } catch {
       return []
     }
   }
 
   /**
-   * Add a member to a team. Writes config and publishes event.
+   * Add a member to a team (atomic via Storage.update).
+   * Rejects duplicate names (case-insensitive), duplicate sessionIDs, and "lead" as a name.
    */
   export async function addMember(teamName: string, member: TeamMember): Promise<void> {
-    using _ = await Lock.write(`team:${teamName}`)
-    const team = await get(teamName)
-    if (!team) throw new Error(`Team "${teamName}" not found`)
+    const lower = member.name.toLowerCase()
+    if (lower === "lead") throw new Error(`Name "lead" is reserved and cannot be used for a teammate.`)
 
-    // Replace existing member with same name, or add new
-    const existing = team.members.findIndex((m) => m.name === member.name)
-    if (existing >= 0) {
-      team.members[existing] = member
-    } else {
-      team.members.push(member)
-    }
-
-    await Bun.write(configPath(teamName), JSON.stringify(team, null, 2))
+    await Storage.update<TeamInfo>(configKey(teamName), (draft) => {
+      if (draft.members.some((m) => m.name.toLowerCase() === lower))
+        throw new Error(`Teammate "${member.name}" already exists in team "${teamName}" (case-insensitive)`)
+      if (draft.members.some((m) => m.sessionID === member.sessionID))
+        throw new Error(`Session "${member.sessionID}" is already registered in team "${teamName}"`)
+      draft.members.push(member)
+    })
 
     log.info("member added", { teamName, member: member.name, agent: member.agent })
     await Bus.publish(TeamEvent.MemberSpawned, { teamName, member })
   }
 
   /**
-   * Update a member's status.
+   * Update a member's status atomically via Storage.update.
+   * When options.guard is true, won't overwrite an existing "shutdown" status
+   * (prevents TOCTOU race in notifyLead).
    */
-  export async function setMemberStatus(teamName: string, memberName: string, status: MemberStatus): Promise<void> {
-    using _ = await Lock.write(`team:${teamName}`)
-    const team = await get(teamName)
-    if (!team) return
-
-    const member = team.members.find((m) => m.name === memberName)
-    if (!member) return
-
-    member.status = status
-    await Bun.write(configPath(teamName), JSON.stringify(team, null, 2))
+  export async function setMemberStatus(
+    teamName: string,
+    memberName: string,
+    status: MemberStatus,
+    options?: { guard?: boolean },
+  ): Promise<void> {
+    try {
+      await Storage.update<TeamInfo>(configKey(teamName), (draft) => {
+        const member = draft.members.find((m) => m.name === memberName)
+        if (!member) return
+        if (options?.guard && member.status === "shutdown") return
+        member.status = status
+      })
+    } catch {
+      // Team was deleted between check and write — safe to ignore
+      return
+    }
 
     await Bus.publish(TeamEvent.MemberStatusChanged, { teamName, memberName, status })
   }
@@ -161,12 +143,13 @@ export namespace Team {
    * Toggle delegate mode on a team.
    */
   export async function setDelegate(teamName: string, delegate: boolean): Promise<void> {
-    using _ = await Lock.write(`team:${teamName}`)
-    const team = await get(teamName)
-    if (!team) return
-
-    team.delegate = delegate
-    await Bun.write(configPath(teamName), JSON.stringify(team, null, 2))
+    try {
+      await Storage.update<TeamInfo>(configKey(teamName), (draft) => {
+        draft.delegate = delegate
+      })
+    } catch {
+      // Team not found — ignore
+    }
   }
 
   /**
@@ -177,28 +160,28 @@ export namespace Team {
     memberName: string,
     planApproval: "none" | "pending" | "approved" | "rejected",
   ): Promise<void> {
-    using _ = await Lock.write(`team:${teamName}`)
-    const team = await get(teamName)
-    if (!team) return
-
-    const member = team.members.find((m) => m.name === memberName)
-    if (!member) return
-
-    member.planApproval = planApproval
-    await Bun.write(configPath(teamName), JSON.stringify(team, null, 2))
+    try {
+      await Storage.update<TeamInfo>(configKey(teamName), (draft) => {
+        const member = draft.members.find((m) => m.name === memberName)
+        if (!member) return
+        member.planApproval = planApproval
+      })
+    } catch {
+      // Team not found — ignore
+    }
   }
 
   /**
    * Remove a member from a team.
    */
   export async function removeMember(teamName: string, memberName: string): Promise<void> {
-    using _ = await Lock.write(`team:${teamName}`)
-    const team = await get(teamName)
-    if (!team) return
-
-    team.members = team.members.filter((m) => m.name !== memberName)
-    await Bun.write(configPath(teamName), JSON.stringify(team, null, 2))
-
+    try {
+      await Storage.update<TeamInfo>(configKey(teamName), (draft) => {
+        draft.members = draft.members.filter((m) => m.name !== memberName)
+      })
+    } catch {
+      // Team not found — ignore
+    }
     log.info("member removed", { teamName, memberName })
   }
 
@@ -210,21 +193,18 @@ export namespace Team {
   ): Promise<{ team: TeamInfo; role: "lead" | "member"; memberName?: string } | undefined> {
     const teams = await list()
     for (const team of teams) {
-      if (team.leadSessionID === sessionID) {
-        return { team, role: "lead" }
-      }
+      if (team.leadSessionID === sessionID) return { team, role: "lead" }
       const member = team.members.find((m) => m.sessionID === sessionID)
-      if (member) {
-        return { team, role: "member", memberName: member.name }
-      }
+      if (member) return { team, role: "member", memberName: member.name }
     }
     return undefined
   }
 
   /**
-   * Clean up a team — removes config and task files.
+   * Clean up a team — removes config and task data.
    * Fails if any members are still active.
-   * Restores lead session permissions if delegate mode was active.
+   * Publishes TeamEvent.Cleaned so listeners can handle side-effects
+   * (e.g. restoring lead session permissions).
    */
   export async function cleanup(teamName: string): Promise<void> {
     const team = await get(teamName)
@@ -237,40 +217,25 @@ export namespace Team {
       )
     }
 
-    // Restore lead session permissions if delegate mode was active
-    if (team.delegate) {
-      try {
-        const { Session } = await import("../session")
-        await Session.update(team.leadSessionID, (draft) => {
-          draft.permission = (draft.permission ?? []).filter(
-            (rule) => !((WRITE_TOOLS as readonly string[]).includes(rule.permission) && rule.action === "deny"),
-          )
-        })
-        log.info("restored lead session permissions", { teamName, sessionID: team.leadSessionID })
-      } catch (err: unknown) {
-        log.warn("failed to restore lead session permissions", {
-          teamName,
-          error: err instanceof Error ? err.message : String(err),
-        })
-      }
-    }
-
-    await rm(teamDir(teamName), { recursive: true, force: true })
+    await Storage.remove(configKey(teamName))
+    await Storage.remove(tasksKey(teamName))
 
     log.info("team cleaned up", { teamName })
-    await Bus.publish(TeamEvent.Cleaned, { teamName })
+    await Bus.publish(TeamEvent.Cleaned, {
+      teamName,
+      leadSessionID: team.leadSessionID,
+      delegate: !!team.delegate,
+    })
   }
 
   /**
    * Mark teammates that were active when the server died as "interrupted"
-   * and inject a notification into the lead session so the LLM knows to
-   * resume them when the user next sends a message.
-   *
+   * and inject a notification into the lead session.
    * Called once during InstanceBootstrap.
    */
   export async function recover(): Promise<{ interrupted: number }> {
     const teams = await list()
-    let interrupted = 0
+    let count = 0
 
     for (const team of teams) {
       const active = team.members.filter((m) => m.status === "active")
@@ -282,11 +247,9 @@ export namespace Team {
       for (const member of active) {
         await setMemberStatus(team.name, member.name, "interrupted")
         names.push(member.name)
-        interrupted++
+        count++
       }
 
-      // Inject a notification into the lead session so the LLM knows
-      // teammates were interrupted and can resume them on the next prompt.
       try {
         const { Session } = await import("../session")
         const { Identifier } = await import("../id/id")
@@ -320,11 +283,8 @@ export namespace Team {
       }
     }
 
-    if (interrupted > 0) {
-      log.info("team recovery complete", { interrupted })
-    }
-
-    return { interrupted }
+    if (count > 0) log.info("team recovery complete", { interrupted: count })
+    return { interrupted: count }
   }
 }
 
@@ -333,10 +293,8 @@ export namespace TeamTasks {
    * Read all tasks for a team.
    */
   export async function list(teamName: string): Promise<TeamTask[]> {
-    using _ = await Lock.read(`team-tasks:${teamName}`)
     try {
-      const text = await Bun.file(tasksPath(teamName)).text()
-      return TeamTaskSchema.array().parse(JSON.parse(text))
+      return await Storage.read<TeamTask[]>(tasksKey(teamName))
     } catch {
       return []
     }
@@ -346,9 +304,8 @@ export namespace TeamTasks {
    * Write the full task list for a team (replaces).
    */
   export async function update(teamName: string, tasks: TeamTask[]): Promise<void> {
-    using _ = await Lock.write(`team-tasks:${teamName}`)
     const resolved = resolveDependencies(tasks)
-    await Bun.write(tasksPath(teamName), JSON.stringify(resolved, null, 2))
+    await Storage.write(tasksKey(teamName), resolved)
     await Bus.publish(TeamEvent.TaskUpdated, { teamName, tasks: resolved })
   }
 
@@ -356,18 +313,9 @@ export namespace TeamTasks {
    * Add tasks to the team's task list.
    */
   export async function add(teamName: string, newTasks: TeamTask[]): Promise<void> {
-    // Read outside the write lock, then re-read inside
-    using _ = await Lock.write(`team-tasks:${teamName}`)
-    let existing: TeamTask[]
-    try {
-      const text = await Bun.file(tasksPath(teamName)).text()
-      existing = TeamTaskSchema.array().parse(JSON.parse(text))
-    } catch {
-      existing = []
-    }
-    const merged = [...existing, ...newTasks]
-    const resolved = resolveDependencies(merged)
-    await Bun.write(tasksPath(teamName), JSON.stringify(resolved, null, 2))
+    const existing = await list(teamName)
+    const resolved = resolveDependencies([...existing, ...newTasks])
+    await Storage.write(tasksKey(teamName), resolved)
     await Bus.publish(TeamEvent.TaskUpdated, { teamName, tasks: resolved })
   }
 
@@ -375,86 +323,69 @@ export namespace TeamTasks {
    * Atomically claim a task. Returns true if claimed, false if already taken.
    */
   export async function claim(teamName: string, taskId: string, memberName: string): Promise<boolean> {
-    using _ = await Lock.write(`team-tasks:${teamName}`)
-    let tasks: TeamTask[]
+    let claimed = false
     try {
-      const text = await Bun.file(tasksPath(teamName)).text()
-      tasks = TeamTaskSchema.array().parse(JSON.parse(text))
+      await Storage.update<TeamTask[]>(tasksKey(teamName), (tasks) => {
+        const task = tasks.find((t) => t.id === taskId)
+        if (!task) return
+        if (task.status !== "pending") return
+        if (task.assignee) return
+
+        if (task.depends_on?.length) {
+          const unresolved = task.depends_on.some((depId) => {
+            const dep = tasks.find((t) => t.id === depId)
+            return !dep || (dep.status !== "completed" && dep.status !== "cancelled")
+          })
+          if (unresolved) return
+        }
+
+        task.status = "in_progress"
+        task.assignee = memberName
+        claimed = true
+      })
     } catch {
       return false
     }
 
-    const task = tasks.find((t) => t.id === taskId)
-    if (!task) return false
-    if (task.status !== "pending") return false
-    if (task.assignee) return false
-
-    // Check deps are resolved (completed or cancelled count as resolved)
-    if (task.depends_on?.length) {
-      const hasUnresolved = task.depends_on.some((depId) => {
-        const dep = tasks.find((t) => t.id === depId)
-        return !dep || (dep.status !== "completed" && dep.status !== "cancelled")
-      })
-      if (hasUnresolved) return false
-    }
-
-    task.status = "in_progress"
-    task.assignee = memberName
-    await Bun.write(tasksPath(teamName), JSON.stringify(tasks, null, 2))
-
-    await Bus.publish(TeamEvent.TaskClaimed, { teamName, taskId, memberName })
-    return true
+    if (claimed) await Bus.publish(TeamEvent.TaskClaimed, { teamName, taskId, memberName })
+    return claimed
   }
 
   /**
    * Mark a task as completed.
    */
   export async function complete(teamName: string, taskId: string): Promise<void> {
-    using _ = await Lock.write(`team-tasks:${teamName}`)
-    let tasks: TeamTask[]
+    let tasks: TeamTask[] = []
     try {
-      const text = await Bun.file(tasksPath(teamName)).text()
-      tasks = TeamTaskSchema.array().parse(JSON.parse(text))
+      tasks = await Storage.update<TeamTask[]>(tasksKey(teamName), (draft) => {
+        const task = draft.find((t) => t.id === taskId)
+        if (task) task.status = "completed"
+        const resolved = resolveDependencies(draft)
+        draft.length = 0
+        draft.push(...resolved)
+      })
     } catch {
       return
     }
-
-    const task = tasks.find((t) => t.id === taskId)
-    if (!task) return
-
-    task.status = "completed"
-
-    // Auto-unblock dependent tasks
-    const resolved = resolveDependencies(tasks)
-    await Bun.write(tasksPath(teamName), JSON.stringify(resolved, null, 2))
-    await Bus.publish(TeamEvent.TaskUpdated, { teamName, tasks: resolved })
+    await Bus.publish(TeamEvent.TaskUpdated, { teamName, tasks })
   }
 
-  /**
-   * Apply dependency resolution — same logic as the per-session Todo system.
-   */
   function resolveDependencies(tasks: TeamTask[]): TeamTask[] {
     const validIds = new Set(tasks.map((t) => t.id))
 
     return tasks.map((task) => {
-      // Strip refs to non-existent IDs
       if (task.depends_on) {
         task = { ...task, depends_on: task.depends_on.filter((id) => validIds.has(id)) }
       }
-
       if (!task.depends_on?.length) return task
 
-      const hasUnresolved = task.depends_on.some((depId) => {
+      const unresolved = task.depends_on.some((depId) => {
         const dep = tasks.find((t) => t.id === depId)
         return !dep || (dep.status !== "completed" && dep.status !== "cancelled")
       })
 
-      if (hasUnresolved && task.status === "pending") {
-        return { ...task, status: "blocked" }
-      }
-      if (!hasUnresolved && task.status === "blocked") {
-        return { ...task, status: "pending" }
-      }
+      if (unresolved && task.status === "pending") return { ...task, status: "blocked" }
+      if (!unresolved && task.status === "blocked") return { ...task, status: "pending" }
       return task
     })
   }
