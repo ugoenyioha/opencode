@@ -1,16 +1,18 @@
 import { useSync } from "@tui/context/sync"
-import { createMemo, For, Show, Switch, Match } from "solid-js"
+import { createMemo, createSignal, For, Show, Switch, Match } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useTheme } from "../../context/theme"
 import { Locale } from "@/util/locale"
 import path from "path"
-import type { AssistantMessage } from "@opencode-ai/sdk/v2"
+import type { AssistantMessage, ToolPart } from "@opencode-ai/sdk/v2"
 import { Global } from "@/global"
 import { Installation } from "@/installation"
 import { useKeybind } from "../../context/keybind"
 import { useDirectory } from "../../context/directory"
 import { useKV } from "../../context/kv"
+import { useRoute } from "../../context/route"
 import { TodoItem } from "../../component/todo-item"
+import { Spinner } from "../../component/spinner"
 
 export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
   const sync = useSync()
@@ -25,6 +27,7 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
     diff: true,
     todo: true,
     lsp: true,
+    team: true,
   })
 
   // Sort MCP servers alphabetically for consistent display order
@@ -62,6 +65,29 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
 
   const directory = useDirectory()
   const kv = useKV()
+  const teamInfo = createMemo(() => sync.data.team[props.sessionID])
+  const teamMembers = createMemo(
+    () =>
+      (teamInfo()?.members ?? []) as Array<{
+        name: string
+        sessionID: string
+        agent: string
+        status: string
+        model?: string
+        planApproval?: string
+      }>,
+  )
+  const teamTasks = createMemo(
+    () =>
+      (teamInfo()?.tasks ?? []) as Array<{
+        id: string
+        content: string
+        status: string
+        priority: string
+        assignee?: string
+        depends_on?: string[]
+      }>,
+  )
 
   const hasProviders = createMemo(() =>
     sync.data.provider.some((x) => x.id !== "opencode" || Object.values(x.models).some((y) => y.cost?.input !== 0)),
@@ -221,6 +247,14 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
                 </Show>
               </box>
             </Show>
+            <Show when={teamInfo()}>
+              <Show when={(teamInfo() as any)?.role === "member"}>
+                <TeamMemberSidebar teamInfo={teamInfo()} sessionID={props.sessionID} teamTasks={teamTasks()} />
+              </Show>
+              <Show when={(teamInfo() as any)?.role !== "member" && teamMembers().length > 0}>
+                <TeamLeadSidebar teamInfo={teamInfo()} teamMembers={teamMembers()} teamTasks={teamTasks()} />
+              </Show>
+            </Show>
             <Show when={diff().length > 0}>
               <box>
                 <box
@@ -308,6 +342,355 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
           </text>
         </box>
       </box>
+    </Show>
+  )
+}
+
+function memberColor(status: string, theme: any) {
+  switch (status) {
+    case "active":
+      return theme.success
+    case "interrupted":
+      return theme.warning
+    case "shutdown":
+      return theme.error
+    default:
+      return theme.textMuted
+  }
+}
+
+/** Lead's team sidebar — compact overview with truncated per-member todos */
+function TeamLeadSidebar(props: {
+  teamInfo: any
+  teamMembers: Array<{ name: string; sessionID: string; agent: string; status: string; model?: string }>
+  teamTasks: Array<{
+    id: string
+    content: string
+    status: string
+    priority: string
+    assignee?: string
+    depends_on?: string[]
+  }>
+}) {
+  const sync = useSync()
+  const { theme } = useTheme()
+  const nav = useRoute()
+  const [expanded, setExpanded] = createSignal(true)
+
+  return (
+    <box>
+      <box flexDirection="row" gap={1} onMouseDown={() => setExpanded(!expanded())}>
+        <text fg={theme.text}>{expanded() ? "▼" : "▶"}</text>
+        <text fg={theme.text}>
+          <b>Team</b>
+          <Show when={!expanded()}>
+            <span style={{ fg: theme.textMuted }}>
+              {" "}
+              ({props.teamMembers.filter((m) => m.status === "active").length} active, {props.teamMembers.length} total)
+            </span>
+          </Show>
+        </text>
+      </box>
+      <Show when={expanded()}>
+        <For each={props.teamMembers}>
+          {(member) => {
+            const todos = createMemo(() =>
+              (sync.data.todo[member.sessionID] ?? []).filter((t: any) => t.status !== "completed"),
+            )
+            const visible = createMemo(() => todos().slice(0, 2))
+            const remaining = createMemo(() => Math.max(0, todos().length - 2))
+            return (
+              <box
+                flexDirection="column"
+                onMouseUp={() => {
+                  if (member.sessionID) nav.navigate({ type: "session", sessionID: member.sessionID })
+                }}
+              >
+                <box flexDirection="row" gap={1}>
+                  <text flexShrink={0} fg={memberColor(member.status, theme)}>
+                    •
+                  </text>
+                  <text fg={theme.text} wrapMode="word">
+                    {member.name}
+                    <span style={{ fg: theme.textMuted }}> ({member.agent})</span>
+                  </text>
+                </box>
+                <Show when={member.status === "active"}>
+                  <TeammateActivity sessionID={member.sessionID} />
+                </Show>
+                <Show when={visible().length > 0}>
+                  <box paddingLeft={2}>
+                    <For each={visible()}>{(t: any) => <TodoItem status={t.status} content={t.content} />}</For>
+                    <Show when={remaining() > 0}>
+                      <text fg={theme.textMuted}>+{remaining()} more</text>
+                    </Show>
+                  </box>
+                </Show>
+              </box>
+            )
+          }}
+        </For>
+        <Show when={props.teamTasks.length > 0}>
+          <For each={props.teamTasks}>
+            {(task) => {
+              const assignee = createMemo(() =>
+                task.assignee ? props.teamMembers.find((m) => m.name === task.assignee) : undefined,
+              )
+              return (
+                <box
+                  flexDirection="column"
+                  onMouseUp={() => {
+                    const a = assignee()
+                    if (a?.sessionID) nav.navigate({ type: "session", sessionID: a.sessionID })
+                  }}
+                >
+                  <box flexDirection="row" gap={1}>
+                    <text fg={teamTaskColor(task.status, theme)} flexShrink={0} wrapMode="none">
+                      {teamTaskIcon(task.status)}
+                    </text>
+                    <text fg={task.status === "in_progress" ? theme.text : theme.textMuted} wrapMode="word">
+                      {task.content}
+                    </text>
+                  </box>
+                  <Show when={task.assignee}>
+                    <text fg={theme.primary} paddingLeft={2} wrapMode="none">
+                      @{task.assignee}
+                    </text>
+                  </Show>
+                  <Show when={task.depends_on && task.depends_on.length > 0 && task.status === "blocked"}>
+                    <text fg={theme.textMuted} paddingLeft={2} wrapMode="none">
+                      blocked by {task.depends_on!.map((d) => `#${d}`).join(", ")}
+                    </text>
+                  </Show>
+                  <Show when={task.status === "in_progress" && assignee()?.status === "active"}>
+                    <TeammateActivity sessionID={assignee()!.sessionID} />
+                  </Show>
+                </box>
+              )
+            }}
+          </For>
+          <text fg={theme.textMuted}>
+            {props.teamTasks.filter((t) => t.status === "completed").length}/{props.teamTasks.length} completed
+          </text>
+        </Show>
+      </Show>
+    </box>
+  )
+}
+
+/** Teammate's team sidebar — full detail for this member, compact view of others */
+function TeamMemberSidebar(props: {
+  teamInfo: any
+  sessionID: string
+  teamTasks: Array<{
+    id: string
+    content: string
+    status: string
+    priority: string
+    assignee?: string
+    depends_on?: string[]
+  }>
+}) {
+  const sync = useSync()
+  const { theme } = useTheme()
+  const nav = useRoute()
+  const [expanded, setExpanded] = createSignal(true)
+
+  const info = () =>
+    props.teamInfo as { teamName: string; role: string; memberName: string; members: any[]; tasks: any[] }
+  const members = createMemo(
+    () => (info().members ?? []) as Array<{ name: string; sessionID: string; agent: string; status: string }>,
+  )
+  const todos = createMemo(() => (sync.data.todo[props.sessionID] ?? []).filter((t: any) => t.status !== "completed"))
+  const completedCount = createMemo(
+    () => (sync.data.todo[props.sessionID] ?? []).filter((t: any) => t.status === "completed").length,
+  )
+  const totalCount = createMemo(() => (sync.data.todo[props.sessionID] ?? []).length)
+
+  return (
+    <box>
+      <box flexDirection="row" gap={1} onMouseDown={() => setExpanded(!expanded())}>
+        <text fg={theme.text}>{expanded() ? "▼" : "▶"}</text>
+        <text fg={theme.text}>
+          <b>Team: {info().teamName}</b>
+        </text>
+      </box>
+      <Show when={expanded()}>
+        <text fg={theme.textMuted}>Role: member ({info().memberName})</text>
+        {/* Full individual todo list */}
+        <Show when={todos().length > 0}>
+          <box paddingTop={1}>
+            <text fg={theme.text}>
+              <b>My Tasks</b>
+            </text>
+            <For each={todos()}>{(t: any) => <TodoItem status={t.status} content={t.content} />}</For>
+            <Show when={totalCount() > 0}>
+              <text fg={theme.textMuted}>
+                {completedCount()}/{totalCount()} completed
+              </text>
+            </Show>
+          </box>
+        </Show>
+        {/* Compact teammate list */}
+        <Show when={members().length > 0}>
+          <box paddingTop={1}>
+            <text fg={theme.text}>
+              <b>Teammates</b>
+            </text>
+            <For each={members()}>
+              {(member) => (
+                <box
+                  flexDirection="row"
+                  gap={1}
+                  onMouseUp={() => {
+                    if (member.sessionID) nav.navigate({ type: "session", sessionID: member.sessionID })
+                  }}
+                >
+                  <text flexShrink={0} fg={memberColor(member.status, theme)}>
+                    •
+                  </text>
+                  <text fg={member.name === info().memberName ? theme.primary : theme.text} wrapMode="word">
+                    {member.name}
+                    <Show when={member.name === info().memberName}>
+                      <span style={{ fg: theme.textMuted }}> (you)</span>
+                    </Show>
+                    <span style={{ fg: theme.textMuted }}> — {member.status}</span>
+                  </text>
+                </box>
+              )}
+            </For>
+          </box>
+        </Show>
+        {/* Shared task list */}
+        <Show when={props.teamTasks.length > 0}>
+          <box paddingTop={1}>
+            <text fg={theme.text}>
+              <b>Shared Tasks</b>
+            </text>
+            <For each={props.teamTasks}>
+              {(task) => (
+                <box flexDirection="row" gap={1}>
+                  <text fg={teamTaskColor(task.status, theme)} flexShrink={0} wrapMode="none">
+                    {teamTaskIcon(task.status)}
+                  </text>
+                  <text fg={task.status === "in_progress" ? theme.text : theme.textMuted} wrapMode="word">
+                    {task.content}
+                    <Show when={task.assignee}>
+                      <span style={{ fg: theme.primary }}> @{task.assignee}</span>
+                    </Show>
+                  </text>
+                </box>
+              )}
+            </For>
+            <text fg={theme.textMuted}>
+              {props.teamTasks.filter((t) => t.status === "completed").length}/{props.teamTasks.length} completed
+            </text>
+          </box>
+        </Show>
+      </Show>
+    </box>
+  )
+}
+
+function teamTaskIcon(status: string): string {
+  switch (status) {
+    case "completed":
+      return "+"
+    case "in_progress":
+      return "■"
+    case "blocked":
+      return "□"
+    case "cancelled":
+      return "x"
+    default:
+      return "□"
+  }
+}
+
+function teamTaskColor(status: string, theme: any) {
+  switch (status) {
+    case "completed":
+      return theme.success
+    case "in_progress":
+      return theme.warning
+    case "blocked":
+      return theme.textMuted
+    case "cancelled":
+      return theme.error
+    default:
+      return theme.textMuted
+  }
+}
+
+function truncate(s: string, max: number): string {
+  if (s.length <= max) return s
+  return s.slice(0, max - 1) + "…"
+}
+
+function formatToolActivity(tp: ToolPart): string {
+  const name = tp.tool
+  const state = tp.state
+  if (state.status === "running") {
+    if (state.title) return `${name}: ${state.title}`
+    const input = state.input as Record<string, any>
+    if (name === "bash" && input.command) return truncate(`$ ${input.command}`, 36)
+    if (name === "read" && input.filePath) return `Read ${truncate(input.filePath, 30)}`
+    if (name === "grep" && input.pattern) return `Grep "${truncate(input.pattern, 28)}"`
+    if (name === "glob" && input.pattern) return `Glob "${truncate(input.pattern, 28)}"`
+    if (name === "write" && input.filePath) return `Write ${truncate(input.filePath, 30)}`
+    if (name === "edit" && input.filePath) return `Edit ${truncate(input.filePath, 30)}`
+    if ((name === "webfetch" || name === "mcp_webfetch") && input.url) return `Fetch ${truncate(input.url, 30)}`
+    if (name === "web_search" && input.query) return `Search "${truncate(input.query, 26)}"`
+    if (name === "team_message") return `Msg @${input.to ?? "..."}`
+    if (name === "team_tasks") return "Checking tasks"
+    return `${name}...`
+  }
+  if (state.status === "completed") {
+    if (state.title) return truncate(`${name}: ${state.title}`, 36)
+    return `${name} done`
+  }
+  if (state.status === "error") return `${name} error`
+  return `${name}...`
+}
+
+/** Shows the current tool activity for a teammate session */
+function TeammateActivity(props: { sessionID: string }) {
+  const sync = useSync()
+  const { theme } = useTheme()
+
+  const activity = createMemo(() => {
+    const msgs = sync.data.message[props.sessionID] ?? []
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const msg = msgs[i]
+      if (msg.role !== "assistant") continue
+      const parts = sync.data.part[msg.id] ?? []
+      for (let j = parts.length - 1; j >= 0; j--) {
+        const part = parts[j]
+        if (part.type !== "tool") continue
+        const tp = part as ToolPart
+        if (tp.state.status === "pending") continue
+        return tp
+      }
+    }
+    return undefined
+  })
+
+  return (
+    <Show when={activity()}>
+      {(tp) => (
+        <box paddingLeft={2}>
+          <Show
+            when={tp().state.status === "running"}
+            fallback={
+              <text fg={theme.textMuted} wrapMode="none">
+                {formatToolActivity(tp())}
+              </text>
+            }
+          >
+            <Spinner color={theme.textMuted}>{formatToolActivity(tp())}</Spinner>
+          </Show>
+        </box>
+      )}
     </Show>
   )
 }

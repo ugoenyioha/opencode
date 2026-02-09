@@ -41,6 +41,10 @@ export type PromptProps = {
   ref?: (ref: PromptRef) => void
   hint?: JSX.Element
   showPlaceholder?: boolean
+  /** When set, submit sends a team message to this teammate instead of a normal prompt */
+  selectedTeammate?: string | null
+  /** Called after a team message is sent so the parent can reset selection state */
+  onTeammateMessageSent?: () => void
 }
 
 export type PromptRef = {
@@ -68,6 +72,17 @@ export function Prompt(props: PromptProps) {
   const dialog = useDialog()
   const toast = useToast()
   const status = createMemo(() => sync.data.session_status?.[props.sessionID ?? ""] ?? { type: "idle" })
+  const teamBusy = createMemo(() => {
+    const sid = props.sessionID
+    if (!sid) return 0
+    const team = sync.data.team?.[sid]
+    if (!team || team.role !== "lead") return 0
+    return team.members.filter((m) => {
+      if (m.status === "shutdown") return false
+      const s = sync.data.session_status?.[m.sessionID]
+      return s?.type === "busy"
+    }).length
+  })
   const history = usePromptHistory()
   const stash = usePromptStash()
   const command = useCommandDialog()
@@ -558,7 +573,28 @@ export function Prompt(props: PromptProps) {
     const currentMode = store.mode
     const variant = local.model.variant.current()
 
-    if (store.mode === "shell") {
+    // Team message interception: when a teammate is selected, send via team_message endpoint
+    if (props.selectedTeammate) {
+      const teammate = props.selectedTeammate
+      try {
+        const res = await sdk.fetch(`${sdk.url}/session/${sessionID}/team-message`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            agent: local.agent.current().name,
+            to: teammate,
+            text: inputText,
+          }),
+        })
+        if (!res.ok) {
+          toast.show({ message: `Failed to message @${teammate}`, variant: "error" })
+        }
+      } catch {
+        toast.show({ message: `Failed to message @${teammate}`, variant: "error" })
+      }
+      props.onTeammateMessageSent?.()
+      // Fall through to the clear logic below
+    } else if (store.mode === "shell") {
       sdk.client.session.shell({
         sessionID,
         agent: local.agent.current().name,
@@ -1021,7 +1057,21 @@ export function Prompt(props: PromptProps) {
           />
         </box>
         <box flexDirection="row" justifyContent="space-between">
-          <Show when={status().type !== "idle"} fallback={<text />}>
+          <Show
+            when={status().type !== "idle"}
+            fallback={
+              <Show when={teamBusy() > 0}>
+                <box flexDirection="row" gap={1} marginLeft={1}>
+                  <Show when={kv.get("animations_enabled", true)} fallback={<text fg={theme.textMuted}>[⋯]</text>}>
+                    <spinner color={spinnerDef().color} frames={spinnerDef().frames} interval={40} />
+                  </Show>
+                  <text fg={theme.textMuted}>
+                    {teamBusy()} teammate{teamBusy() > 1 ? "s" : ""} working
+                  </text>
+                </box>
+              </Show>
+            }
+          >
             <box
               flexDirection="row"
               gap={1}
