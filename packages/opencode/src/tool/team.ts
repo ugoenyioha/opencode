@@ -433,6 +433,7 @@ export const TeamApprovePlanTool = Tool.define("team_approve_plan", {
     if (!member) {
       return { title: "Error", output: `Teammate "${params.name}" not found.`, metadata: {} }
     }
+    // Allow re-review of rejected plans — teammate revises and resubmits
     if (member.planApproval !== "pending" && member.planApproval !== "rejected") {
       return {
         title: "Error",
@@ -507,6 +508,9 @@ export const TeamShutdownTool = Tool.define("team_shutdown", {
       memberName: params.name,
     })
 
+    // Status set to "shutdown" immediately — the teammate's prompt loop will exit on
+    // its next iteration. If the teammate "rejects" the shutdown, they continue working
+    // but their status stays "shutdown" (the rejection is informational to the lead).
     await Team.setMemberStatus(teamInfo.team.name, params.name, "shutdown")
 
     return {

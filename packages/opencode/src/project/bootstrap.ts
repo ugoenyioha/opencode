@@ -34,10 +34,15 @@ export async function InstanceBootstrap() {
     }
   })
 
-  // Team features: recover interrupted teammates, then enable auto-cleanup.
-  // Recovery runs first so stale teams are restored before cleanup subscribes.
+  // Team features — order matters:
+  // 1. onCleanedRestorePermissions() registers synchronously so it's ready
+  //    before recover(), which could trigger cleanup if all members are shutdown.
+  // 2. recover() marks stale "active" members as "interrupted" and notifies leads.
+  // 3. autoCleanup() subscribes AFTER recover finishes (.finally()) to avoid
+  //    spurious MemberStatusChanged events during recovery triggering premature cleanup.
   // Fire-and-forget: don't block bootstrap completion.
   if (Flag.OPENCODE_EXPERIMENTAL_AGENT_TEAMS) {
+    // Dynamic import — only load team module when the feature flag is enabled
     import("../team").then(({ Team }) => {
       Team.onCleanedRestorePermissions()
       Team.recover()

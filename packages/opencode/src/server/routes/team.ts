@@ -112,6 +112,7 @@ export const TeamRoutes = lazy(() =>
             const existing = draft.permission ?? []
             draft.permission = [
               ...existing,
+              // Filter prevents duplicate deny rules from repeated enable toggles
               ...WRITE_TOOLS.filter((tool) => !existing.some((r) => r.permission === tool && r.action === "deny")).map(
                 (tool) => ({ permission: tool, pattern: "*", action: "deny" as const }),
               ),

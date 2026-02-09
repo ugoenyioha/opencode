@@ -318,6 +318,9 @@ export namespace Team {
       { permission: "team_approve_plan", pattern: "*", action: "deny" },
     ]
     if (input.planApproval) {
+      // Pattern "*:plan-approval" is intentionally NOT "*" — PermissionNext.disabled() only
+      // strips tools with pattern "*", so these remain visible to the model but are denied at
+      // execution time. The ":plan-approval" tag lets approvePlan() remove only these rules.
       rules.push(
         ...WRITE_TOOLS.map((tool) => ({ permission: tool, pattern: "*:plan-approval", action: "deny" as const })),
       )
@@ -497,7 +500,9 @@ export namespace Team {
 
   /**
    * Notify the lead that a teammate's loop finished or errored.
-   * Uses guard option to prevent overwriting "shutdown" status.
+   * Uses guard option because the lead may have already sent a shutdown request
+   * (setting status to "shutdown") while the loop was finishing — without guard,
+   * this would overwrite "shutdown" with "idle", preventing auto-cleanup.
    */
   async function notifyLead(
     teamName: string,
