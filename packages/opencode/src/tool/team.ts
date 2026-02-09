@@ -97,6 +97,11 @@ export const TeamCreateTool = Tool.define("team_create", {
         "- Use team_spawn to add teammates",
         "- Use team_tasks to manage the shared task list",
         "- Use team_message to communicate with teammates",
+        "",
+        "Lifecycle:",
+        "- When teammates finish, use team_shutdown to shut them down",
+        "- Once all teammates are shut down, use team_cleanup to remove team resources",
+        "- If all teammates shut down on their own (idle→shutdown), cleanup happens automatically",
         params.tasks?.length ? `\nInitial tasks: ${params.tasks.length}` : "",
       ]
         .filter(Boolean)
@@ -290,6 +295,12 @@ export const TeamSpawnTool = Tool.define("team_spawn", {
       `You are "${params.name}", a teammate in team "${teamName}".`,
       `Your agent type is "${agentName}", using model ${modelLabel}.`,
       "",
+      "PERSISTENCE: You MUST keep working until your assigned task is fully complete.",
+      "Do NOT stop after a single step or partial progress. If you encounter an obstacle,",
+      "try alternative approaches before giving up. When your work is truly done, mark your",
+      "task(s) as completed with team_tasks and send a summary to the lead with team_message.",
+      "Only stop working when you have nothing left to do.",
+      "",
       "Team tools available to you:",
       "- team_message: send a message to the lead or another teammate",
       "- team_broadcast: send a message to all teammates",
@@ -346,8 +357,8 @@ export const TeamSpawnTool = Tool.define("team_spawn", {
           to: "lead",
           text:
             status === "finished"
-              ? `I have finished my current work and am now idle. Review my session (${session.id}) for detailed results.`
-              : `I encountered an error and stopped: ${error ?? "unknown error"}. Review my session (${session.id}).`,
+              ? `I have finished my current work and am now idle. Review my session (${session.id}) for detailed results. You can use team_shutdown to shut me down if no more work is needed.`
+              : `I encountered an error and stopped: ${error ?? "unknown error"}. Review my session (${session.id}). You can use team_shutdown to shut me down, or send me a message to retry.`,
         })
       } catch (notifyErr: unknown) {
         log.warn("failed to notify lead of teammate completion", {
