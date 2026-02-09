@@ -43,15 +43,7 @@ async function seedUserMessage(sessionID: string) {
   return mid
 }
 
-const BASE_DENY_PERMISSIONS = [
-  "team_create",
-  "team_spawn",
-  "team_shutdown",
-  "team_cleanup",
-  "team_approve_plan",
-  "todowrite",
-  "todoread",
-]
+const BASE_DENY_PERMISSIONS = ["team_create", "team_spawn", "team_shutdown", "team_cleanup", "team_approve_plan"]
 
 const WRITE_TOOLS = ["bash", "write", "edit", "multiedit", "apply_patch"]
 
