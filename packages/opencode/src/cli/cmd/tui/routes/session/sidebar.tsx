@@ -57,14 +57,16 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
     const total =
       last.tokens.input + last.tokens.output + last.tokens.reasoning + last.tokens.cache.read + last.tokens.cache.write
     const model = sync.data.provider.find((x) => x.id === last.providerID)?.models[last.modelID]
+    const totalInput = last.tokens.input + last.tokens.cache.read + last.tokens.cache.write
     return {
       tokens: total.toLocaleString(),
       percentage: model?.limit.context ? Math.round((total / model.limit.context) * 100) : null,
-      input: last.tokens.input,
-      output: last.tokens.output,
-      reasoning: last.tokens.reasoning,
-      cacheRead: last.tokens.cache.read,
-      cacheWrite: last.tokens.cache.write,
+      inputLine:
+        last.tokens.cache.read > 0
+          ? `  ${totalInput.toLocaleString()} input (${last.tokens.cache.read.toLocaleString()} cached)`
+          : `  ${totalInput.toLocaleString()} input`,
+      outputLine: `  ${last.tokens.output.toLocaleString()} output`,
+      reasoningLine: last.tokens.reasoning > 0 ? `  ${last.tokens.reasoning.toLocaleString()} reasoning` : null,
     }
   })
 
@@ -159,26 +161,29 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
                 <text fg={theme.text}>
                   <b>Context</b>
                 </text>
-                <text fg={theme.textMuted}>{context()?.tokens ?? 0} tokens</text>
-                <Show when={context()}>
-                  <text fg={theme.textMuted}>
-                    {"  "}
-                    {(context()!.input + context()!.cacheRead + context()!.cacheWrite).toLocaleString()} input
-                    {context()!.cacheRead > 0 ? ` (${context()!.cacheRead.toLocaleString()} cached)` : ""}
-                  </text>
-                  <text fg={theme.textMuted}>
-                    {"  "}
-                    {context()!.output.toLocaleString()} output
-                  </text>
-                  <Show when={context()!.reasoning > 0}>
-                    <text fg={theme.textMuted}>
-                      {"  "}
-                      {context()!.reasoning.toLocaleString()} reasoning
-                    </text>
-                  </Show>
+                <Show
+                  when={context()}
+                  fallback={
+                    <>
+                      <text fg={theme.textMuted}>0 tokens</text>
+                      <text fg={theme.textMuted}>0% used</text>
+                      <text fg={theme.textMuted}>{cost()} spent</text>
+                    </>
+                  }
+                >
+                  {(ctx) => (
+                    <>
+                      <text fg={theme.textMuted}>{ctx().tokens} tokens</text>
+                      <text fg={theme.textMuted}>{ctx().inputLine}</text>
+                      <text fg={theme.textMuted}>{ctx().outputLine}</text>
+                      <Show when={ctx().reasoningLine}>
+                        <text fg={theme.textMuted}>{ctx().reasoningLine}</text>
+                      </Show>
+                      <text fg={theme.textMuted}>{ctx().percentage ?? 0}% used</text>
+                      <text fg={theme.textMuted}>{cost()} spent</text>
+                    </>
+                  )}
                 </Show>
-                <text fg={theme.textMuted}>{context()?.percentage ?? 0}% used</text>
-                <text fg={theme.textMuted}>{cost()} spent</text>
               </box>
               <Show when={mcpEntries().length > 0}>
                 <box>
