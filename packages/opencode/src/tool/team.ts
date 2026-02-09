@@ -225,9 +225,8 @@ export const TeamSpawnTool = Tool.define("team_spawn", {
       { permission: "team_shutdown", pattern: "*", action: "deny" },
       { permission: "team_cleanup", pattern: "*", action: "deny" },
       { permission: "team_approve_plan", pattern: "*", action: "deny" },
-      // Deny todowrite/todoread like normal subagents
-      { permission: "todowrite", pattern: "*", action: "deny" },
-      { permission: "todoread", pattern: "*", action: "deny" },
+      // Allow todowrite/todoread — per-session todo isolation means no cross-contamination.
+      // The sidebar reads sync.data.todo[member.sessionID] to display each teammate's progress.
     ]
 
     // Plan approval: deny write tools until the lead approves.
