@@ -26,8 +26,12 @@ function teamsDir(): string {
 }
 
 function teamDir(teamName: string): string {
-  const resolved = path.resolve(teamsDir(), teamName)
-  if (!resolved.startsWith(teamsDir())) {
+  if (/[/\\]|\.\./.test(teamName)) {
+    throw new Error(`Invalid team name: "${teamName}" — must not contain path separators or '..'`)
+  }
+  const base = teamsDir()
+  const resolved = path.resolve(base, teamName)
+  if (!resolved.startsWith(base + path.sep)) {
     throw new Error(`Invalid team name: "${teamName}" — path traversal detected`)
   }
   return resolved
