@@ -26,7 +26,8 @@ function configKey(name: string): string[] {
   return ["team", Instance.project.id, name]
 }
 
-/** Storage key for a team's task list */
+/** Storage key for a team's task list — separate prefix from "team" so
+ *  Storage.list(["team", projectID]) only returns config keys, not task data */
 function tasksKey(name: string): string[] {
   return ["team_tasks", Instance.project.id, name]
 }
@@ -361,6 +362,8 @@ export namespace TeamTasks {
         const task = draft.find((t) => t.id === taskId)
         if (task) task.status = "completed"
         const resolved = resolveDependencies(draft)
+        // Mutate in-place — Storage.update serializes the original reference,
+        // so reassignment (draft = resolved) wouldn't propagate
         draft.length = 0
         draft.push(...resolved)
       })
