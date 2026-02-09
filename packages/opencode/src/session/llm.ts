@@ -40,6 +40,7 @@ export namespace LLM {
     tools: Record<string, Tool>
     retries?: number
     sessionPermission?: PermissionNext.Ruleset
+    teammate?: boolean
   }
 
   export type StreamOutput = StreamTextResult<ToolSet, unknown>
@@ -68,9 +69,17 @@ export namespace LLM {
     const system = []
     system.push(
       [
-        // use agent prompt otherwise provider prompt
-        // For Codex sessions, skip SystemPrompt.provider() since it's sent via options.instructions
-        ...(input.agent.prompt ? [input.agent.prompt] : isCodex ? [] : SystemPrompt.provider(input.model)),
+        // Teammate sessions always get the full provider prompt for their model,
+        // plus any agent-specific prompt (additive, matching Claude Code behavior).
+        // For non-teammates: agent prompt replaces provider prompt when present.
+        // For Codex non-teammates: provider prompt is sent via options.instructions instead.
+        ...(input.teammate
+          ? [...SystemPrompt.provider(input.model), ...(input.agent.prompt ? [input.agent.prompt] : [])]
+          : input.agent.prompt
+            ? [input.agent.prompt]
+            : isCodex
+              ? []
+              : SystemPrompt.provider(input.model)),
         // any custom prompt passed into this call
         ...input.system,
         // any custom prompt from last user message
@@ -112,7 +121,7 @@ export namespace LLM {
       mergeDeep(input.agent.options),
       mergeDeep(variant),
     )
-    if (isCodex) {
+    if (isCodex && !input.teammate) {
       options.instructions = SystemPrompt.instructions()
     }
 

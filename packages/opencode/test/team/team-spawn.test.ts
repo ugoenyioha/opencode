@@ -541,6 +541,11 @@ describe("TeamSpawnTool.execute", () => {
         expect(member.status).toBe("active")
         expect(member.model).toBe("anthropic/claude-3-5-sonnet-20241022")
 
+        // Verify the child session is marked as a teammate so it gets the
+        // full provider system prompt (additive prompting for teammates).
+        const childSession = await Session.get(member.sessionID)
+        expect(childSession.teammate).toBe(true)
+
         await Team.setMemberStatus("reg-team", "reg-mate", "shutdown")
         await Team.cleanup("reg-team")
       },
