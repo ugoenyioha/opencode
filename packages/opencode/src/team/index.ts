@@ -151,13 +151,9 @@ export namespace Team {
     const team = await get(teamName)
     if (!team) throw new Error(`Team "${teamName}" not found`)
 
-    // Replace existing member with same name, or add new
-    const existing = team.members.findIndex((m) => m.name === member.name)
-    if (existing >= 0) {
-      team.members[existing] = member
-    } else {
-      team.members.push(member)
-    }
+    const existing = team.members.find((m) => m.name === member.name)
+    if (existing) throw new Error(`Teammate "${member.name}" already exists in team "${teamName}"`)
+    team.members.push(member)
 
     await Bun.write(configPath(teamName), JSON.stringify(team, null, 2))
 

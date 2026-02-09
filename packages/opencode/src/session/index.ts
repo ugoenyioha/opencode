@@ -142,7 +142,6 @@ export namespace Session {
     z
       .object({
         parentID: Identifier.schema("session").optional(),
-        teammate: z.boolean().optional(),
         title: z.string().optional(),
         permission: Info.shape.permission,
       })
@@ -150,7 +149,6 @@ export namespace Session {
     async (input) => {
       return createNext({
         parentID: input?.parentID,
-        teammate: input?.teammate,
         directory: Instance.directory,
         title: input?.title,
         permission: input?.permission,

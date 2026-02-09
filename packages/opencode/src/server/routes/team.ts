@@ -1,7 +1,10 @@
 import { Hono } from "hono"
+import { z } from "zod"
 import { Team, TeamTasks, WRITE_TOOLS } from "@/team"
 import { Session } from "@/session"
 import { lazy } from "../../util/lazy"
+
+const DelegateBody = z.object({ enabled: z.boolean() })
 
 export const TeamRoutes = lazy(() =>
   new Hono()
@@ -35,7 +38,10 @@ export const TeamRoutes = lazy(() =>
     })
     .post("/:name/delegate", async (c) => {
       const name = c.req.param("name")
-      const body = await c.req.json<{ enabled: boolean }>()
+      const raw = await c.req.json()
+      const parsed = DelegateBody.safeParse(raw)
+      if (!parsed.success) return c.json({ error: "Invalid body: enabled (boolean) is required" }, 400)
+      const body = parsed.data
       const team = await Team.get(name)
       if (!team) return c.json({ error: "Team not found" }, 404)
 

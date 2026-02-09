@@ -7,6 +7,7 @@ import { SessionPrompt } from "../session/prompt"
 import { Agent } from "../agent/agent"
 import { Provider } from "../provider/provider"
 import { Identifier } from "../id/id"
+import { Instance } from "../project/instance"
 import { Log } from "../util/log"
 import { Bus } from "../bus"
 import { TeamEvent } from "../team/events"
@@ -242,10 +243,13 @@ export const TeamSpawnTool = Tool.define("team_spawn", {
       )
     }
 
-    // Create a child session for the teammate
-    const session = await Session.create({
+    // Create a child session for the teammate.
+    // Uses createNext directly to set the teammate flag, which is intentionally
+    // excluded from the public Session.create schema (HTTP API surface).
+    const session = await Session.createNext({
       parentID: ctx.sessionID,
       teammate: true,
+      directory: Instance.directory,
       title: `${params.name} (@${agentName} teammate, ${modelLabel})${params.require_plan_approval ? " [plan mode]" : ""}`,
       permission: permissionRules,
     })
@@ -341,6 +345,13 @@ export const TeamSpawnTool = Tool.define("team_spawn", {
     log.info("spawning teammate", { teamName, name: params.name, sessionID: session.id })
     const notifyLead = async (status: "finished" | "errored", error?: string) => {
       try {
+        // Only transition to idle if the member isn't already shutdown.
+        // A shutdown request sets status to "shutdown" before the loop finishes —
+        // overwriting it with "idle" would break auto-cleanup.
+        const team = await Team.get(teamName)
+        const member = team?.members.find((m) => m.name === params.name)
+        if (member?.status === "shutdown") return
+
         await Team.setMemberStatus(teamName, params.name, "idle")
         // Send an idle notification to the lead — this injects a message
         // into the lead's session and triggers auto-wake if idle.

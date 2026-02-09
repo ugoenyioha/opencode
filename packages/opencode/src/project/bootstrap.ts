@@ -34,14 +34,18 @@ export async function InstanceBootstrap() {
     }
   })
 
-  // Team features: recover interrupted teammates and enable auto-cleanup.
+  // Team features: recover interrupted teammates, then enable auto-cleanup.
+  // Recovery runs first so stale teams are restored before cleanup subscribes.
   // Fire-and-forget: don't block bootstrap completion.
   if (Flag.OPENCODE_EXPERIMENTAL_AGENT_TEAMS) {
     import("../team").then(({ Team }) => {
-      Team.autoCleanup()
-      Team.recover().catch((err) => {
-        Log.Default.warn("team recovery failed", { error: err instanceof Error ? err.message : err })
-      })
+      Team.recover()
+        .catch((err) => {
+          Log.Default.warn("team recovery failed", { error: err instanceof Error ? err.message : err })
+        })
+        .finally(() => {
+          Team.autoCleanup()
+        })
     })
   }
 }

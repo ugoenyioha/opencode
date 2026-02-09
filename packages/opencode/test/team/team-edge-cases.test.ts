@@ -13,13 +13,7 @@ import { Session } from "../../src/session"
 import { Identifier } from "../../src/id/id"
 import { Log } from "../../src/util/log"
 import { tmpdir } from "../fixture/fixture"
-import {
-  TeamCreateTool,
-  TeamSpawnTool,
-  TeamClaimTool,
-  TeamTasksTool,
-  TeamCleanupTool,
-} from "../../src/tool/team"
+import { TeamCreateTool, TeamSpawnTool, TeamClaimTool, TeamTasksTool, TeamCleanupTool } from "../../src/tool/team"
 
 Log.init({ print: false })
 
@@ -96,9 +90,7 @@ describe("Edge case: concurrent team creation", () => {
         const lead = await Session.create({})
         await Team.create({ name: "first-team", leadSessionID: lead.id })
 
-        await expect(
-          Team.create({ name: "second-team", leadSessionID: lead.id }),
-        ).rejects.toThrow("already leading")
+        await expect(Team.create({ name: "second-team", leadSessionID: lead.id })).rejects.toThrow("already leading")
 
         await Team.cleanup("first-team")
       },
@@ -170,10 +162,7 @@ describe("Edge case: empty task list operations", () => {
         await Team.create({ name: "tool-empty", leadSessionID: lead.id })
 
         const tasksTool = await TeamTasksTool.init()
-        const result = await tasksTool.execute(
-          { action: "list" },
-          mockCtx(lead.id),
-        )
+        const result = await tasksTool.execute({ action: "list" }, mockCtx(lead.id))
         expect(result.output).toContain("No tasks")
 
         await Team.cleanup("tool-empty")
@@ -286,7 +275,12 @@ describe("Edge case: rapid status transitions", () => {
         await Team.create({ name: "concurrent-status", leadSessionID: lead.id })
 
         const sess = await Session.create({ parentID: lead.id })
-        await Team.addMember("concurrent-status", { name: "target", sessionID: sess.id, agent: "general", status: "active" })
+        await Team.addMember("concurrent-status", {
+          name: "target",
+          sessionID: sess.id,
+          agent: "general",
+          status: "active",
+        })
 
         // Fire all status changes concurrently
         await Promise.all([
@@ -384,9 +378,7 @@ describe("Edge case: unicode and special characters", () => {
         })
 
         const leadMsgs = await Session.messages({ sessionID: lead.id })
-        const received = leadMsgs.find((m) =>
-          m.parts.some((p) => p.type === "text" && p.text.includes("变量名称")),
-        )
+        const received = leadMsgs.find((m) => m.parts.some((p) => p.type === "text" && p.text.includes("变量名称")))
         expect(received).toBeDefined()
         const text = received!.parts.find((p) => p.type === "text") as any
         expect(text.text).toContain("résumé")
@@ -456,12 +448,8 @@ describe("Edge case: multiple teams in same project", () => {
         await Team.create({ name: "team-b", leadSessionID: lead2.id })
 
         // Each team has independent state
-        await TeamTasks.add("team-a", [
-          { id: "a1", content: "Team A task", status: "pending", priority: "high" },
-        ])
-        await TeamTasks.add("team-b", [
-          { id: "b1", content: "Team B task", status: "pending", priority: "high" },
-        ])
+        await TeamTasks.add("team-a", [{ id: "a1", content: "Team A task", status: "pending", priority: "high" }])
+        await TeamTasks.add("team-b", [{ id: "b1", content: "Team B task", status: "pending", priority: "high" }])
 
         const aTasks = await TeamTasks.list("team-a")
         const bTasks = await TeamTasks.list("team-b")
@@ -529,7 +517,7 @@ describe("Edge case: findBySession with overlapping membership", () => {
 // ---------- Member Re-addition ----------
 
 describe("Edge case: re-adding a member with same name", () => {
-  test("adding member with existing name replaces the entry", async () => {
+  test("adding member with existing name throws instead of silently replacing", async () => {
     await using tmp = await tmpdir({ git: true })
 
     await Instance.provide({
@@ -541,20 +529,21 @@ describe("Edge case: re-adding a member with same name", () => {
         const sess1 = await Session.create({ parentID: lead.id })
         const sess2 = await Session.create({ parentID: lead.id })
 
-        await Team.addMember("replace-team", { name: "worker", sessionID: sess1.id, agent: "general", status: "active" })
+        await Team.addMember("replace-team", {
+          name: "worker",
+          sessionID: sess1.id,
+          agent: "general",
+          status: "active",
+        })
 
-        let team = await Team.get("replace-team")
+        const team = await Team.get("replace-team")
         expect(team!.members).toHaveLength(1)
         expect(team!.members[0].sessionID).toBe(sess1.id)
 
-        // Re-add with different session
-        await Team.addMember("replace-team", { name: "worker", sessionID: sess2.id, agent: "explore", status: "idle" })
-
-        team = await Team.get("replace-team")
-        expect(team!.members).toHaveLength(1) // still 1, not 2
-        expect(team!.members[0].sessionID).toBe(sess2.id) // replaced
-        expect(team!.members[0].agent).toBe("explore")
-        expect(team!.members[0].status).toBe("idle")
+        // Re-add with same name should throw
+        await expect(
+          Team.addMember("replace-team", { name: "worker", sessionID: sess2.id, agent: "explore", status: "idle" }),
+        ).rejects.toThrow("already exists")
 
         await Team.setMemberStatus("replace-team", "worker", "shutdown")
         await Team.cleanup("replace-team")
@@ -575,9 +564,7 @@ describe("Edge case: double-claim scenarios", () => {
         const lead = await Session.create({})
         await Team.create({ name: "double-claim", leadSessionID: lead.id })
 
-        await TeamTasks.add("double-claim", [
-          { id: "t1", content: "Task", status: "pending", priority: "high" },
-        ])
+        await TeamTasks.add("double-claim", [{ id: "t1", content: "Task", status: "pending", priority: "high" }])
 
         const first = await TeamTasks.claim("double-claim", "t1", "alice")
         expect(first).toBe(true)
@@ -604,9 +591,7 @@ describe("Edge case: double-claim scenarios", () => {
         const lead = await Session.create({})
         await Team.create({ name: "claim-completed", leadSessionID: lead.id })
 
-        await TeamTasks.add("claim-completed", [
-          { id: "t1", content: "Task", status: "pending", priority: "high" },
-        ])
+        await TeamTasks.add("claim-completed", [{ id: "t1", content: "Task", status: "pending", priority: "high" }])
 
         await TeamTasks.claim("claim-completed", "t1", "worker")
         await TeamTasks.complete("claim-completed", "t1")
@@ -680,9 +665,7 @@ describe("Edge case: messaging edge cases", () => {
 
         // No members to receive it, and lead is excluded as sender
         const leadMsgs = await Session.messages({ sessionID: lead.id })
-        const selfMsg = leadMsgs.find((m) =>
-          m.parts.some((p) => p.type === "text" && p.text.includes("Anyone there?")),
-        )
+        const selfMsg = leadMsgs.find((m) => m.parts.some((p) => p.type === "text" && p.text.includes("Anyone there?")))
         expect(selfMsg).toBeUndefined()
 
         await Team.cleanup("solo-team")
@@ -709,9 +692,7 @@ describe("Edge case: messaging edge cases", () => {
         })
 
         const leadMsgs = await Session.messages({ sessionID: lead.id })
-        const selfMsg = leadMsgs.find((m) =>
-          m.parts.some((p) => p.type === "text" && p.text.includes("Note to self")),
-        )
+        const selfMsg = leadMsgs.find((m) => m.parts.some((p) => p.type === "text" && p.text.includes("Note to self")))
         expect(selfMsg).toBeDefined()
 
         await Team.cleanup("self-msg")
