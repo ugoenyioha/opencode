@@ -39,6 +39,7 @@ export async function InstanceBootstrap() {
   // Fire-and-forget: don't block bootstrap completion.
   if (Flag.OPENCODE_EXPERIMENTAL_AGENT_TEAMS) {
     import("../team").then(({ Team }) => {
+      Team.onCleanedRestorePermissions()
       Team.recover()
         .catch((err) => {
           Log.Default.warn("team recovery failed", { error: err instanceof Error ? err.message : err })

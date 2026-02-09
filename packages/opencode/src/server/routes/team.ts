@@ -1,70 +1,130 @@
 import { Hono } from "hono"
-import { z } from "zod"
-import { Team, TeamTasks, WRITE_TOOLS } from "@/team"
+import z from "zod"
+import { describeRoute, validator, resolver } from "hono-openapi"
+import { Team, TeamTasks, TeamInfoSchema, TeamTaskSchema, WRITE_TOOLS } from "@/team"
 import { Session } from "@/session"
 import { lazy } from "../../util/lazy"
+import { errors } from "../error"
 
-const DelegateBody = z.object({ enabled: z.boolean() })
+const Delegate = z.object({ enabled: z.boolean() })
 
 export const TeamRoutes = lazy(() =>
   new Hono()
-    .get("/", async (c) => {
-      const teams = await Team.list()
-      return c.json(teams)
-    })
-    .get("/:name", async (c) => {
-      const name = c.req.param("name")
-      const team = await Team.get(name)
-      if (!team) return c.json({ error: "Team not found" }, 404)
-      return c.json(team)
-    })
-    .get("/:name/tasks", async (c) => {
-      const name = c.req.param("name")
-      const tasks = await TeamTasks.list(name)
-      return c.json(tasks)
-    })
-    .get("/by-session/:sessionID", async (c) => {
-      const sessionID = c.req.param("sessionID")
-      const result = await Team.findBySession(sessionID)
-      if (!result) return c.json(null)
-      const team = result.team
-      const tasks = await TeamTasks.list(team.name)
-      return c.json({
-        team,
-        tasks,
-        role: result.role,
-        memberName: result.memberName,
-      })
-    })
-    .post("/:name/delegate", async (c) => {
-      const name = c.req.param("name")
-      const raw = await c.req.json()
-      const parsed = DelegateBody.safeParse(raw)
-      if (!parsed.success) return c.json({ error: "Invalid body: enabled (boolean) is required" }, 400)
-      const body = parsed.data
-      const team = await Team.get(name)
-      if (!team) return c.json({ error: "Team not found" }, 404)
+    .get(
+      "/",
+      describeRoute({
+        summary: "List teams",
+        description: "List all teams in this project.",
+        operationId: "team.list",
+        responses: {
+          200: {
+            description: "List of teams",
+            content: { "application/json": { schema: resolver(TeamInfoSchema.array()) } },
+          },
+        },
+      }),
+      async (c) => {
+        return c.json(await Team.list())
+      },
+    )
+    .get(
+      "/:name",
+      describeRoute({
+        summary: "Get team",
+        description: "Retrieve a team by name.",
+        operationId: "team.get",
+        responses: {
+          200: {
+            description: "Team info",
+            content: { "application/json": { schema: resolver(TeamInfoSchema) } },
+          },
+          ...errors(404),
+        },
+      }),
+      validator("param", z.object({ name: z.string() })),
+      async (c) => {
+        const team = await Team.get(c.req.valid("param").name)
+        if (!team) return c.json({ error: "Team not found" }, 404)
+        return c.json(team)
+      },
+    )
+    .get(
+      "/:name/tasks",
+      describeRoute({
+        summary: "List team tasks",
+        description: "List all tasks for a team.",
+        operationId: "team.tasks.list",
+        responses: {
+          200: {
+            description: "List of tasks",
+            content: { "application/json": { schema: resolver(TeamTaskSchema.array()) } },
+          },
+        },
+      }),
+      validator("param", z.object({ name: z.string() })),
+      async (c) => {
+        return c.json(await TeamTasks.list(c.req.valid("param").name))
+      },
+    )
+    .get(
+      "/by-session/:sessionID",
+      describeRoute({
+        summary: "Find team by session",
+        description: "Find the team a session belongs to.",
+        operationId: "team.bySession",
+        responses: {
+          200: { description: "Team info with role and tasks" },
+        },
+      }),
+      validator("param", z.object({ sessionID: z.string() })),
+      async (c) => {
+        const result = await Team.findBySession(c.req.valid("param").sessionID)
+        if (!result) return c.json(null)
+        return c.json({
+          team: result.team,
+          tasks: await TeamTasks.list(result.team.name),
+          role: result.role,
+          memberName: result.memberName,
+        })
+      },
+    )
+    .post(
+      "/:name/delegate",
+      describeRoute({
+        summary: "Toggle delegate mode",
+        description: "Enable or disable delegate mode for a team.",
+        operationId: "team.delegate",
+        responses: {
+          200: { description: "Delegate mode updated" },
+          ...errors(400, 404),
+        },
+      }),
+      validator("param", z.object({ name: z.string() })),
+      validator("json", Delegate),
+      async (c) => {
+        const { name } = c.req.valid("param")
+        const { enabled } = c.req.valid("json")
+        const team = await Team.get(name)
+        if (!team) return c.json({ error: "Team not found" }, 404)
 
-      // Toggle delegate mode: add or remove write tool denials on the lead session
-      await Session.update(team.leadSessionID, (draft) => {
-        if (body.enabled) {
-          // Add deny rules for write tools
-          const existing = draft.permission ?? []
-          const newRules = WRITE_TOOLS.filter(
-            (tool) => !existing.some((r) => r.permission === tool && r.action === "deny"),
-          ).map((tool) => ({ permission: tool, pattern: "*", action: "deny" as const }))
-          draft.permission = [...existing, ...newRules]
-        } else {
-          // Remove deny rules for write tools
-          draft.permission = (draft.permission ?? []).filter(
-            (rule) => !((WRITE_TOOLS as readonly string[]).includes(rule.permission) && rule.action === "deny"),
-          )
-        }
-      })
+        await Session.update(team.leadSessionID, (draft) => {
+          if (enabled) {
+            const existing = draft.permission ?? []
+            draft.permission = [
+              ...existing,
+              ...WRITE_TOOLS.filter((tool) => !existing.some((r) => r.permission === tool && r.action === "deny")).map(
+                (tool) => ({ permission: tool, pattern: "*", action: "deny" as const }),
+              ),
+            ]
+          } else {
+            draft.permission = (draft.permission ?? []).filter(
+              (rule) => !((WRITE_TOOLS as readonly string[]).includes(rule.permission) && rule.action === "deny"),
+            )
+          }
+        })
 
-      // Update team config
-      await Team.setDelegate(name, body.enabled)
-
-      return c.json({ ok: true, delegate: body.enabled })
-    }),
+        await Team.setDelegate(name, enabled)
+        return c.json({ ok: true, delegate: enabled })
+      },
+    ),
 )

@@ -45,10 +45,7 @@ export namespace Team {
       const team = await get(event.properties.teamName)
       if (!team) return
       if (team.members.length === 0) return
-
-      // All members must be shutdown — any active/idle/interrupted member blocks cleanup
-      const pending = team.members.some((m) => m.status !== "shutdown")
-      if (pending) return
+      if (team.members.some((m) => m.status !== "shutdown")) return
 
       log.info("all members shutdown, auto-cleaning team", { teamName: team.name })
       try {
@@ -56,6 +53,35 @@ export namespace Team {
       } catch (err: unknown) {
         log.warn("auto-cleanup failed", {
           teamName: team.name,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    })
+  }
+
+  /**
+   * Listen for TeamEvent.Cleaned and restore session permissions.
+   * This decouples the team module from the session module —
+   * cleanup only publishes the event, this listener handles session side-effects.
+   */
+  export function onCleanedRestorePermissions(): () => void {
+    return Bus.subscribe(TeamEvent.Cleaned, async (event) => {
+      if (!event.properties.delegate) return
+
+      try {
+        const { Session } = await import("../session")
+        await Session.update(event.properties.leadSessionID, (draft) => {
+          draft.permission = (draft.permission ?? []).filter(
+            (rule) => !((WRITE_TOOLS as readonly string[]).includes(rule.permission) && rule.action === "deny"),
+          )
+        })
+        log.info("restored lead session permissions", {
+          teamName: event.properties.teamName,
+          sessionID: event.properties.leadSessionID,
+        })
+      } catch (err: unknown) {
+        log.warn("failed to restore lead session permissions", {
+          teamName: event.properties.teamName,
           error: err instanceof Error ? err.message : String(err),
         })
       }
@@ -228,6 +254,284 @@ export namespace Team {
       if (member) return { team, role: "member", memberName: member.name }
     }
     return undefined
+  }
+
+  /**
+   * Resolve the model for a teammate.
+   * Priority: explicit model param > agent model > lead's last model > global default.
+   * Returns `{ error }` if the explicit model is not found.
+   */
+  export async function resolveModel(input: {
+    model?: string
+    agent: { model?: { providerID: string; modelID: string } }
+    messages: Array<{ info: { role: string; model?: { providerID: string; modelID: string } } }>
+  }): Promise<{ providerID: string; modelID: string } | { error: string }> {
+    const { Provider } = await import("../provider/provider")
+
+    if (input.model) {
+      const parsed = Provider.parseModel(input.model)
+      try {
+        await Provider.getModel(parsed.providerID, parsed.modelID)
+      } catch (e: unknown) {
+        if (Provider.ModelNotFoundError.isInstance(e)) {
+          const hint = e.data.suggestions?.length ? ` Did you mean: ${e.data.suggestions.join(", ")}?` : ""
+          return { error: `Model not found: ${input.model}.${hint}` }
+        }
+        throw e
+      }
+      return parsed
+    }
+    if (input.agent.model) return input.agent.model
+    const lastUser = input.messages.findLast((m) => m.info.role === "user")
+    if (lastUser?.info.model) return lastUser.info.model
+    return await Provider.defaultModel()
+  }
+
+  /**
+   * Spawn a teammate — creates session, registers member, starts prompt loop.
+   * On addMember failure, cleans up the orphaned session.
+   */
+  export async function spawnMember(input: {
+    teamName: string
+    name: string
+    parentSessionID: string
+    agent: { name: string; prompt?: string; skills?: string[] }
+    model: { providerID: string; modelID: string }
+    prompt: string
+    claimTask?: string
+    planApproval: boolean
+  }): Promise<{ sessionID: string; label: string }> {
+    const { Session } = await import("../session")
+    const { SessionPrompt } = await import("../session/prompt")
+    const { Identifier } = await import("../id/id")
+    const { Instance: Inst } = await import("../project/instance")
+    const { TeamMessaging } = await import("./messaging")
+
+    const label = `${input.model.providerID}/${input.model.modelID}`
+
+    // Build permission rules for the child session
+    const rules: Array<{ permission: string; pattern: string; action: "deny" | "allow" }> = [
+      { permission: "team_create", pattern: "*", action: "deny" },
+      { permission: "team_spawn", pattern: "*", action: "deny" },
+      { permission: "team_shutdown", pattern: "*", action: "deny" },
+      { permission: "team_cleanup", pattern: "*", action: "deny" },
+      { permission: "team_approve_plan", pattern: "*", action: "deny" },
+    ]
+    if (input.planApproval) {
+      rules.push(
+        ...WRITE_TOOLS.map((tool) => ({ permission: tool, pattern: "*:plan-approval", action: "deny" as const })),
+      )
+    }
+
+    const session = await Session.createNext({
+      parentID: input.parentSessionID,
+      teammate: true,
+      directory: Inst.directory,
+      title: `${input.name} (@${input.agent.name} teammate, ${label})${input.planApproval ? " [plan mode]" : ""}`,
+      permission: rules,
+    })
+
+    // Register member — if this fails, clean up the orphaned session
+    try {
+      await addMember(input.teamName, {
+        name: input.name,
+        sessionID: session.id,
+        agent: input.agent.name,
+        status: "active",
+        prompt: input.prompt,
+        model: label,
+        planApproval: input.planApproval ? "pending" : "none",
+      })
+    } catch (err) {
+      // Orphaned session cleanup
+      try {
+        await Session.remove(session.id)
+      } catch {
+        log.warn("failed to clean up orphaned session", { sessionID: session.id })
+      }
+      throw err
+    }
+
+    if (input.claimTask) {
+      await TeamTasks.claim(input.teamName, input.claimTask, input.name).catch(() => {})
+    }
+
+    // Build teammate context message
+    const planInstructions = input.planApproval
+      ? [
+          "",
+          "IMPORTANT: You are in PLAN MODE (read-only). You can read files, search, and explore,",
+          "but you CANNOT write, edit, or run bash commands until the lead approves your plan.",
+          "",
+          "Your workflow:",
+          "1. Research and explore the codebase to understand the problem",
+          "2. Formulate a detailed implementation plan",
+          "3. Send your plan to the lead using team_message (to: 'lead')",
+          "4. Wait for the lead to approve your plan (you'll receive a message when approved)",
+          "5. Once approved, your write permissions will be unlocked and you can implement",
+          "",
+        ]
+      : []
+
+    const skillContext = input.agent.skills?.length
+      ? [
+          "",
+          `Preloaded skills: ${input.agent.skills.join(", ")}`,
+          "These skills are already loaded into your context — you do not need to invoke the skill tool for them.",
+          "",
+        ]
+      : []
+
+    const context = [
+      `You are "${input.name}", a teammate in team "${input.teamName}".`,
+      `Your agent type is "${input.agent.name}", using model ${label}.`,
+      "",
+      "Team tools available to you:",
+      "- team_message: send a message to the lead or another teammate",
+      "- team_broadcast: send a message to all teammates",
+      "- team_tasks: view/add/complete tasks on the shared task list",
+      "- team_claim: claim a pending task from the shared task list",
+      "",
+      "You do NOT have access to team_create, team_spawn, team_shutdown, or team_cleanup.",
+      "Only the team lead can manage the team structure.",
+      ...skillContext,
+      ...planInstructions,
+      "When you finish a task, mark it done with team_tasks and send a summary to the lead with team_message.",
+      "You can message any teammate by name — not just the lead. Coordinate directly with peers when useful.",
+      "",
+      "SUBAGENT RELAY: If you use the task tool to spawn subagents, they CANNOT communicate with the team.",
+      "You are responsible for relaying any relevant subagent findings via team_message or team_broadcast.",
+      "",
+      "IMPORTANT: Your plain text output is NOT visible to the team lead or other teammates.",
+      "You MUST use team_message or team_broadcast to communicate. Just typing a response is not enough.",
+      "",
+      "Your instructions:",
+      input.prompt,
+    ].join("\n")
+
+    const msgId = Identifier.ascending("message")
+    await Session.updateMessage({
+      id: msgId,
+      sessionID: session.id,
+      role: "user",
+      agent: input.agent.name,
+      model: input.model,
+      time: { created: Date.now() },
+    })
+    await Session.updatePart({
+      id: Identifier.ascending("part"),
+      messageID: msgId,
+      sessionID: session.id,
+      type: "text",
+      text: context,
+    })
+
+    // Fire-and-forget the teammate's prompt loop.
+    // Wrapped in Promise.resolve().then() to guard against synchronous throws.
+    log.info("spawning teammate", { teamName: input.teamName, name: input.name, sessionID: session.id })
+    Promise.resolve()
+      .then(() => SessionPrompt.loop({ sessionID: session.id }))
+      .then(() => {
+        log.info("teammate loop finished", { teamName: input.teamName, name: input.name })
+        notifyLead(input.teamName, input.name, session.id, "finished")
+      })
+      .catch((err) => {
+        log.warn("teammate loop error", { teamName: input.teamName, name: input.name, error: err.message })
+        notifyLead(input.teamName, input.name, session.id, "errored", err.message)
+      })
+
+    return { sessionID: session.id, label }
+  }
+
+  /**
+   * Approve or reject a teammate's plan. On approval, removes plan-approval
+   * deny rules and notifies the teammate.
+   */
+  export async function approvePlan(input: {
+    teamName: string
+    memberName: string
+    approved: boolean
+    feedback?: string
+  }): Promise<void> {
+    const { Session } = await import("../session")
+    const { TeamMessaging } = await import("./messaging")
+
+    const team = await get(input.teamName)
+    if (!team) throw new Error(`Team "${input.teamName}" not found`)
+
+    const member = team.members.find((m) => m.name === input.memberName)
+    if (!member) throw new Error(`Teammate "${input.memberName}" not found`)
+
+    if (input.approved) {
+      await Session.update(member.sessionID, (draft) => {
+        if (draft.permission) {
+          draft.permission = draft.permission.filter((rule) => rule.pattern !== "*:plan-approval")
+        }
+      })
+      await setMemberPlanApproval(input.teamName, input.memberName, "approved")
+      await TeamMessaging.send({
+        teamName: input.teamName,
+        from: "lead",
+        to: input.memberName,
+        text: input.feedback
+          ? `Your plan has been APPROVED. You now have full write access. Feedback: ${input.feedback}`
+          : "Your plan has been APPROVED. You now have full write access. Proceed with implementation.",
+      })
+    } else {
+      await setMemberPlanApproval(input.teamName, input.memberName, "rejected")
+      await TeamMessaging.send({
+        teamName: input.teamName,
+        from: "lead",
+        to: input.memberName,
+        text: `Your plan has been REJECTED. Please revise and resubmit. Feedback: ${input.feedback ?? "No specific feedback provided."}`,
+      })
+    }
+
+    await Bus.publish(TeamEvent.PlanApproval, {
+      teamName: input.teamName,
+      memberName: input.memberName,
+      approved: input.approved,
+      feedback: input.feedback,
+    })
+  }
+
+  /**
+   * Notify the lead that a teammate's loop finished or errored.
+   * Uses guard option to prevent overwriting "shutdown" status.
+   */
+  async function notifyLead(
+    teamName: string,
+    name: string,
+    sessionID: string,
+    status: "finished" | "errored",
+    error?: string,
+  ) {
+    try {
+      const { TeamMessaging } = await import("./messaging")
+
+      const team = await get(teamName)
+      if (!team) return
+
+      const member = team.members.find((m) => m.name === name)
+      if (member?.status === "shutdown") return
+
+      await setMemberStatus(teamName, name, "idle", { guard: true })
+      await TeamMessaging.send({
+        teamName,
+        from: name,
+        to: "lead",
+        text:
+          status === "finished"
+            ? `I have finished my current work and am now idle. Review my session (${sessionID}) for detailed results. You can use team_shutdown to shut me down if no more work is needed.`
+            : `I encountered an error and stopped: ${error ?? "unknown error"}. Review my session (${sessionID}). You can use team_shutdown to shut me down, or send me a message to retry.`,
+      })
+    } catch (err: unknown) {
+      log.warn("failed to notify lead of teammate completion", {
+        teamName,
+        name,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
   }
 
   /**

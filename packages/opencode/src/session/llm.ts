@@ -74,7 +74,13 @@ export namespace LLM {
         // For non-teammates: agent prompt replaces provider prompt when present.
         // For Codex non-teammates: provider prompt is sent via options.instructions instead.
         ...(input.teammate
-          ? [...SystemPrompt.provider(input.model), ...(input.agent.prompt ? [input.agent.prompt] : [])]
+          ? [
+              // Provider prompt for the teammate's model; fall back to instructions if empty
+              ...(SystemPrompt.provider(input.model).length
+                ? SystemPrompt.provider(input.model)
+                : [SystemPrompt.instructions()]),
+              ...(input.agent.prompt ? [input.agent.prompt] : []),
+            ]
           : input.agent.prompt
             ? [input.agent.prompt]
             : isCodex
