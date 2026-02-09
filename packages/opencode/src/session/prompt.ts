@@ -722,6 +722,7 @@ export namespace SessionPrompt {
         ],
         tools,
         model,
+        sessionPermission: session.permission,
       })
       if (result === "stop") break
       if (result === "compact") {
