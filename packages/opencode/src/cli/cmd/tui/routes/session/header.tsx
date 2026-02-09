@@ -212,6 +212,10 @@ export function Header(props: { sidebarVisible?: boolean }) {
       last.tokens.input + last.tokens.output + last.tokens.reasoning + last.tokens.cache.read + last.tokens.cache.write
     const model = sync.data.provider.find((x) => x.id === last.providerID)?.models[last.modelID]
     let result = total.toLocaleString()
+    if (last.tokens.cache.read > 0) {
+      const pct = Math.round((last.tokens.cache.read / (last.tokens.input + last.tokens.cache.read)) * 100)
+      result += ` (${pct}% cached)`
+    }
     if (model?.limit.context) {
       result += "  " + Math.round((total / model.limit.context) * 100) + "%"
     }

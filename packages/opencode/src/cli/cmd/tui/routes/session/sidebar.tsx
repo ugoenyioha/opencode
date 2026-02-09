@@ -60,6 +60,11 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
     return {
       tokens: total.toLocaleString(),
       percentage: model?.limit.context ? Math.round((total / model.limit.context) * 100) : null,
+      input: last.tokens.input,
+      output: last.tokens.output,
+      reasoning: last.tokens.reasoning,
+      cacheRead: last.tokens.cache.read,
+      cacheWrite: last.tokens.cache.write,
     }
   })
 
@@ -155,6 +160,23 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
                   <b>Context</b>
                 </text>
                 <text fg={theme.textMuted}>{context()?.tokens ?? 0} tokens</text>
+                <Show when={context()}>
+                  <text fg={theme.textMuted}>
+                    {"  "}
+                    {context()!.input.toLocaleString()} input
+                    {context()!.cacheRead > 0 ? ` (${context()!.cacheRead.toLocaleString()} cached)` : ""}
+                  </text>
+                  <text fg={theme.textMuted}>
+                    {"  "}
+                    {context()!.output.toLocaleString()} output
+                  </text>
+                  <Show when={context()!.reasoning > 0}>
+                    <text fg={theme.textMuted}>
+                      {"  "}
+                      {context()!.reasoning.toLocaleString()} reasoning
+                    </text>
+                  </Show>
+                </Show>
                 <text fg={theme.textMuted}>{context()?.percentage ?? 0}% used</text>
                 <text fg={theme.textMuted}>{cost()} spent</text>
               </box>
