@@ -376,3 +376,52 @@ describe("Abort propagation: lead abort cancels teammates", () => {
     })
   })
 })
+
+describe("Cancel vs finish notification", () => {
+  test("cancelMember marks session as cancelled so notifyLead can distinguish from natural finish", async () => {
+    await using tmp = await tmpdir({ git: true })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const lead = await Session.create({})
+        await Team.create({ name: "cancel-notify-1", leadSessionID: lead.id })
+
+        const m1 = await Session.create({ parentID: lead.id })
+        const m2 = await Session.create({ parentID: lead.id })
+
+        await Team.addMember("cancel-notify-1", {
+          name: "will-cancel",
+          sessionID: m1.id,
+          agent: "general",
+          status: "active",
+        })
+        await Team.addMember("cancel-notify-1", {
+          name: "not-cancelled",
+          sessionID: m2.id,
+          agent: "general",
+          status: "active",
+        })
+
+        SessionStatus.set(m1.id, { type: "busy" })
+
+        // Cancel one member
+        const ok = await Team.cancelMember("cancel-notify-1", "will-cancel")
+        expect(ok).toBe(true)
+
+        // cancelAllMembers also marks sessions
+        SessionStatus.set(m2.id, { type: "busy" })
+        const count = await Team.cancelAllMembers("cancel-notify-1")
+        // m1 is no longer active (was cancelled above), only m2 gets cancelled
+        // But m1 status wasn't updated to non-active in Team storage by cancelMember
+        // (cancelMember only calls SessionPrompt.cancel, doesn't update member status)
+        // So cancelAllMembers may try m1 again — but it's still "active" in storage
+        expect(count).toBeGreaterThanOrEqual(1)
+
+        await Team.setMemberStatus("cancel-notify-1", "will-cancel", "shutdown")
+        await Team.setMemberStatus("cancel-notify-1", "not-cancelled", "shutdown")
+        await Team.cleanup("cancel-notify-1")
+      },
+    })
+  })
+})

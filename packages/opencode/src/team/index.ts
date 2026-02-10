@@ -21,6 +21,10 @@ export const WRITE_TOOLS = ["bash", "write", "edit", "multiedit", "apply_patch"]
 
 const log = Log.create({ service: "team" })
 
+/** Tracks session IDs that were explicitly cancelled via cancelMember/cancelAllMembers.
+ *  Used by spawnMember's completion handler to distinguish abort from natural finish. */
+const cancelled = new Set<string>()
+
 /** Storage key for a team's config */
 function configKey(name: string): string[] {
   return ["team", Instance.project.id, name]
@@ -435,10 +439,13 @@ export namespace Team {
     Promise.resolve()
       .then(() => SessionPrompt.loop({ sessionID: session.id }))
       .then(() => {
-        log.info("teammate loop finished", { teamName: input.teamName, name: input.name })
-        notifyLead(input.teamName, input.name, session.id, "finished")
+        const wasCancelled = cancelled.delete(session.id)
+        const status = wasCancelled ? "cancelled" : "finished"
+        log.info("teammate loop ended", { teamName: input.teamName, name: input.name, status })
+        notifyLead(input.teamName, input.name, session.id, status)
       })
       .catch((err) => {
+        cancelled.delete(session.id)
         log.warn("teammate loop error", { teamName: input.teamName, name: input.name, error: err.message })
         notifyLead(input.teamName, input.name, session.id, "errored", err.message)
       })
@@ -508,7 +515,7 @@ export namespace Team {
     teamName: string,
     name: string,
     sessionID: string,
-    status: "finished" | "errored",
+    status: "finished" | "cancelled" | "errored",
     error?: string,
   ) {
     try {
@@ -521,14 +528,19 @@ export namespace Team {
       if (member?.status === "shutdown") return
 
       await setMemberStatus(teamName, name, "idle", { guard: true })
+
+      const text =
+        status === "cancelled"
+          ? `I was interrupted by the lead and am now idle. Send me a message to resume work.`
+          : status === "finished"
+            ? `I have finished my current work and am now idle. Review my session (${sessionID}) for detailed results. You can use team_shutdown to shut me down if no more work is needed.`
+            : `I encountered an error and stopped: ${error ?? "unknown error"}. Review my session (${sessionID}). You can use team_shutdown to shut me down, or send me a message to retry.`
+
       await TeamMessaging.send({
         teamName,
         from: name,
         to: "lead",
-        text:
-          status === "finished"
-            ? `I have finished my current work and am now idle. Review my session (${sessionID}) for detailed results. You can use team_shutdown to shut me down if no more work is needed.`
-            : `I encountered an error and stopped: ${error ?? "unknown error"}. Review my session (${sessionID}). You can use team_shutdown to shut me down, or send me a message to retry.`,
+        text,
       })
     } catch (err: unknown) {
       log.warn("failed to notify lead of teammate completion", {
@@ -583,6 +595,7 @@ export namespace Team {
     if (member.status !== "active") return false
 
     log.info("cancelling member", { teamName, memberName, sessionID: member.sessionID })
+    cancelled.add(member.sessionID)
     SessionPrompt.cancel(member.sessionID)
     return true
   }
@@ -601,6 +614,7 @@ export namespace Team {
     for (const member of team.members) {
       if (member.status !== "active") continue
       log.info("cancelling member", { teamName, memberName: member.name, sessionID: member.sessionID })
+      cancelled.add(member.sessionID)
       SessionPrompt.cancel(member.sessionID)
       count++
     }
