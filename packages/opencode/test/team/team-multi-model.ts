@@ -269,7 +269,7 @@ await Instance.provide({
     console.log(`\n  Waiting for valid-model-test (${validModel}) to complete...`)
     const validDone = await waitFor(async () => {
       const t = await Team.get("multi-model-team")
-      return t?.members.find((m) => m.name === "valid-model-test")?.status === "idle"
+      return t?.members.find((m) => m.name === "valid-model-test")?.status === "ready"
     }, 90000, 500, "valid-model-test to go idle")
     assert(validDone, `Teammate using ${validModel} completed successfully`)
 
@@ -314,7 +314,7 @@ await Instance.provide({
       console.log(`  Waiting for ${tm.name} (${tm.model})...`)
       const done = await waitFor(async () => {
         const t = await Team.get("multi-model-team")
-        return t?.members.find((m) => m.name === tm.name)?.status === "idle"
+        return t?.members.find((m) => m.name === tm.name)?.status === "ready"
       }, 90000, 500, `${tm.name} to go idle`)
       assert(done, `${tm.name} (${tm.model}) completed`)
 

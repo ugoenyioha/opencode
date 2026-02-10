@@ -597,8 +597,10 @@ export const TeamShutdownTool = Tool.define("team_shutdown", {
       memberName: params.name,
     })
 
-    // Mark as shutdown — teammate loop will finish naturally after processing.
-    await Team.setMemberStatus(teamInfo.team.name, params.name, "shutdown")
+    await Team.transitionMemberStatus(teamInfo.team.name, params.name, "shutdown_requested", { force: true })
+    if (member.status === "busy") {
+      await Team.cancelMember(teamInfo.team.name, params.name)
+    }
 
     return {
       title: `Shutdown requested: ${params.name}`,

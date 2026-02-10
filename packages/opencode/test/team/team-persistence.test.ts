@@ -32,7 +32,7 @@ describe("Team persistence across restarts", () => {
             name: "worker-1",
             sessionID: "ses_worker_1",
             agent: "general",
-            status: "active",
+            status: "busy",
             prompt: "do stuff",
             model: "anthropic/claude-sonnet-4-20250514",
             planApproval: "none",
@@ -45,7 +45,7 @@ describe("Team persistence across restarts", () => {
           expect(team!.leadSessionID).toBe("ses_lead_abc")
           expect(team!.members).toHaveLength(1)
           expect(team!.members[0].name).toBe("worker-1")
-          expect(team!.members[0].status).toBe("active")
+          expect(team!.members[0].status).toBe("busy")
           expect(team!.members[0].model).toBe("anthropic/claude-sonnet-4-20250514")
 
           // Cleanup
@@ -97,7 +97,7 @@ describe("Team persistence across restarts", () => {
             name: "searcher",
             sessionID: "ses_member_find_p",
             agent: "explore",
-            status: "active",
+            status: "busy",
             prompt: "search",
             planApproval: "none",
           })
@@ -177,14 +177,14 @@ describe("Team persistence across restarts", () => {
             name: "agent-a",
             sessionID: "ses_a_p",
             agent: "general",
-            status: "active",
+            status: "busy",
             prompt: "work",
             planApproval: "none",
           })
-          await Team.setMemberStatus("status-test", "agent-a", "idle")
+          await Team.setMemberStatus("status-test", "agent-a", "ready")
 
           const team = await Team.get("status-test")
-          expect(team!.members[0].status).toBe("idle")
+          expect(team!.members[0].status).toBe("ready")
 
           // Cleanup
           await Team.setMemberStatus("status-test", "agent-a", "shutdown")

@@ -169,12 +169,12 @@ describe("Team recovery e2e: full restart cycle", () => {
         })
         memberSessionID = memberSession.id
 
-        // Register as team member with status "active"
+        // Register as team member with status "busy"
         await Team.addMember("recovery-e2e", {
           name: "researcher",
           sessionID: memberSession.id,
           agent: "explore",
-          status: "active",
+          status: "busy",
           prompt: "Research the session module",
           model: "anthropic/claude-3-5-sonnet-20241022",
           planApproval: "none",
@@ -202,7 +202,7 @@ describe("Team recovery e2e: full restart cycle", () => {
         const team = await Team.get("recovery-e2e")
         expect(team).toBeDefined()
         expect(team!.members).toHaveLength(1)
-        expect(team!.members[0].status).toBe("active")
+        expect(team!.members[0].status).toBe("busy")
         expect(team!.members[0].sessionID).toBe(memberSession.id)
       },
     })
@@ -218,9 +218,9 @@ describe("Team recovery e2e: full restart cycle", () => {
         const result = await Team.recover()
         expect(result.interrupted).toBe(1)
 
-        // Verify member is now "interrupted"
+        // Verify member is now "ready"
         const team = await Team.get("recovery-e2e")
-        expect(team!.members[0].status).toBe("interrupted")
+        expect(team!.members[0].status).toBe("ready")
 
         // Verify lead session got a notification message
         const msgs = await Session.messages({ sessionID: leadSessionID! })
@@ -301,7 +301,7 @@ describe("Team recovery e2e: full restart cycle", () => {
           name: "worker",
           sessionID: "ses_fake",
           agent: "general",
-          status: "idle",
+          status: "ready",
           planApproval: "none",
         })
       },
@@ -314,7 +314,7 @@ describe("Team recovery e2e: full restart cycle", () => {
         expect(result.interrupted).toBe(0)
 
         const team = await Team.get("noop-team")
-        expect(team!.members[0].status).toBe("idle")
+        expect(team!.members[0].status).toBe("ready")
       },
     })
   })

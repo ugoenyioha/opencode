@@ -64,7 +64,7 @@ describe("TeamSpawnTool.execute", () => {
           name: "worker",
           sessionID: member.id,
           agent: "general",
-          status: "active",
+          status: "busy",
         })
 
         const tool = await TeamSpawnTool.init()
@@ -538,7 +538,7 @@ describe("TeamSpawnTool.execute", () => {
         expect(member.name).toBe("reg-mate")
         expect(member.sessionID).toBe(result.metadata.sessionID)
         expect(member.agent).toBe("general")
-        expect(member.status).toBe("active")
+        expect(member.status).toBe("busy")
         expect(member.model).toBe("anthropic/claude-3-5-sonnet-20241022")
 
         // Verify the child session is marked as a teammate so it gets the

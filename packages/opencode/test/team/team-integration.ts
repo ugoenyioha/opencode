@@ -201,7 +201,7 @@ async function testConstraintEnforcement(leadSession: Session.Info) {
     name: "constraint-test-member",
     sessionID: memberSession.id,
     agent: "general",
-    status: "active",
+    status: "busy",
   })
 
   // Member cannot create team
@@ -284,7 +284,7 @@ async function testTeamSpawnWithRealLoop(leadSession: Session.Info) {
   const researcherMember = team!.members.find((m) => m.name === "researcher")
   assert(researcherMember !== undefined, "Researcher registered as member")
   assert(researcherMember!.agent === "general", "Researcher agent is general")
-  assert(researcherMember!.status === "active", "Researcher initially active")
+  assert(researcherMember!.status === "busy", "Researcher initially active")
   assert(researcherMember!.prompt !== undefined, "Researcher prompt stored")
 
   // Verify task was auto-claimed
@@ -298,7 +298,7 @@ async function testTeamSpawnWithRealLoop(leadSession: Session.Info) {
   const loopDone = await waitFor(async () => {
     const t = await Team.get("full-team")
     const member = t?.members.find((m) => m.name === "researcher")
-    return member?.status === "idle"
+    return member?.status === "ready"
   }, 90000, 500, "researcher to go idle")
   assert(loopDone, "Researcher loop finished and status set to idle")
 
@@ -355,7 +355,7 @@ async function testMultipleTeammatesConcurrent(leadSession: Session.Info) {
 
   // Verify both registered
   const team = await Team.get("full-team")
-  assert(team!.members.filter((m) => m.status === "active" || m.status === "idle").length >= 2, "Multiple active/idle members")
+  assert(team!.members.filter((m) => m.status === "busy" || m.status === "ready").length >= 2, "Multiple active/idle members")
 
   // Wait for both to go idle
   console.log("  Waiting for both teammates to finish...")
@@ -363,7 +363,7 @@ async function testMultipleTeammatesConcurrent(leadSession: Session.Info) {
     const t = await Team.get("full-team")
     const reviewer = t?.members.find((m) => m.name === "reviewer")
     const implementer = t?.members.find((m) => m.name === "implementer")
-    return reviewer?.status === "idle" && implementer?.status === "idle"
+    return reviewer?.status === "ready" && implementer?.status === "ready"
   }, 90000, 500, "reviewer and implementer to go idle")
   assert(bothDone, "Both teammates finished concurrently")
 
@@ -548,7 +548,7 @@ async function testBroadcast(leadSession: Session.Info, teammateSessionIDs: Reco
   )
 
   // Restore reviewer status for later tests
-  await Team.setMemberStatus("full-team", "reviewer", "idle")
+  await Team.setMemberStatus("full-team", "reviewer", "ready")
 }
 
 async function testTaskCoordination(leadSession: Session.Info) {
@@ -687,11 +687,11 @@ async function testBusEvents(leadSession: Session.Info) {
   // Trigger events
   const evtSession = await Session.create({ parentID: leadSession.id })
   await seedUserMessage(evtSession.id)
-  await Team.addMember("full-team", { name: "evt-worker", sessionID: evtSession.id, agent: "general", status: "active" })
+  await Team.addMember("full-team", { name: "evt-worker", sessionID: evtSession.id, agent: "general", status: "busy" })
   await new Promise((r) => setTimeout(r, 50))
   assert(events.includes("spawned"), "MemberSpawned event fired")
 
-  await Team.setMemberStatus("full-team", "evt-worker", "idle")
+  await Team.setMemberStatus("full-team", "evt-worker", "ready")
   await new Promise((r) => setTimeout(r, 50))
   assert(events.includes("status_changed"), "MemberStatusChanged event fired")
 
@@ -740,7 +740,7 @@ async function testShutdownAndCleanup(leadSession: Session.Info) {
 
   // Verify all shutdown
   team = await Team.get("full-team")
-  const stillActive = team!.members.filter((m) => m.status !== "shutdown" && m.status !== "idle")
+  const stillActive = team!.members.filter((m) => m.status !== "shutdown" && m.status !== "ready")
   assert(stillActive.length === 0, "All members shutdown or idle")
 
   // Set all to shutdown for cleanup

@@ -203,7 +203,7 @@ describe("Team e2e: full lifecycle", () => {
           name: "researcher",
           sessionID: childSession.id,
           agent: "explore",
-          status: "active",
+          status: "busy",
         })
 
         // Create a user message in child session so messaging can resolve model info
@@ -284,7 +284,10 @@ describe("Team e2e: full lifecycle", () => {
 
         // Verify member status changed
         const teamAfterShutdown = await Team.get("e2e-team")
-        expect(teamAfterShutdown!.members[0].status).toBe("shutdown")
+        expect(teamAfterShutdown!.members[0].status).toBe("shutdown_requested")
+
+        // Simulate the teammate acknowledging and stopping
+        await Team.setMemberStatus("e2e-team", "researcher", "shutdown")
 
         // 8. Cleanup
         const cleanupTool = await TeamCleanupTool.init()
@@ -369,7 +372,7 @@ describe("Team e2e: full lifecycle", () => {
           name: "auto-runner",
           sessionID: childSession.id,
           agent: "general",
-          status: "active",
+          status: "busy",
         })
 
         // Create the initial user message for the teammate
@@ -452,13 +455,13 @@ describe("Team e2e: messaging", () => {
           name: "alice",
           sessionID: sess1.id,
           agent: "general",
-          status: "active",
+          status: "busy",
         })
         await Team.addMember("msg-team", {
           name: "bob",
           sessionID: sess2.id,
           agent: "general",
-          status: "active",
+          status: "busy",
         })
 
         // Create user messages in both sessions so messaging can resolve model info
@@ -552,8 +555,8 @@ describe("Team e2e: messaging", () => {
         const sess1 = await Session.create({ parentID: leadSession.id })
         const sess2 = await Session.create({ parentID: leadSession.id })
 
-        await Team.addMember("bcast-team", { name: "m1", sessionID: sess1.id, agent: "general", status: "active" })
-        await Team.addMember("bcast-team", { name: "m2", sessionID: sess2.id, agent: "general", status: "active" })
+        await Team.addMember("bcast-team", { name: "m1", sessionID: sess1.id, agent: "general", status: "busy" })
+        await Team.addMember("bcast-team", { name: "m2", sessionID: sess2.id, agent: "general", status: "busy" })
 
         // Create user messages in all sessions
         for (const sess of [leadSession, sess1, sess2]) {
@@ -684,8 +687,8 @@ describe("Team e2e: task coordination", () => {
         const sess1 = await Session.create({ parentID: leadSession.id })
         const sess2 = await Session.create({ parentID: leadSession.id })
 
-        await Team.addMember("race-team", { name: "racer1", sessionID: sess1.id, agent: "general", status: "active" })
-        await Team.addMember("race-team", { name: "racer2", sessionID: sess2.id, agent: "general", status: "active" })
+        await Team.addMember("race-team", { name: "racer1", sessionID: sess1.id, agent: "general", status: "busy" })
+        await Team.addMember("race-team", { name: "racer2", sessionID: sess2.id, agent: "general", status: "busy" })
 
         await TeamTasks.add("race-team", [
           { id: "contested", content: "Only one can claim this", status: "pending", priority: "high" },
@@ -901,7 +904,7 @@ describe("Team e2e: bus events", () => {
         expect(events).toContain("created")
 
         const sess = await Session.create({ parentID: leadSession.id })
-        await Team.addMember("event-team", { name: "worker", sessionID: sess.id, agent: "general", status: "active" })
+        await Team.addMember("event-team", { name: "worker", sessionID: sess.id, agent: "general", status: "busy" })
         expect(events).toContain("member_spawned")
 
         await TeamTasks.add("event-team", [{ id: "t1", content: "task", status: "pending", priority: "high" }])

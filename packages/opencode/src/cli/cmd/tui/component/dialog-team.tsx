@@ -10,11 +10,11 @@ import { useSDK } from "../context/sdk"
 
 function statusIcon(status: string): string {
   switch (status) {
-    case "active":
+    case "busy":
       return "*"
-    case "idle":
+    case "ready":
       return "o"
-    case "interrupted":
+    case "shutdown_requested":
       return "!"
     case "shutdown":
       return "x"
@@ -35,11 +35,11 @@ function statusIcon(status: string): string {
 
 function statusColor(status: string, theme: any): string {
   switch (status) {
-    case "active":
+    case "busy":
       return theme.primary
-    case "idle":
+    case "ready":
       return theme.textMuted
-    case "interrupted":
+    case "shutdown_requested":
       return theme.warning
     case "shutdown":
       return theme.error
@@ -70,7 +70,8 @@ export function DialogTeam() {
   // Refresh team data on open
   onMount(() => {
     dialog.setSize("large")
-    sdk.fetch(`${sdk.url}/team/by-session/${route.sessionID}`)
+    sdk
+      .fetch(`${sdk.url}/team/by-session/${route.sessionID}`)
       .then((r) => r.json())
       .then((data: any) => {
         if (!data) return
@@ -94,11 +95,7 @@ export function DialogTeam() {
       value: `member:${m.sessionID}`,
       category: "Teammates",
       footer: `Status: ${m.status}`,
-      gutter: (
-        <text fg={statusColor(m.status, theme)}>
-          {statusIcon(m.status)}
-        </text>
-      ),
+      gutter: <text fg={statusColor(m.status, theme)}>{statusIcon(m.status)}</text>,
     }))
 
     const taskOptions: DialogSelectOption<string>[] = (info.tasks ?? []).map((t) => ({
@@ -112,11 +109,7 @@ export function DialogTeam() {
       ]
         .filter(Boolean)
         .join(" | "),
-      gutter: (
-        <text fg={statusColor(t.status, theme)}>
-          {statusIcon(t.status)}
-        </text>
-      ),
+      gutter: <text fg={statusColor(t.status, theme)}>{statusIcon(t.status)}</text>,
       disabled: t.status === "completed" || t.status === "cancelled",
     }))
 
@@ -143,9 +136,7 @@ export function DialogTeam() {
             <text fg={theme.textMuted}>esc</text>
           </box>
           <text fg={theme.textMuted}>No active team for this session.</text>
-          <text fg={theme.textMuted}>
-            The lead agent can create a team using the team_create tool.
-          </text>
+          <text fg={theme.textMuted}>The lead agent can create a team using the team_create tool.</text>
         </box>
       }
     >

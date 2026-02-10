@@ -10,7 +10,7 @@ import { Log } from "../../src/util/log"
 Log.init({ print: false })
 
 /**
- * Tests for Team.recover() — marking active teammates as "interrupted"
+ * Tests for Team.recover() — marking active teammates as "ready"
  * after a server restart so the user can explicitly resume them.
  *
  * Note: Since teams are now stored via the global Storage namespace (keyed by
@@ -35,7 +35,7 @@ describe("Team recovery after restart", () => {
             name: "worker-1",
             sessionID: "ses_w1",
             agent: "general",
-            status: "active",
+            status: "busy",
             prompt: "work on stuff",
             planApproval: "none",
           })
@@ -43,7 +43,7 @@ describe("Team recovery after restart", () => {
             name: "worker-2",
             sessionID: "ses_w2",
             agent: "explore",
-            status: "active",
+            status: "busy",
             prompt: "research things",
             planApproval: "none",
           })
@@ -53,8 +53,8 @@ describe("Team recovery after restart", () => {
 
           const team = await Team.get("recover-test")
           expect(team).toBeDefined()
-          expect(team!.members[0].status).toBe("interrupted")
-          expect(team!.members[1].status).toBe("interrupted")
+          expect(team!.members[0].status).toBe("ready")
+          expect(team!.members[1].status).toBe("ready")
 
           // Cleanup: mark all as shutdown so cleanup succeeds
           await Team.setMemberStatus("recover-test", "worker-1", "shutdown")
@@ -83,7 +83,7 @@ describe("Team recovery after restart", () => {
             name: "idle-worker",
             sessionID: "ses_idle",
             agent: "general",
-            status: "idle",
+            status: "ready",
             prompt: "done",
             planApproval: "none",
           })
@@ -100,7 +100,7 @@ describe("Team recovery after restart", () => {
           expect(result.interrupted).toBe(0)
 
           const team = await Team.get("recover-skip")
-          expect(team!.members[0].status).toBe("idle")
+          expect(team!.members[0].status).toBe("ready")
           expect(team!.members[1].status).toBe("shutdown")
 
           // Cleanup
@@ -132,7 +132,7 @@ describe("Team recovery after restart", () => {
             name: "real-worker",
             sessionID: memberSession.id,
             agent: "general",
-            status: "active",
+            status: "busy",
             prompt: "do real work",
             planApproval: "none",
           })
@@ -142,7 +142,7 @@ describe("Team recovery after restart", () => {
 
           const team = await Team.get("recover-real")
           expect(team).toBeDefined()
-          expect(team!.members[0].status).toBe("interrupted")
+          expect(team!.members[0].status).toBe("ready")
 
           // Cleanup
           await Team.setMemberStatus("recover-real", "real-worker", "shutdown")
@@ -170,7 +170,7 @@ describe("Team recovery after restart", () => {
             name: "worker-a",
             sessionID: "ses_a",
             agent: "general",
-            status: "active",
+            status: "busy",
             prompt: "task a",
             planApproval: "none",
           })
@@ -178,7 +178,7 @@ describe("Team recovery after restart", () => {
             name: "worker-b",
             sessionID: "ses_b",
             agent: "explore",
-            status: "idle",
+            status: "ready",
             prompt: "task b",
             planApproval: "none",
           })
@@ -186,7 +186,7 @@ describe("Team recovery after restart", () => {
             name: "worker-c",
             sessionID: "ses_c",
             agent: "general",
-            status: "active",
+            status: "busy",
             prompt: "task c",
             planApproval: "none",
           })
@@ -195,9 +195,9 @@ describe("Team recovery after restart", () => {
           expect(result.interrupted).toBe(2)
 
           const team = await Team.get("recover-mix")
-          expect(team!.members.find((m) => m.name === "worker-a")!.status).toBe("interrupted")
-          expect(team!.members.find((m) => m.name === "worker-b")!.status).toBe("idle")
-          expect(team!.members.find((m) => m.name === "worker-c")!.status).toBe("interrupted")
+          expect(team!.members.find((m) => m.name === "worker-a")!.status).toBe("ready")
+          expect(team!.members.find((m) => m.name === "worker-b")!.status).toBe("ready")
+          expect(team!.members.find((m) => m.name === "worker-c")!.status).toBe("ready")
 
           // Cleanup
           await Team.setMemberStatus("recover-mix", "worker-a", "shutdown")
@@ -241,7 +241,7 @@ describe("Team recovery after restart", () => {
             name: "alpha-1",
             sessionID: "ses_a1",
             agent: "general",
-            status: "active",
+            status: "busy",
             prompt: "work",
             planApproval: "none",
           })
@@ -251,7 +251,7 @@ describe("Team recovery after restart", () => {
             name: "beta-1",
             sessionID: "ses_b1",
             agent: "explore",
-            status: "active",
+            status: "busy",
             prompt: "research",
             planApproval: "none",
           })
@@ -259,7 +259,7 @@ describe("Team recovery after restart", () => {
             name: "beta-2",
             sessionID: "ses_b2",
             agent: "general",
-            status: "active",
+            status: "busy",
             prompt: "implement",
             planApproval: "none",
           })
@@ -268,11 +268,11 @@ describe("Team recovery after restart", () => {
           expect(result.interrupted).toBe(3)
 
           const alpha = await Team.get("team-alpha")
-          expect(alpha!.members[0].status).toBe("interrupted")
+          expect(alpha!.members[0].status).toBe("ready")
 
           const beta = await Team.get("team-beta")
-          expect(beta!.members[0].status).toBe("interrupted")
-          expect(beta!.members[1].status).toBe("interrupted")
+          expect(beta!.members[0].status).toBe("ready")
+          expect(beta!.members[1].status).toBe("ready")
 
           // Cleanup
           await Team.setMemberStatus("team-alpha", "alpha-1", "shutdown")
@@ -300,7 +300,7 @@ describe("Team recovery after restart", () => {
             name: "worker",
             sessionID: "ses_w",
             agent: "general",
-            status: "active",
+            status: "busy",
             prompt: "work",
             planApproval: "none",
           })

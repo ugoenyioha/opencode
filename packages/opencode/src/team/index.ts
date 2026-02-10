@@ -6,6 +6,7 @@ import { Storage } from "../storage/storage"
 import { fn } from "../util/fn"
 import {
   TeamEvent,
+  MemberStatus as MemberStatusSchema,
   ExecutionStatus,
   TeamInfoSchema,
   TeamTaskSchema,
@@ -51,14 +52,11 @@ const TERMINAL_EXECUTION_STATES = new Set<ExecutionStatusType>([
 ])
 
 const MEMBER_TRANSITIONS: Record<MemberStatus, MemberStatus[]> = {
-  active: ["idle", "interrupted", "shutdown", "error"],
-  idle: ["active", "shutdown", "error"],
-  interrupted: ["active", "idle", "shutdown", "error"],
+  ready: ["busy", "shutdown_requested", "shutdown", "error"],
+  busy: ["ready", "shutdown_requested", "error"],
+  shutdown_requested: ["shutdown", "ready", "error"],
   shutdown: [],
-  error: ["idle", "shutdown"],
-  ready: ["active", "idle", "interrupted", "shutdown", "error"],
-  busy: ["active", "idle", "interrupted", "shutdown", "error"],
-  shutdown_requested: ["interrupted", "shutdown", "active", "idle", "error"],
+  error: ["ready", "shutdown_requested", "shutdown"],
 }
 
 const EXECUTION_TRANSITIONS: Record<ExecutionStatusType, ExecutionStatusType[]> = {
@@ -75,39 +73,12 @@ const EXECUTION_TRANSITIONS: Record<ExecutionStatusType, ExecutionStatusType[]> 
 }
 
 function normalizeMember(member: TeamMember): TeamMember {
-  const rawStatus = member.status as string
-  const status = (() => {
-    switch (rawStatus) {
-      case "busy":
-      case "active":
-        return "active"
-      case "ready":
-      case "idle":
-        return "idle"
-      case "shutdown_requested":
-      case "interrupted":
-        return "interrupted"
-      case "shutdown":
-        return "shutdown"
-      case "error":
-        return "error"
-      default:
-        return "idle"
-    }
-  })()
-  const legacyExecution = (member as TeamMember & { execution_status?: string }).execution_status
-  const execution_status = ExecutionStatus.safeParse(legacyExecution).success
-    ? (legacyExecution as ExecutionStatusType)
-    : (() => {
-        switch (status) {
-          case "active":
-            return "running"
-          case "interrupted":
-            return "cancelled"
-          default:
-            return "idle"
-        }
-      })()
+  const status = MemberStatusSchema.parse(member.status)
+  const execution_status = ExecutionStatus.safeParse(member.execution_status).success
+    ? member.execution_status
+    : status === "busy"
+      ? "running"
+      : "idle"
   return {
     ...member,
     status,
@@ -472,7 +443,7 @@ export namespace Team {
         name: input.name,
         sessionID: session.id,
         agent: input.agent.name,
-        status: "active",
+        status: "busy",
         execution_status: "idle",
         prompt: input.prompt,
         model: label,
@@ -562,7 +533,7 @@ export namespace Team {
       text: context,
     })
 
-    await transitionMemberStatus(input.teamName, input.name, "active")
+    await transitionMemberStatus(input.teamName, input.name, "busy")
     await transitionExecutionStatus(input.teamName, input.name, "starting")
 
     // Fire-and-forget the teammate's prompt loop.
@@ -586,10 +557,10 @@ export namespace Team {
         await transitionExecutionStatus(input.teamName, input.name, "idle")
         const team = await get(input.teamName)
         const member = team?.members.find((m) => m.name === input.name)
-        if (member?.status === "shutdown") {
+        if (member?.status === "shutdown_requested") {
           await transitionMemberStatus(input.teamName, input.name, "shutdown")
         } else {
-          await transitionMemberStatus(input.teamName, input.name, "idle")
+          await transitionMemberStatus(input.teamName, input.name, "ready")
         }
         await notifyLead(input.teamName, input.name, session.id, result.reason)
       })
@@ -660,7 +631,7 @@ export namespace Team {
    * Notify the lead that a teammate's loop finished or errored.
    * Uses guard option because the lead may have already sent a shutdown request
    * (setting status to "shutdown") while the loop was finishing — without guard,
-   * this would overwrite "shutdown" with "idle", preventing auto-cleanup.
+   * this would overwrite "shutdown" with "ready", preventing auto-cleanup.
    */
   async function notifyLead(
     teamName: string,
@@ -710,10 +681,10 @@ export namespace Team {
     const team = await get(teamName)
     if (!team) throw new Error(`Team "${teamName}" not found`)
 
-    const alive = team.members.filter((m) => m.status === "active" || m.status === "interrupted")
+    const alive = team.members.filter((m) => m.status !== "shutdown")
     if (alive.length > 0) {
       throw new Error(
-        `Cannot clean up team "${teamName}": ${alive.length} active/interrupted member(s): ${alive.map((m) => m.name).join(", ")}. Shut them down first.`,
+        `Cannot clean up team "${teamName}": ${alive.length} non-shutdown member(s): ${alive.map((m) => m.name).join(", ")}. Shut them down first.`,
       )
     }
 
@@ -741,11 +712,10 @@ export namespace Team {
 
     const member = team.members.find((m) => m.name === memberName)
     if (!member) return false
-    if (member.status !== "active") return false
+    if (member.status !== "busy") return false
     if (TERMINAL_EXECUTION_STATES.has(member.execution_status ?? "idle")) return false
 
     log.info("cancelling member", { teamName, memberName, sessionID: member.sessionID })
-    await transitionMemberStatus(teamName, memberName, "interrupted", { force: true })
     await transitionExecutionStatus(teamName, memberName, "cancel_requested")
 
     for (const _ of [0, 1, 2]) {
@@ -756,7 +726,7 @@ export namespace Team {
       const current = next?.members.find((m) => m.name === memberName)
       if (!current) break
       if (TERMINAL_EXECUTION_STATES.has(current.execution_status ?? "idle")) break
-      if (current.status !== "active") break
+      if (current.status !== "busy") break
     }
     return true
   }
@@ -773,10 +743,9 @@ export namespace Team {
 
     let count = 0
     for (const member of team.members) {
-      if (member.status !== "active") continue
+      if (member.status !== "busy") continue
       if (TERMINAL_EXECUTION_STATES.has(member.execution_status ?? "idle")) continue
       log.info("cancelling member", { teamName, memberName: member.name, sessionID: member.sessionID })
-      await transitionMemberStatus(teamName, member.name, "interrupted", { force: true })
       await transitionExecutionStatus(teamName, member.name, "cancel_requested")
       SessionPrompt.cancel(member.sessionID)
       await transitionExecutionStatus(teamName, member.name, "cancelling")
@@ -786,7 +755,7 @@ export namespace Team {
   }
 
   /**
-   * Mark teammates that were busy when the server died as interrupted/cancelled
+   * Mark teammates that were busy when the server died as cancelled
    * and inject a notification into the lead session.
    * Called once during InstanceBootstrap.
    */
@@ -795,7 +764,7 @@ export namespace Team {
     let count = 0
 
     for (const team of teams) {
-      const active = team.members.filter((m) => m.status === "active")
+      const active = team.members.filter((m) => m.status === "busy")
       if (active.length === 0) continue
 
       log.info("marking interrupted teammates", { teamName: team.name, count: active.length })
@@ -804,7 +773,7 @@ export namespace Team {
       for (const member of active) {
         await transitionExecutionStatus(team.name, member.name, "cancelled", { force: true })
         await transitionExecutionStatus(team.name, member.name, "idle", { force: true })
-        await transitionMemberStatus(team.name, member.name, "interrupted", { force: true })
+        await transitionMemberStatus(team.name, member.name, "ready", { force: true })
         names.push(member.name)
         count++
       }

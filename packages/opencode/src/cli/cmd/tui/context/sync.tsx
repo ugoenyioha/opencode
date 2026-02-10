@@ -83,7 +83,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             name: string
             sessionID: string
             agent: string
-            status: "active" | "idle" | "interrupted" | "shutdown" | "error" | "ready" | "busy" | "shutdown_requested"
+            status: "ready" | "busy" | "shutdown_requested" | "shutdown" | "error"
             execution_status:
               | "idle"
               | "starting"

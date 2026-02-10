@@ -90,7 +90,7 @@ describe("Team", () => {
           name: "researcher",
           sessionID: "ses_research_1",
           agent: "explore",
-          status: "active",
+          status: "busy",
         })
 
         let team = await Team.get("member-team")
@@ -102,7 +102,7 @@ describe("Team", () => {
           name: "implementer",
           sessionID: "ses_impl_1",
           agent: "general",
-          status: "active",
+          status: "busy",
         })
 
         team = await Team.get("member-team")
@@ -132,12 +132,12 @@ describe("Team", () => {
           name: "worker",
           sessionID: "ses_w1",
           agent: "general",
-          status: "active",
+          status: "busy",
         })
 
-        await Team.setMemberStatus("status-team", "worker", "idle")
+        await Team.setMemberStatus("status-team", "worker", "ready")
         let team = await Team.get("status-team")
-        expect(team!.members[0].status).toBe("idle")
+        expect(team!.members[0].status).toBe("ready")
 
         await Team.setMemberStatus("status-team", "worker", "shutdown")
         team = await Team.get("status-team")
@@ -160,10 +160,10 @@ describe("Team", () => {
           name: "busy-worker",
           sessionID: "ses_busy",
           agent: "general",
-          status: "active",
+          status: "busy",
         })
 
-        await expect(Team.cleanup("active-team")).rejects.toThrow("active/interrupted member")
+        await expect(Team.cleanup("active-team")).rejects.toThrow("non-shutdown member")
 
         // Fix: shut down the worker, then clean up
         await Team.setMemberStatus("active-team", "busy-worker", "shutdown")
@@ -184,7 +184,7 @@ describe("Team", () => {
           name: "finder",
           sessionID: "ses_finder",
           agent: "explore",
-          status: "active",
+          status: "busy",
         })
 
         const leadResult = await Team.findBySession("ses_lead_find")
@@ -364,13 +364,13 @@ describe("Team auto-cleanup", () => {
           name: "worker-a",
           sessionID: "ses_ac_a",
           agent: "general",
-          status: "active",
+          status: "busy",
         })
         await Team.addMember("auto-clean-team", {
           name: "worker-b",
           sessionID: "ses_ac_b",
           agent: "general",
-          status: "active",
+          status: "busy",
         })
 
         // Shut down first member — team still has active members
@@ -412,13 +412,13 @@ describe("Team auto-cleanup", () => {
           name: "worker-1",
           sessionID: "ses_nc_1",
           agent: "general",
-          status: "active",
+          status: "busy",
         })
         await Team.addMember("no-clean-team", {
           name: "worker-2",
           sessionID: "ses_nc_2",
           agent: "general",
-          status: "active",
+          status: "busy",
         })
 
         // Shut down only one
@@ -453,11 +453,11 @@ describe("Team auto-cleanup", () => {
           name: "worker-idle",
           sessionID: "ses_idle_1",
           agent: "general",
-          status: "active",
+          status: "busy",
         })
 
         // Set to idle — should NOT trigger cleanup
-        await Team.setMemberStatus("idle-team", "worker-idle", "idle")
+        await Team.setMemberStatus("idle-team", "worker-idle", "ready")
         await new Promise((r) => setTimeout(r, 100))
 
         const team = await Team.get("idle-team")
@@ -505,7 +505,7 @@ describe("Team constraints", () => {
           name: "worker",
           sessionID: "ses_worker_nest",
           agent: "general",
-          status: "active",
+          status: "busy",
         })
 
         // Worker session cannot create a team (no nesting)
@@ -592,7 +592,7 @@ describe("Team tool definitions", () => {
           name: "guarded-worker",
           sessionID: "ses_guarded_worker",
           agent: "general",
-          status: "active",
+          status: "busy",
         })
 
         const tool = await TeamCreateTool.init()
@@ -655,7 +655,7 @@ describe("Team tool definitions", () => {
           name: "worker-x",
           sessionID: "ses_worker_x",
           agent: "general",
-          status: "active",
+          status: "busy",
         })
 
         const tool = await TeamShutdownTool.init()

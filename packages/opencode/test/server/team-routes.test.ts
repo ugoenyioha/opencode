@@ -264,7 +264,7 @@ describe("Team REST API routes", () => {
             name: "reviewer",
             sessionID: memberSession.id,
             agent: "general",
-            status: "active",
+            status: "busy",
           })
 
           const app = Server.App()
@@ -340,7 +340,7 @@ describe("Team REST API routes", () => {
             name: "worker-1",
             sessionID: memberSession.id,
             agent: "build",
-            status: "active",
+            status: "busy",
           })
           await TeamTasks.add(name, [
             {

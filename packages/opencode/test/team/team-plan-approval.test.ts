@@ -106,7 +106,7 @@ describe("TeamApprovePlanTool.execute", () => {
           name: "planner",
           sessionID: childSession.id,
           agent: "general",
-          status: "active",
+          status: "busy",
           planApproval: "pending",
         })
 
@@ -180,7 +180,7 @@ describe("TeamApprovePlanTool.execute", () => {
           name: "planner",
           sessionID: childSession.id,
           agent: "general",
-          status: "active",
+          status: "busy",
           planApproval: "pending",
         })
 
@@ -240,7 +240,7 @@ describe("TeamApprovePlanTool.execute", () => {
           name: "worker",
           sessionID: memberSession.id,
           agent: "general",
-          status: "active",
+          status: "busy",
           planApproval: "pending",
         })
 
@@ -312,7 +312,7 @@ describe("TeamApprovePlanTool.execute", () => {
           name: "already-approved",
           sessionID: memberSession.id,
           agent: "general",
-          status: "active",
+          status: "busy",
           planApproval: "approved",
         })
 
@@ -344,7 +344,7 @@ describe("TeamApprovePlanTool.execute", () => {
           name: "no-plan",
           sessionID: memberSession.id,
           agent: "general",
-          status: "active",
+          status: "busy",
           planApproval: "none",
         })
 
@@ -378,7 +378,7 @@ describe("Team.setMemberPlanApproval", () => {
           name: "w",
           sessionID: "ses_w_" + Date.now(),
           agent: "general",
-          status: "active",
+          status: "busy",
           planApproval: "none",
         })
 
@@ -405,7 +405,7 @@ describe("Team.setMemberPlanApproval", () => {
           name: "w",
           sessionID: "ses_w_" + Date.now(),
           agent: "general",
-          status: "active",
+          status: "busy",
           planApproval: "pending",
         })
 
@@ -432,7 +432,7 @@ describe("Team.setMemberPlanApproval", () => {
           name: "w",
           sessionID: "ses_w_" + Date.now(),
           agent: "general",
-          status: "active",
+          status: "busy",
           planApproval: "pending",
         })
 

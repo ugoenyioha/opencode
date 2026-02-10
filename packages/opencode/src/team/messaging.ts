@@ -56,7 +56,7 @@ export namespace TeamMessaging {
 
     // Send to all active members except the sender
     const memberTargets = team.members
-      .filter((m) => m.name !== input.from && m.status !== "shutdown" && m.status !== "interrupted")
+      .filter((m) => m.name !== input.from && m.status !== "shutdown")
       .map((m) => ({ name: m.name, sessionID: m.sessionID }))
 
     const targets =

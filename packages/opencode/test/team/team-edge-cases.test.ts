@@ -245,13 +245,13 @@ describe("Edge case: rapid status transitions", () => {
         await Team.create({ name: "rapid-team", leadSessionID: lead.id })
 
         const sess = await Session.create({ parentID: lead.id })
-        await Team.addMember("rapid-team", { name: "flipper", sessionID: sess.id, agent: "general", status: "active" })
+        await Team.addMember("rapid-team", { name: "flipper", sessionID: sess.id, agent: "general", status: "busy" })
 
         // Rapid transitions
-        await Team.setMemberStatus("rapid-team", "flipper", "idle")
-        await Team.setMemberStatus("rapid-team", "flipper", "active")
-        await Team.setMemberStatus("rapid-team", "flipper", "idle")
-        await Team.setMemberStatus("rapid-team", "flipper", "active")
+        await Team.setMemberStatus("rapid-team", "flipper", "ready")
+        await Team.setMemberStatus("rapid-team", "flipper", "busy")
+        await Team.setMemberStatus("rapid-team", "flipper", "ready")
+        await Team.setMemberStatus("rapid-team", "flipper", "busy")
         await Team.setMemberStatus("rapid-team", "flipper", "shutdown")
 
         // Verify final state is consistent
@@ -279,20 +279,20 @@ describe("Edge case: rapid status transitions", () => {
           name: "target",
           sessionID: sess.id,
           agent: "general",
-          status: "active",
+          status: "busy",
         })
 
         // Fire all status changes concurrently
         await Promise.all([
-          Team.setMemberStatus("concurrent-status", "target", "idle"),
-          Team.setMemberStatus("concurrent-status", "target", "active"),
+          Team.setMemberStatus("concurrent-status", "target", "ready"),
+          Team.setMemberStatus("concurrent-status", "target", "busy"),
           Team.setMemberStatus("concurrent-status", "target", "shutdown"),
         ])
 
         // State should be one of the three — no corruption
         const team = await Team.get("concurrent-status")
         expect(team!.members).toHaveLength(1)
-        expect(["active", "idle", "shutdown"]).toContain(team!.members[0].status)
+        expect(["busy", "ready", "shutdown"]).toContain(team!.members[0].status)
 
         // Force shutdown for cleanup
         await Team.setMemberStatus("concurrent-status", "target", "shutdown")
@@ -318,7 +318,7 @@ describe("Edge case: large message payloads", () => {
         await seedUserMessage(sess.id)
         await seedUserMessage(lead.id)
 
-        await Team.addMember("big-msg-team", { name: "sender", sessionID: sess.id, agent: "general", status: "active" })
+        await Team.addMember("big-msg-team", { name: "sender", sessionID: sess.id, agent: "general", status: "busy" })
 
         // 100KB message
         const bigText = "A".repeat(100 * 1024)
@@ -366,7 +366,7 @@ describe("Edge case: unicode and special characters", () => {
           name: "reviewer-1",
           sessionID: sess.id,
           agent: "general",
-          status: "active",
+          status: "busy",
         })
 
         // Message with unicode content
@@ -489,7 +489,7 @@ describe("Edge case: findBySession with overlapping membership", () => {
         const orphan = await Session.create({})
 
         await Team.create({ name: "role-team", leadSessionID: lead.id })
-        await Team.addMember("role-team", { name: "w1", sessionID: member.id, agent: "general", status: "active" })
+        await Team.addMember("role-team", { name: "w1", sessionID: member.id, agent: "general", status: "busy" })
 
         // Lead lookup
         const leadResult = await Team.findBySession(lead.id)
@@ -533,7 +533,7 @@ describe("Edge case: re-adding a member with same name", () => {
           name: "worker",
           sessionID: sess1.id,
           agent: "general",
-          status: "active",
+          status: "busy",
         })
 
         const team = await Team.get("replace-team")
@@ -542,7 +542,7 @@ describe("Edge case: re-adding a member with same name", () => {
 
         // Re-add with same name should throw
         await expect(
-          Team.addMember("replace-team", { name: "worker", sessionID: sess2.id, agent: "explore", status: "idle" }),
+          Team.addMember("replace-team", { name: "worker", sessionID: sess2.id, agent: "explore", status: "ready" }),
         ).rejects.toThrow("already exists")
 
         await Team.setMemberStatus("replace-team", "worker", "shutdown")
@@ -831,7 +831,7 @@ describe("Edge case: removed member messaging", () => {
 
         const sess = await Session.create({ parentID: lead.id })
         await seedUserMessage(sess.id)
-        await Team.addMember("remove-msg", { name: "gone", sessionID: sess.id, agent: "general", status: "active" })
+        await Team.addMember("remove-msg", { name: "gone", sessionID: sess.id, agent: "general", status: "busy" })
 
         // Remove the member
         await Team.removeMember("remove-msg", "gone")

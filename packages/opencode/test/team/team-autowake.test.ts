@@ -74,7 +74,7 @@ describe("autoWake: send to idle recipient", () => {
           name: "worker",
           sessionID: member.id,
           agent: "general",
-          status: "active",
+          status: "busy",
         })
 
         // Confirm member session is idle (default state — no prompt loop running)
@@ -120,7 +120,7 @@ describe("autoWake: send to idle recipient", () => {
           name: "reviewer",
           sessionID: member.id,
           agent: "general",
-          status: "active",
+          status: "busy",
         })
 
         await TeamMessaging.send({
@@ -168,7 +168,7 @@ describe("autoWake: send to busy recipient", () => {
           name: "worker",
           sessionID: member.id,
           agent: "general",
-          status: "active",
+          status: "busy",
         })
 
         // Simulate a busy session (prompt loop already running)
@@ -217,7 +217,7 @@ describe("autoWake: send to busy recipient", () => {
           name: "worker",
           sessionID: member.id,
           agent: "general",
-          status: "active",
+          status: "busy",
         })
 
         // Set retry state — autoWake should skip (type !== "idle")
@@ -269,9 +269,9 @@ describe("autoWake: broadcast", () => {
         await seedUserMessage(busy1.id)
 
         await Team.create({ name: "bcast-wake", leadSessionID: lead.id })
-        await Team.addMember("bcast-wake", { name: "idle-a", sessionID: idle1.id, agent: "general", status: "active" })
-        await Team.addMember("bcast-wake", { name: "idle-b", sessionID: idle2.id, agent: "general", status: "active" })
-        await Team.addMember("bcast-wake", { name: "busy-c", sessionID: busy1.id, agent: "general", status: "active" })
+        await Team.addMember("bcast-wake", { name: "idle-a", sessionID: idle1.id, agent: "general", status: "busy" })
+        await Team.addMember("bcast-wake", { name: "idle-b", sessionID: idle2.id, agent: "general", status: "busy" })
+        await Team.addMember("bcast-wake", { name: "busy-c", sessionID: busy1.id, agent: "general", status: "busy" })
 
         // idle-a and idle-b are idle (default), busy-c is busy
         SessionStatus.set(busy1.id, { type: "busy" })
@@ -322,7 +322,7 @@ describe("autoWake: broadcast", () => {
         await seedUserMessage(shutdown.id)
 
         await Team.create({ name: "bcast-skip", leadSessionID: lead.id })
-        await Team.addMember("bcast-skip", { name: "alive", sessionID: active.id, agent: "general", status: "active" })
+        await Team.addMember("bcast-skip", { name: "alive", sessionID: active.id, agent: "general", status: "busy" })
         await Team.addMember("bcast-skip", {
           name: "dead",
           sessionID: shutdown.id,
@@ -375,9 +375,9 @@ describe("autoWake: broadcast", () => {
           name: "alice",
           sessionID: memberA.id,
           agent: "general",
-          status: "active",
+          status: "busy",
         })
-        await Team.addMember("bcast-sender", { name: "bob", sessionID: memberB.id, agent: "general", status: "active" })
+        await Team.addMember("bcast-sender", { name: "bob", sessionID: memberB.id, agent: "general", status: "busy" })
 
         // alice broadcasts
         await TeamMessaging.broadcast({
@@ -433,7 +433,7 @@ describe("autoWake: bus events are published", () => {
         await seedUserMessage(member.id)
 
         await Team.create({ name: "event-send", leadSessionID: lead.id })
-        await Team.addMember("event-send", { name: "worker", sessionID: member.id, agent: "general", status: "active" })
+        await Team.addMember("event-send", { name: "worker", sessionID: member.id, agent: "general", status: "busy" })
 
         const events: any[] = []
         const unsub = Bus.subscribe(TeamEvent.Message, (event) => {
@@ -477,7 +477,7 @@ describe("autoWake: bus events are published", () => {
           name: "worker",
           sessionID: member.id,
           agent: "general",
-          status: "active",
+          status: "busy",
         })
 
         const events: any[] = []
@@ -522,7 +522,7 @@ describe("autoWake: error resilience", () => {
         await seedUserMessage(member.id)
 
         await Team.create({ name: "resilient", leadSessionID: lead.id })
-        await Team.addMember("resilient", { name: "worker", sessionID: member.id, agent: "general", status: "active" })
+        await Team.addMember("resilient", { name: "worker", sessionID: member.id, agent: "general", status: "busy" })
 
         // Member session is idle → autoWake will try SessionPrompt.loop()
         // which will fail (no LLM/agent config in test). The error must be caught.
@@ -568,13 +568,13 @@ describe("autoWake: error resilience", () => {
           name: "idle-one",
           sessionID: s1.id,
           agent: "general",
-          status: "active",
+          status: "busy",
         })
         await Team.addMember("resilient-bcast", {
           name: "busy-one",
           sessionID: s2.id,
           agent: "general",
-          status: "active",
+          status: "busy",
         })
 
         SessionStatus.set(s2.id, { type: "busy" })
@@ -616,7 +616,7 @@ describe("autoWake: error resilience", () => {
         await seedUserMessage(member.id)
 
         await Team.create({ name: "rapid-wake", leadSessionID: lead.id })
-        await Team.addMember("rapid-wake", { name: "worker", sessionID: member.id, agent: "general", status: "active" })
+        await Team.addMember("rapid-wake", { name: "worker", sessionID: member.id, agent: "general", status: "busy" })
 
         // Fire multiple sends rapidly — all should succeed
         await Promise.all([

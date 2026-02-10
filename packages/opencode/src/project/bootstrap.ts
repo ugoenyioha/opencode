@@ -37,7 +37,7 @@ export async function InstanceBootstrap() {
   // Team features — order matters:
   // 1. onCleanedRestorePermissions() registers synchronously so it's ready
   //    before recover(), which could trigger cleanup if all members are shutdown.
-  // 2. recover() marks stale "active" members as "interrupted" and notifies leads.
+  // 2. recover() marks stale busy executions as cancelled, transitions members to ready, and notifies leads.
   // 3. autoCleanup() subscribes AFTER recover finishes (.finally()) to avoid
   //    spurious MemberStatusChanged events during recovery triggering premature cleanup.
   // Fire-and-forget: don't block bootstrap completion.

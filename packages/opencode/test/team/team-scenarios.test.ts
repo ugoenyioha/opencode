@@ -247,7 +247,7 @@ describe("Scenario 1: Parallel code review — 3 reviewers, 6 tasks", () => {
         const allIdle = await waitFor(
           async () => {
             const team = await Team.get("review-team")
-            return team!.members.every((m) => m.status === "idle")
+            return team!.members.every((m) => m.status === "ready")
           },
           30000,
           200,
@@ -405,7 +405,7 @@ describe("Scenario 2: Self-claim waterfall — single worker cascading through d
         await waitFor(
           async () => {
             const team = await Team.get("waterfall-team")
-            return team!.members.find((m) => m.name === "worker")?.status === "idle"
+            return team!.members.find((m) => m.name === "worker")?.status === "ready"
           },
           15000,
           200,
@@ -446,13 +446,13 @@ describe("Scenario 3: Teammate-to-teammate debate — cross-session message exch
           name: "hypothesis-a",
           sessionID: sess1.id,
           agent: "general",
-          status: "active",
+          status: "busy",
         })
         await Team.addMember("debate-team", {
           name: "hypothesis-b",
           sessionID: sess2.id,
           agent: "general",
-          status: "active",
+          status: "busy",
         })
 
         // Round 1: A proposes a theory to B
@@ -579,7 +579,7 @@ describe("Scenario 4: Error recovery — teammate loop finishes, lead spawns rep
         const idle1 = await waitFor(
           async () => {
             const team = await Team.get("recovery-team")
-            return team!.members.find((m) => m.name === "investigator-1")?.status === "idle"
+            return team!.members.find((m) => m.name === "investigator-1")?.status === "ready"
           },
           15000,
           200,
@@ -630,13 +630,13 @@ describe("Scenario 4: Error recovery — teammate loop finishes, lead spawns rep
         expect(team!.members).toHaveLength(2)
         expect(team!.members.find((m) => m.name === "investigator-1")!.status).toBe("shutdown")
         const inv2 = team!.members.find((m) => m.name === "investigator-2")!
-        expect(["active", "idle"]).toContain(inv2.status)
+        expect(["busy", "ready"]).toContain(inv2.status)
 
         // Wait for replacement to finish
         await waitFor(
           async () => {
             const t = await Team.get("recovery-team")
-            return t!.members.find((m) => m.name === "investigator-2")?.status === "idle"
+            return t!.members.find((m) => m.name === "investigator-2")?.status === "ready"
           },
           15000,
           200,
@@ -672,16 +672,16 @@ describe("Scenario 5: Cleanup with active members blocked", () => {
         const s2 = await Session.create({ parentID: lead.id })
         const s3 = await Session.create({ parentID: lead.id })
 
-        await Team.addMember("cleanup-team", { name: "active-1", sessionID: s1.id, agent: "general", status: "active" })
-        await Team.addMember("cleanup-team", { name: "active-2", sessionID: s2.id, agent: "general", status: "active" })
-        await Team.addMember("cleanup-team", { name: "idle-1", sessionID: s3.id, agent: "general", status: "idle" })
+        await Team.addMember("cleanup-team", { name: "active-1", sessionID: s1.id, agent: "general", status: "busy" })
+        await Team.addMember("cleanup-team", { name: "active-2", sessionID: s2.id, agent: "general", status: "busy" })
+        await Team.addMember("cleanup-team", { name: "idle-1", sessionID: s3.id, agent: "general", status: "ready" })
 
         const cleanupTool = await TeamCleanupTool.init()
 
         // Attempt 1: cleanup with active members → fail
         const attempt1 = await cleanupTool.execute({ name: "cleanup-team" }, mockCtx(lead.id))
         expect(attempt1.title).toBe("Cleanup failed")
-        expect(attempt1.output).toContain("active/interrupted member")
+        expect(attempt1.output).toContain("non-shutdown member")
 
         // Shutdown one active member
         await Team.setMemberStatus("cleanup-team", "active-1", "shutdown")
@@ -689,13 +689,15 @@ describe("Scenario 5: Cleanup with active members blocked", () => {
         // Attempt 2: still one active member → fail
         const attempt2 = await cleanupTool.execute({ name: "cleanup-team" }, mockCtx(lead.id))
         expect(attempt2.title).toBe("Cleanup failed")
-        expect(attempt2.output).toContain("active/interrupted member")
+        expect(attempt2.output).toContain("non-shutdown member")
 
-        // Shutdown second active member (idle members don't block cleanup)
+        // Shutdown second active member
         await Team.setMemberStatus("cleanup-team", "active-2", "shutdown")
 
-        // Attempt 3: no active members → success
-        // (idle-1 is "idle" not "active", so cleanup should pass)
+        // Ready members also block cleanup now
+        await Team.setMemberStatus("cleanup-team", "idle-1", "shutdown")
+
+        // Attempt 3: all members shutdown → success
         const attempt3 = await cleanupTool.execute({ name: "cleanup-team" }, mockCtx(lead.id))
         expect(attempt3.title).toContain("cleaned up")
 
@@ -718,10 +720,10 @@ describe("Scenario 5: Cleanup with active members blocked", () => {
         await Team.create({ name: "direct-cleanup", leadSessionID: lead.id })
 
         const s1 = await Session.create({ parentID: lead.id })
-        await Team.addMember("direct-cleanup", { name: "worker", sessionID: s1.id, agent: "general", status: "active" })
+        await Team.addMember("direct-cleanup", { name: "worker", sessionID: s1.id, agent: "general", status: "busy" })
 
         // Direct call should throw
-        await expect(Team.cleanup("direct-cleanup")).rejects.toThrow("active/interrupted member")
+        await expect(Team.cleanup("direct-cleanup")).rejects.toThrow("non-shutdown member")
 
         // After shutdown, cleanup works
         await Team.setMemberStatus("direct-cleanup", "worker", "shutdown")
@@ -798,7 +800,7 @@ describe("Scenario 6: Large team scaling — 5 teammates concurrently", () => {
         const allIdle = await waitFor(
           async () => {
             const t = await Team.get("large-team")
-            return t!.members.every((m) => m.status === "idle")
+            return t!.members.every((m) => m.status === "ready")
           },
           45000,
           200,
@@ -999,7 +1001,7 @@ describe("Scenario: 5-way concurrent claim race", () => {
           const sess = await Session.create({ parentID: lead.id })
           const name = `racer-${i}`
           members.push(name)
-          await Team.addMember("race-5", { name, sessionID: sess.id, agent: "general", status: "active" })
+          await Team.addMember("race-5", { name, sessionID: sess.id, agent: "general", status: "busy" })
         }
 
         // Add 2 tasks
@@ -1072,8 +1074,8 @@ describe("Scenario: Full lifecycle with bus event verification", () => {
         await seedUserMessage(lead.id)
 
         // 1. Add members → spawned events
-        await Team.addMember("event-lifecycle", { name: "w1", sessionID: s1.id, agent: "general", status: "active" })
-        await Team.addMember("event-lifecycle", { name: "w2", sessionID: s2.id, agent: "general", status: "active" })
+        await Team.addMember("event-lifecycle", { name: "w1", sessionID: s1.id, agent: "general", status: "busy" })
+        await Team.addMember("event-lifecycle", { name: "w2", sessionID: s2.id, agent: "general", status: "busy" })
 
         // 2. Add tasks → task_updated
         await TeamTasks.add("event-lifecycle", [
@@ -1090,7 +1092,7 @@ describe("Scenario: Full lifecycle with bus event verification", () => {
         await TeamMessaging.broadcast({ teamName: "event-lifecycle", from: "lead", text: "update" })
 
         // 6. Status change → status_changed
-        await Team.setMemberStatus("event-lifecycle", "w1", "idle")
+        await Team.setMemberStatus("event-lifecycle", "w1", "ready")
         await Team.setMemberStatus("event-lifecycle", "w2", "shutdown")
         await Team.setMemberStatus("event-lifecycle", "w1", "shutdown")
 

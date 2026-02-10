@@ -211,7 +211,7 @@ async function testTeammateUsesToolsAutonomously(leadSession: Session.Info) {
   console.log("  Waiting for teammate to complete tool sequence...")
   const done = await waitFor(async () => {
     const team = await Team.get("auto-tools-team")
-    return team!.members.find((m) => m.name === "schema-checker")?.status === "idle"
+    return team!.members.find((m) => m.name === "schema-checker")?.status === "ready"
   }, 120000, 1000, "schema-checker to go idle")
   assert(done, "Schema checker went idle")
 
@@ -305,7 +305,7 @@ async function testTeammateClaimsUnblockedTask(leadSession: Session.Info) {
   console.log("  Waiting for builder to finish...")
   const done = await waitFor(async () => {
     const team = await Team.get("dep-claim-team")
-    return team!.members.find((m) => m.name === "builder")?.status === "idle"
+    return team!.members.find((m) => m.name === "builder")?.status === "ready"
   }, 120000, 1000, "builder to go idle")
   assert(done, "Builder went idle")
 
@@ -390,7 +390,7 @@ async function testTwoTeammatesCommunicate(leadSession: Session.Info) {
     if (!team) return false
     const analyzer = team.members.find((m) => m.name === "analyzer")
     const reporter = team.members.find((m) => m.name === "reporter")
-    return analyzer?.status === "idle" && reporter?.status === "idle"
+    return analyzer?.status === "ready" && reporter?.status === "ready"
   }, 120000, 1000, "both teammates idle")
   assert(bothDone, "Both teammates went idle")
 
@@ -490,7 +490,7 @@ async function testFullParallelReview(leadSession: Session.Info) {
   const bothDone = await waitFor(async () => {
     const team = await Team.get("real-review")
     if (!team) return false
-    return team.members.every((m) => m.status === "idle")
+    return team.members.every((m) => m.status === "ready")
   }, 120000, 1000, "both reviewers idle")
   assert(bothDone, "Both reviewers went idle")
 

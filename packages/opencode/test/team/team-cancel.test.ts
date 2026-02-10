@@ -59,11 +59,11 @@ describe("Team.cancelMember", () => {
           name: "idle-worker",
           sessionID: member.id,
           agent: "general",
-          status: "active",
+          status: "busy",
         })
 
         // Set to idle first
-        await Team.setMemberStatus("cancel-test-2", "idle-worker", "idle")
+        await Team.setMemberStatus("cancel-test-2", "idle-worker", "ready")
 
         const result = await Team.cancelMember("cancel-test-2", "idle-worker")
         expect(result).toBe(false)
@@ -88,7 +88,7 @@ describe("Team.cancelMember", () => {
           name: "done-worker",
           sessionID: member.id,
           agent: "general",
-          status: "active",
+          status: "busy",
         })
 
         await Team.setMemberStatus("cancel-test-3", "done-worker", "shutdown")
@@ -115,7 +115,7 @@ describe("Team.cancelMember", () => {
           name: "busy-worker",
           sessionID: member.id,
           agent: "general",
-          status: "active",
+          status: "busy",
         })
 
         // Simulate the member being busy
@@ -162,7 +162,7 @@ describe("Team.cancelAllMembers", () => {
           name: "shutdown-worker",
           sessionID: member.id,
           agent: "general",
-          status: "active",
+          status: "busy",
         })
         await Team.setMemberStatus("cancel-all-1", "shutdown-worker", "shutdown")
 
@@ -191,19 +191,19 @@ describe("Team.cancelAllMembers", () => {
           name: "worker-a",
           sessionID: m1.id,
           agent: "general",
-          status: "active",
+          status: "busy",
         })
         await Team.addMember("cancel-all-2", {
           name: "worker-b",
           sessionID: m2.id,
           agent: "general",
-          status: "active",
+          status: "busy",
         })
         await Team.addMember("cancel-all-2", {
           name: "worker-c",
           sessionID: m3.id,
           agent: "general",
-          status: "active",
+          status: "busy",
         })
 
         // One member is shutdown — should not be cancelled
@@ -244,15 +244,15 @@ describe("Team.cancelAllMembers", () => {
           name: "active-one",
           sessionID: m1.id,
           agent: "general",
-          status: "active",
+          status: "busy",
         })
         await Team.addMember("cancel-all-3", {
           name: "interrupted-one",
           sessionID: m2.id,
           agent: "general",
-          status: "active",
+          status: "busy",
         })
-        await Team.setMemberStatus("cancel-all-3", "interrupted-one", "interrupted")
+        await Team.setMemberStatus("cancel-all-3", "interrupted-one", "ready")
 
         SessionStatus.set(m1.id, { type: "busy" })
 
@@ -286,13 +286,13 @@ describe("Abort propagation: lead abort cancels teammates", () => {
           name: "worker-x",
           sessionID: m1.id,
           agent: "general",
-          status: "active",
+          status: "busy",
         })
         await Team.addMember("abort-prop-1", {
           name: "worker-y",
           sessionID: m2.id,
           agent: "general",
-          status: "active",
+          status: "busy",
         })
 
         SessionStatus.set(m1.id, { type: "busy" })
@@ -348,13 +348,13 @@ describe("Abort propagation: lead abort cancels teammates", () => {
           name: "member-a",
           sessionID: m1.id,
           agent: "general",
-          status: "active",
+          status: "busy",
         })
         await Team.addMember("abort-prop-2", {
           name: "member-b",
           sessionID: m2.id,
           agent: "general",
-          status: "active",
+          status: "busy",
         })
 
         SessionStatus.set(m1.id, { type: "busy" })
@@ -394,13 +394,13 @@ describe("Cancel vs finish notification", () => {
           name: "will-cancel",
           sessionID: m1.id,
           agent: "general",
-          status: "active",
+          status: "busy",
         })
         await Team.addMember("cancel-notify-1", {
           name: "not-cancelled",
           sessionID: m2.id,
           agent: "general",
-          status: "active",
+          status: "busy",
         })
 
         SessionStatus.set(m1.id, { type: "busy" })
@@ -415,7 +415,7 @@ describe("Cancel vs finish notification", () => {
         // m1 is no longer active (was cancelled above), only m2 gets cancelled
         // But m1 status wasn't updated to non-active in Team storage by cancelMember
         // (cancelMember only calls SessionPrompt.cancel, doesn't update member status)
-        // So cancelAllMembers may try m1 again — but it's still "active" in storage
+        // So cancelAllMembers may try m1 again — but it's still "busy" in storage
         expect(count).toBeGreaterThanOrEqual(1)
 
         await Team.setMemberStatus("cancel-notify-1", "will-cancel", "shutdown")
