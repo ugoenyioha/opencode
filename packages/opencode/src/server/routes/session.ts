@@ -379,7 +379,21 @@ export const SessionRoutes = lazy(() =>
         }),
       ),
       async (c) => {
-        SessionPrompt.cancel(c.req.valid("param").sessionID)
+        const sessionID = c.req.valid("param").sessionID
+        SessionPrompt.cancel(sessionID)
+
+        // Propagate abort to active teammates if this is a team lead session.
+        // Mirrors the Task tool's abort propagation pattern (task.ts:121-125).
+        try {
+          const { Team } = await import("@/team")
+          const match = await Team.findBySession(sessionID)
+          if (match?.role === "lead") {
+            await Team.cancelAllMembers(match.team.name)
+          }
+        } catch {
+          // Team module may not be loaded — safe to ignore
+        }
+
         return c.json(true)
       },
     )
