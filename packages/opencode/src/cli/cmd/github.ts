@@ -907,9 +907,10 @@ export const GithubRunCommand = cmd({
           ],
         })
 
-        // result is a LoopResult — unwrap the message
-        const msg = (result as SessionPrompt.LoopResult).message
-        if (!msg) throw new Error("No response from agent")
+        if (result.reason === "cancelled") {
+          throw new Error("Agent response was cancelled")
+        }
+        const msg = result.message
 
         // result should always be assistant just satisfying type checker
         if (msg.info.role === "assistant" && msg.info.error) {
@@ -939,8 +940,10 @@ export const GithubRunCommand = cmd({
           ],
         })
 
-        const summary = (summaryResult as SessionPrompt.LoopResult).message
-        if (!summary) throw new Error("No summary response from agent")
+        if (summaryResult.reason === "cancelled") {
+          throw new Error("Summary request was cancelled")
+        }
+        const summary = summaryResult.message
 
         if (summary.info.role === "assistant" && summary.info.error) {
           console.error("Summary agent error:", summary.info.error)

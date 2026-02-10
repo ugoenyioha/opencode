@@ -37,11 +37,11 @@ describe("session.prompt special characters", () => {
         const decodedPath = fileURLToPath(fileParts[0].url)
         expect(decodedPath).toBe(path.join(tmp.path, "file#name.txt"))
 
-        const message = (await SessionPrompt.prompt({
+        const message = await SessionPrompt.prompt({
           sessionID: session.id,
           parts,
           noReply: true,
-        })) as MessageV2.WithParts
+        })
         const stored = await MessageV2.get({ sessionID: session.id, messageID: message.info.id })
 
         // Verify the file content was read correctly

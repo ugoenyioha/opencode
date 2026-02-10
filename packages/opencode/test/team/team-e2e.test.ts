@@ -395,7 +395,8 @@ describe("Team e2e: full lifecycle", () => {
 
         // Verify the loop completed — result should be an assistant message
         expect(result.reason).toBe("completed")
-        expect(result.message!.info.role).toBe("assistant")
+        if (result.reason === "cancelled") throw new Error("expected completed result")
+        expect(result.message.info.role).toBe("assistant")
 
         // Verify the response text was captured
         const childMsgs = await Session.messages({ sessionID: childSession.id })

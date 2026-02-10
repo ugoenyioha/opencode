@@ -521,6 +521,8 @@ export namespace Team {
       if (member?.status === "shutdown") return
 
       await setMemberStatus(teamName, name, "idle", { guard: true })
+      const next = await get(teamName)
+      if (next?.members.find((m) => m.name === name)?.status === "shutdown") return
 
       const text =
         status === "cancelled"
@@ -588,6 +590,7 @@ export namespace Team {
     if (member.status !== "active") return false
 
     log.info("cancelling member", { teamName, memberName, sessionID: member.sessionID })
+    await setMemberStatus(teamName, memberName, "interrupted", { guard: true })
     SessionPrompt.cancel(member.sessionID)
     return true
   }
@@ -606,6 +609,7 @@ export namespace Team {
     for (const member of team.members) {
       if (member.status !== "active") continue
       log.info("cancelling member", { teamName, memberName: member.name, sessionID: member.sessionID })
+      await setMemberStatus(teamName, member.name, "interrupted", { guard: true })
       SessionPrompt.cancel(member.sessionID)
       count++
     }

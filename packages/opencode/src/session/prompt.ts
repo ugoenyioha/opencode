@@ -54,6 +54,8 @@ export namespace SessionPrompt {
   const log = Log.create({ service: "session.prompt" })
   export const OUTPUT_TOKEN_MAX = Flag.OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX || 32_000
 
+  export type LoopResult = { reason: "completed"; message: MessageV2.WithParts } | { reason: "cancelled" }
+
   const state = Instance.state(
     () => {
       const data: Record<
@@ -61,7 +63,7 @@ export namespace SessionPrompt {
         {
           abort: AbortController
           callbacks: {
-            resolve(input: MessageV2.WithParts): void
+            resolve(input: LoopResult): void
             reject(reason?: any): void
           }[]
         }
@@ -146,7 +148,7 @@ export namespace SessionPrompt {
   })
   export type PromptInput = z.infer<typeof PromptInput>
 
-  export const prompt = fn(PromptInput, async (input) => {
+  const promptFn = fn(PromptInput, async (input): Promise<MessageV2.WithParts | LoopResult> => {
     const session = await Session.get(input.sessionID)
     await SessionRevert.cleanup(session)
 
@@ -176,6 +178,16 @@ export namespace SessionPrompt {
 
     return loop({ sessionID: input.sessionID })
   })
+
+  export type PromptNoReplyInput = PromptInput & { noReply: true }
+  export type PromptReplyInput = PromptInput & { noReply?: false | undefined }
+
+  export function prompt(input: PromptNoReplyInput): Promise<MessageV2.WithParts>
+  export function prompt(input: PromptReplyInput): Promise<LoopResult>
+  export function prompt(input: PromptInput): Promise<MessageV2.WithParts | LoopResult>
+  export function prompt(input: PromptInput): Promise<MessageV2.WithParts | LoopResult> {
+    return promptFn(input)
+  }
 
   export async function resolvePromptParts(template: string): Promise<PromptInput["parts"]> {
     const parts: PromptInput["parts"] = [
@@ -254,15 +266,14 @@ export namespace SessionPrompt {
       SessionStatus.set(sessionID, { type: "idle" })
       return
     }
+    for (const callback of match.callbacks) {
+      callback.resolve({ reason: "cancelled" })
+    }
+    match.callbacks.length = 0
     match.abort.abort()
     delete s[sessionID]
     SessionStatus.set(sessionID, { type: "idle" })
     return
-  }
-
-  export type LoopResult = {
-    reason: "completed" | "cancelled"
-    message?: MessageV2.WithParts
   }
 
   export const LoopInput = z.object({
@@ -276,10 +287,7 @@ export namespace SessionPrompt {
     if (!abort) {
       return new Promise<LoopResult>((resolve, reject) => {
         const callbacks = state()[sessionID].callbacks
-        callbacks.push({
-          resolve: (msg) => resolve({ reason: "completed", message: msg }),
-          reject,
-        })
+        callbacks.push({ resolve, reject })
       })
     }
 
@@ -650,16 +658,17 @@ export namespace SessionPrompt {
       }
       continue
     }
-    if (abort.aborted) return { reason: "cancelled" as const }
+    if (abort.aborted) return { reason: "cancelled" }
 
     SessionCompaction.prune({ sessionID })
     for await (const item of MessageV2.stream(sessionID)) {
       if (item.info.role === "user") continue
       const queued = state()[sessionID]?.callbacks ?? []
       for (const q of queued) {
-        q.resolve(item)
+        q.resolve({ reason: "completed", message: item })
       }
-      return { reason: "completed" as const, message: item }
+      if (state()[sessionID]) state()[sessionID].callbacks.length = 0
+      return { reason: "completed", message: item }
     }
     throw new Error("Impossible")
   })
@@ -1780,23 +1789,27 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       { parts },
     )
 
-    const result = (await prompt({
+    const result = await prompt({
       sessionID: input.sessionID,
       messageID: input.messageID,
       model: userModel,
       agent: userAgent,
       parts,
       variant: input.variant,
-    })) as MessageV2.WithParts
+    })
+
+    if (result.reason === "cancelled") {
+      throw new MessageV2.AbortedError({ message: "Command execution was cancelled" })
+    }
 
     Bus.publish(Command.Event.Executed, {
       name: input.command,
       sessionID: input.sessionID,
       arguments: input.arguments,
-      messageID: result.info.id,
+      messageID: result.message.info.id,
     })
 
-    return result
+    return result.message
   }
 
   async function ensureTitle(input: {

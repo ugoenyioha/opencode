@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test"
 import { Instance } from "../../src/project/instance"
 import { Session } from "../../src/session"
 import { SessionPrompt } from "../../src/session/prompt"
-import { MessageV2 } from "../../src/session/message-v2"
 import { tmpdir } from "../fixture/fixture"
 
 describe("session.prompt agent variant", () => {
@@ -24,33 +23,33 @@ describe("session.prompt agent variant", () => {
       fn: async () => {
         const session = await Session.create({})
 
-        const other = (await SessionPrompt.prompt({
+        const other = await SessionPrompt.prompt({
           sessionID: session.id,
           agent: "build",
           model: { providerID: "opencode", modelID: "kimi-k2.5-free" },
           noReply: true,
           parts: [{ type: "text", text: "hello" }],
-        })) as MessageV2.WithParts
+        })
         if (other.info.role !== "user") throw new Error("expected user message")
         expect(other.info.variant).toBeUndefined()
 
-        const match = (await SessionPrompt.prompt({
+        const match = await SessionPrompt.prompt({
           sessionID: session.id,
           agent: "build",
           noReply: true,
           parts: [{ type: "text", text: "hello again" }],
-        })) as MessageV2.WithParts
+        })
         if (match.info.role !== "user") throw new Error("expected user message")
         expect(match.info.model).toEqual({ providerID: "openai", modelID: "gpt-5.2" })
         expect(match.info.variant).toBe("xhigh")
 
-        const override = (await SessionPrompt.prompt({
+        const override = await SessionPrompt.prompt({
           sessionID: session.id,
           agent: "build",
           noReply: true,
           variant: "high",
           parts: [{ type: "text", text: "hello third" }],
-        })) as MessageV2.WithParts
+        })
         if (override.info.role !== "user") throw new Error("expected user message")
         expect(override.info.variant).toBe("high")
 
