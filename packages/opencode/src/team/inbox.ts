@@ -62,26 +62,27 @@ export namespace Inbox {
 
   /**
    * Mark all unread messages as read for an agent.
-   * Publishes TeamEvent.MessageRead for each newly-read message.
+   * Returns the newly-read messages so callers can send delivery receipts.
+   * Publishes TeamEvent.MessageRead with the count.
    */
-  export async function markRead(teamName: string, agentName: string): Promise<number> {
-    let count = 0
+  export async function markRead(teamName: string, agentName: string): Promise<InboxMessage[]> {
+    const read: InboxMessage[] = []
     try {
       await Storage.update<InboxMessage[]>(key(teamName, agentName), (draft) => {
         for (const msg of draft) {
           if (msg.read) continue
           msg.read = true
-          count++
+          read.push({ ...msg })
         }
       })
     } catch {
-      return 0
+      return []
     }
-    if (count > 0) {
-      log.info("inbox marked read", { teamName, agentName, count })
-      await Bus.publish(TeamEvent.MessageRead, { teamName, agentName, count })
+    if (read.length > 0) {
+      log.info("inbox marked read", { teamName, agentName, count: read.length })
+      await Bus.publish(TeamEvent.MessageRead, { teamName, agentName, count: read.length })
     }
-    return count
+    return read
   }
 
   /**

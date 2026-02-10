@@ -141,11 +141,65 @@ export namespace TeamMessaging {
   }
 
   /**
-   * Mark all messages as read in an agent's inbox.
-   * Call this after the LLM has processed the messages.
+   * Mark all messages as read in an agent's inbox, then send
+   * delivery receipts back to each sender. Receipts are batched
+   * per sender and flow through the same inbox + inject + auto-wake
+   * path as regular team messages.
    */
   export async function markRead(teamName: string, agentName: string): Promise<number> {
-    return Inbox.markRead(teamName, agentName)
+    const read = await Inbox.markRead(teamName, agentName)
+    if (read.length === 0) return 0
+
+    // Group by sender for batched receipts
+    const bySender = new Map<string, number>()
+    for (const msg of read) {
+      bySender.set(msg.from, (bySender.get(msg.from) ?? 0) + 1)
+    }
+
+    // Send a receipt to each distinct sender
+    const team = await Team.get(teamName)
+    if (team) {
+      for (const [sender, count] of bySender) {
+        // Find sender's session
+        let senderSessionID: string | undefined
+        if (sender === "lead") {
+          senderSessionID = team.leadSessionID
+        } else {
+          const member = team.members.find((m) => m.name === sender)
+          if (member && member.status !== "shutdown") senderSessionID = member.sessionID
+        }
+        if (!senderSessionID) continue
+
+        const text = count === 1 ? `${agentName} has read your message` : `${agentName} has read your ${count} messages`
+
+        const receiptId = messageId()
+        await Inbox.write(teamName, sender, {
+          id: receiptId,
+          from: agentName,
+          text: `[receipt] ${text}`,
+          timestamp: Date.now(),
+        }).catch((err: unknown) => {
+          log.warn("receipt inbox write failed", {
+            teamName,
+            sender,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        })
+
+        await injectMessage(senderSessionID, agentName, `[receipt] ${text}`, receiptId).catch((err: unknown) => {
+          log.warn("receipt inject failed", {
+            teamName,
+            sender,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        })
+
+        autoWake(senderSessionID, agentName)
+      }
+      log.info("delivery receipts sent", { teamName, from: agentName, senders: [...bySender.keys()] })
+    }
+
+    return read.length
   }
 
   /**
