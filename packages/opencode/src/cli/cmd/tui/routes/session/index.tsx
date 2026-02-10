@@ -254,9 +254,19 @@ export function Session() {
     }
   })
 
-  // Ctrl+B background migration is now handled in the Prompt component's onKeyDown
-  // handler (prompt/index.tsx) because the textarea keybindings bind Ctrl+B to
-  // move-left, consuming the event before session-level useKeyboard handlers see it.
+  // Escape in a teammate child session: cancel that teammate's prompt loop
+  useKeyboard((evt) => {
+    if (evt.name !== "escape") return
+    const s = session()
+    if (!s?.parentID) return
+    // Only for teammate sessions (not subagent views)
+    const team = sync.data.team[route.sessionID]
+    if (!team) return
+    const status = sync.data.session_status?.[route.sessionID]
+    if (status?.type !== "busy") return
+    evt.preventDefault()
+    sdk.client.session.abort({ sessionID: route.sessionID }).catch(() => {})
+  })
 
   // Shift+Up/Down: Cycle through teammates for inline messaging (only when team is active)
   useKeyboard((evt) => {

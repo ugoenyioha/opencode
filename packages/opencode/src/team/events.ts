@@ -123,6 +123,8 @@ export namespace TeamEvent {
     "team.cleaned",
     z.object({
       teamName: z.string(),
+      leadSessionID: z.string(),
+      delegate: z.boolean(),
     }),
   )
 }

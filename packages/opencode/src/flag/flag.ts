@@ -91,27 +91,6 @@ Object.defineProperty(Flag, "OPENCODE_CLIENT", {
   configurable: false,
 })
 
-// Dynamic getter for OPENCODE_DISABLE_CLAUDE_CODE_SKILLS
-// Evaluated at access time so tests and external tooling can toggle it
-Object.defineProperty(Flag, "OPENCODE_DISABLE_CLAUDE_CODE_SKILLS", {
-  get() {
-    return truthy("OPENCODE_DISABLE_CLAUDE_CODE") || truthy("OPENCODE_DISABLE_CLAUDE_CODE_SKILLS")
-  },
-  enumerable: true,
-  configurable: false,
-})
-
-// Dynamic getter for OPENCODE_DISABLE_EXTERNAL_SKILLS
-// Independent of OPENCODE_DISABLE_CLAUDE_CODE so disabling Claude Code
-// doesn't block .agents/skills/ loading
-Object.defineProperty(Flag, "OPENCODE_DISABLE_EXTERNAL_SKILLS", {
-  get() {
-    return truthy("OPENCODE_DISABLE_EXTERNAL_SKILLS")
-  },
-  enumerable: true,
-  configurable: false,
-})
-
 // Dynamic getter for OPENCODE_EXPERIMENTAL_AGENT_TEAMS
 // This must be evaluated at access time, not module load time,
 // because integration tests and external tooling may set this env var at runtime

@@ -907,20 +907,23 @@ export const GithubRunCommand = cmd({
           ],
         })
 
+        if (result.reason === "cancelled") {
+          throw new Error("Agent response was cancelled")
+        }
+        const msg = result.message
+
         // result should always be assistant just satisfying type checker
-        if (result.info.role === "assistant" && result.info.error) {
-          console.error("Agent error:", result.info.error)
-          throw new Error(
-            `${result.info.error.name}: ${"message" in result.info.error ? result.info.error.message : ""}`,
-          )
+        if (msg.info.role === "assistant" && msg.info.error) {
+          console.error("Agent error:", msg.info.error)
+          throw new Error(`${msg.info.error.name}: ${"message" in msg.info.error ? msg.info.error.message : ""}`)
         }
 
-        const text = extractResponseText(result.parts)
+        const text = extractResponseText(msg.parts)
         if (text) return text
 
         // No text part (tool-only or reasoning-only) - ask agent to summarize
         console.log("Requesting summary from agent...")
-        const summary = await SessionPrompt.prompt({
+        const summaryResult = await SessionPrompt.prompt({
           sessionID: session.id,
           messageID: Identifier.ascending("message"),
           model: {
@@ -936,6 +939,11 @@ export const GithubRunCommand = cmd({
             },
           ],
         })
+
+        if (summaryResult.reason === "cancelled") {
+          throw new Error("Summary request was cancelled")
+        }
+        const summary = summaryResult.message
 
         if (summary.info.role === "assistant" && summary.info.error) {
           console.error("Summary agent error:", summary.info.error)

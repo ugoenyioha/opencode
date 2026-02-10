@@ -12,13 +12,17 @@ Log.init({ print: false })
 /**
  * Tests for Team.recover() — marking active teammates as "interrupted"
  * after a server restart so the user can explicitly resume them.
+ *
+ * Note: Since teams are now stored via the global Storage namespace (keyed by
+ * project.id), team data persists across Instance.provide() calls even with
+ * different directories — which is exactly what we want for recovery tests.
+ * Each test must clean up its teams afterward to avoid polluting other tests.
  */
 describe("Team recovery after restart", () => {
   test("marks active members as interrupted", async () => {
     const dir = await fs.mkdtemp(path.join(import.meta.dir, ".tmp-recover-"))
 
     try {
-      // "First boot" — create team with active members
       await Instance.provide({
         directory: dir,
         init: async () => Env.set("ANTHROPIC_API_KEY", "test-key"),
@@ -43,14 +47,7 @@ describe("Team recovery after restart", () => {
             prompt: "research things",
             planApproval: "none",
           })
-        },
-      })
 
-      // "Second boot" — recover should mark both as interrupted
-      await Instance.provide({
-        directory: dir,
-        init: async () => Env.set("ANTHROPIC_API_KEY", "test-key"),
-        fn: async () => {
           const result = await Team.recover()
           expect(result.interrupted).toBe(2)
 
@@ -58,6 +55,11 @@ describe("Team recovery after restart", () => {
           expect(team).toBeDefined()
           expect(team!.members[0].status).toBe("interrupted")
           expect(team!.members[1].status).toBe("interrupted")
+
+          // Cleanup: mark all as shutdown so cleanup succeeds
+          await Team.setMemberStatus("recover-test", "worker-1", "shutdown")
+          await Team.setMemberStatus("recover-test", "worker-2", "shutdown")
+          await Team.cleanup("recover-test")
         },
       })
     } finally {
@@ -93,20 +95,17 @@ describe("Team recovery after restart", () => {
             prompt: "bye",
             planApproval: "none",
           })
-        },
-      })
 
-      // Fresh context — recover should skip both
-      await Instance.provide({
-        directory: dir,
-        init: async () => Env.set("ANTHROPIC_API_KEY", "test-key"),
-        fn: async () => {
           const result = await Team.recover()
           expect(result.interrupted).toBe(0)
 
           const team = await Team.get("recover-skip")
           expect(team!.members[0].status).toBe("idle")
           expect(team!.members[1].status).toBe("shutdown")
+
+          // Cleanup
+          await Team.setMemberStatus("recover-skip", "idle-worker", "shutdown")
+          await Team.cleanup("recover-skip")
         },
       })
     } finally {
@@ -118,7 +117,6 @@ describe("Team recovery after restart", () => {
     const dir = await fs.mkdtemp(path.join(import.meta.dir, ".tmp-recover-"))
 
     try {
-      // "First boot" — create team with a real session
       await Instance.provide({
         directory: dir,
         init: async () => Env.set("ANTHROPIC_API_KEY", "test-key"),
@@ -138,21 +136,17 @@ describe("Team recovery after restart", () => {
             prompt: "do real work",
             planApproval: "none",
           })
-        },
-      })
 
-      // "Second boot" — even with a valid session, member should be
-      // interrupted (not auto-restarted). User must explicitly resume.
-      await Instance.provide({
-        directory: dir,
-        init: async () => Env.set("ANTHROPIC_API_KEY", "test-key"),
-        fn: async () => {
           const result = await Team.recover()
           expect(result.interrupted).toBe(1)
 
           const team = await Team.get("recover-real")
           expect(team).toBeDefined()
           expect(team!.members[0].status).toBe("interrupted")
+
+          // Cleanup
+          await Team.setMemberStatus("recover-real", "real-worker", "shutdown")
+          await Team.cleanup("recover-real")
         },
       })
     } finally {
@@ -196,20 +190,20 @@ describe("Team recovery after restart", () => {
             prompt: "task c",
             planApproval: "none",
           })
-        },
-      })
 
-      await Instance.provide({
-        directory: dir,
-        init: async () => Env.set("ANTHROPIC_API_KEY", "test-key"),
-        fn: async () => {
           const result = await Team.recover()
-          expect(result.interrupted).toBe(2) // only the two active ones
+          expect(result.interrupted).toBe(2)
 
           const team = await Team.get("recover-mix")
           expect(team!.members.find((m) => m.name === "worker-a")!.status).toBe("interrupted")
-          expect(team!.members.find((m) => m.name === "worker-b")!.status).toBe("idle") // untouched
+          expect(team!.members.find((m) => m.name === "worker-b")!.status).toBe("idle")
           expect(team!.members.find((m) => m.name === "worker-c")!.status).toBe("interrupted")
+
+          // Cleanup
+          await Team.setMemberStatus("recover-mix", "worker-a", "shutdown")
+          await Team.setMemberStatus("recover-mix", "worker-b", "shutdown")
+          await Team.setMemberStatus("recover-mix", "worker-c", "shutdown")
+          await Team.cleanup("recover-mix")
         },
       })
     } finally {
@@ -269,13 +263,7 @@ describe("Team recovery after restart", () => {
             prompt: "implement",
             planApproval: "none",
           })
-        },
-      })
 
-      await Instance.provide({
-        directory: dir,
-        init: async () => Env.set("ANTHROPIC_API_KEY", "test-key"),
-        fn: async () => {
           const result = await Team.recover()
           expect(result.interrupted).toBe(3)
 
@@ -285,6 +273,13 @@ describe("Team recovery after restart", () => {
           const beta = await Team.get("team-beta")
           expect(beta!.members[0].status).toBe("interrupted")
           expect(beta!.members[1].status).toBe("interrupted")
+
+          // Cleanup
+          await Team.setMemberStatus("team-alpha", "alpha-1", "shutdown")
+          await Team.cleanup("team-alpha")
+          await Team.setMemberStatus("team-beta", "beta-1", "shutdown")
+          await Team.setMemberStatus("team-beta", "beta-2", "shutdown")
+          await Team.cleanup("team-beta")
         },
       })
     } finally {
@@ -309,20 +304,17 @@ describe("Team recovery after restart", () => {
             prompt: "work",
             planApproval: "none",
           })
-        },
-      })
 
-      // First recovery
-      await Instance.provide({
-        directory: dir,
-        init: async () => Env.set("ANTHROPIC_API_KEY", "test-key"),
-        fn: async () => {
           const r1 = await Team.recover()
           expect(r1.interrupted).toBe(1)
 
-          // Second recovery in same context — already interrupted, skip
+          // Already interrupted, skip
           const r2 = await Team.recover()
           expect(r2.interrupted).toBe(0)
+
+          // Cleanup
+          await Team.setMemberStatus("idem-test", "worker", "shutdown")
+          await Team.cleanup("idem-test")
         },
       })
     } finally {

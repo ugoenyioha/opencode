@@ -2,17 +2,16 @@ import { useSync } from "@tui/context/sync"
 import { createMemo, createSignal, For, Show, Switch, Match } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useTheme } from "../../context/theme"
+import { Locale } from "@/util/locale"
+import path from "path"
 import type { AssistantMessage, ToolPart } from "@opencode-ai/sdk/v2"
+import { Global } from "@/global"
 import { Installation } from "@/installation"
 import { useDirectory } from "../../context/directory"
 import { useKV } from "../../context/kv"
 import { useRoute } from "../../context/route"
 import { TodoItem } from "../../component/todo-item"
 import { Spinner } from "../../component/spinner"
-import { useTerminalDimensions } from "@opentui/solid"
-
-const MIN_WIDTH = 30
-const DEFAULT_WIDTH = 42
 
 export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
   const sync = useSync()
@@ -72,10 +71,6 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
 
   const directory = useDirectory()
   const kv = useKV()
-  const [width, setWidth] = kv.signal("sidebar_width", DEFAULT_WIDTH)
-  const [dragging, setDragging] = createSignal(false)
-  const dragStart = { x: 0, width: 0 }
-  const dimensions = useTerminalDimensions()
   const teamInfo = createMemo(() => sync.data.team[props.sessionID])
   const teamMembers = createMemo(
     () =>
@@ -354,7 +349,72 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
                 </box>
               </Show>
             </box>
-          </scrollbox>
+            <Show when={todo().length > 0 && todo().some((t) => t.status !== "completed")}>
+              <box>
+                <box
+                  flexDirection="row"
+                  gap={1}
+                  onMouseDown={() => todo().length > 2 && setExpanded("todo", !expanded.todo)}
+                >
+                  <Show when={todo().length > 2}>
+                    <text fg={theme.text}>{expanded.todo ? "▼" : "▶"}</text>
+                  </Show>
+                  <text fg={theme.text}>
+                    <b>Todo</b>
+                  </text>
+                </box>
+                <Show when={todo().length <= 2 || expanded.todo}>
+                  <For each={todo()}>{(todo) => <TodoItem status={todo.status} content={todo.content} />}</For>
+                </Show>
+              </box>
+            </Show>
+            <Show when={teamInfo()}>
+              <Show when={(teamInfo() as any)?.role === "member"}>
+                <TeamMemberSidebar teamInfo={teamInfo()} sessionID={props.sessionID} teamTasks={teamTasks()} />
+              </Show>
+              <Show when={(teamInfo() as any)?.role !== "member" && teamMembers().length > 0}>
+                <TeamLeadSidebar teamInfo={teamInfo()} teamMembers={teamMembers()} teamTasks={teamTasks()} />
+              </Show>
+            </Show>
+            <Show when={diff().length > 0}>
+              <box>
+                <box
+                  flexDirection="row"
+                  gap={1}
+                  onMouseDown={() => diff().length > 2 && setExpanded("diff", !expanded.diff)}
+                >
+                  <Show when={diff().length > 2}>
+                    <text fg={theme.text}>{expanded.diff ? "▼" : "▶"}</text>
+                  </Show>
+                  <text fg={theme.text}>
+                    <b>Modified Files</b>
+                  </text>
+                </box>
+                <Show when={diff().length <= 2 || expanded.diff}>
+                  <For each={diff() || []}>
+                    {(item) => {
+                      return (
+                        <box flexDirection="row" gap={1} justifyContent="space-between">
+                          <text fg={theme.textMuted} wrapMode="none">
+                            {item.file}
+                          </text>
+                          <box flexDirection="row" gap={1} flexShrink={0}>
+                            <Show when={item.additions}>
+                              <text fg={theme.diffAdded}>+{item.additions}</text>
+                            </Show>
+                            <Show when={item.deletions}>
+                              <text fg={theme.diffRemoved}>-{item.deletions}</text>
+                            </Show>
+                          </box>
+                        </box>
+                      )
+                    }}
+                  </For>
+                </Show>
+              </box>
+            </Show>
+          </box>
+        </scrollbox>
 
           <box flexShrink={0} gap={1} paddingTop={1}>
             <Show when={!hasProviders() && !gettingStartedDismissed()}>

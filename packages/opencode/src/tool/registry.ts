@@ -27,8 +27,6 @@ import { LspTool } from "./lsp"
 import { Truncate } from "./truncation"
 import { PlanExitTool, PlanEnterTool } from "./plan"
 import { ApplyPatchTool } from "./apply_patch"
-import { ProcessQueryTool } from "./process-query"
-import { MemorySaveTool } from "./memory-save"
 import {
   TeamCreateTool,
   TeamSpawnTool,

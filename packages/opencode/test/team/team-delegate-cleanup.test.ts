@@ -41,42 +41,48 @@ describe("delegate mode cleanup restores permissions", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const lead = await Session.create({})
+        const unsub = Team.onCleanedRestorePermissions()
+        try {
+          const lead = await Session.create({})
 
-        // Verify lead session starts with no deny rules
-        const before = await Session.get(lead.id)
-        const denyBefore = (before.permission ?? []).filter((r) => r.action === "deny")
-        expect(denyBefore.length).toBe(0)
+          // Verify lead session starts with no deny rules
+          const before = await Session.get(lead.id)
+          const denyBefore = (before.permission ?? []).filter((r) => r.action === "deny")
+          expect(denyBefore.length).toBe(0)
 
-        // Create team with delegate mode
-        const name = uniqueName("delegate-cleanup")
-        await Team.create({ name, leadSessionID: lead.id, delegate: true })
+          // Create team with delegate mode
+          const name = uniqueName("delegate-cleanup")
+          await Team.create({ name, leadSessionID: lead.id, delegate: true })
 
-        // Manually inject delegate deny rules (same as TeamCreateTool does)
-        await Session.update(lead.id, (draft) => {
-          const rules = WRITE_TOOLS.map((tool) => ({
-            permission: tool,
-            pattern: "*",
-            action: "deny" as const,
-          }))
-          draft.permission = [...(draft.permission ?? []), ...rules]
-        })
+          // Manually inject delegate deny rules (same as TeamCreateTool does)
+          await Session.update(lead.id, (draft) => {
+            const rules = WRITE_TOOLS.map((tool) => ({
+              permission: tool,
+              pattern: "*",
+              action: "deny" as const,
+            }))
+            draft.permission = [...(draft.permission ?? []), ...rules]
+          })
 
-        // Verify deny rules are present
-        const during = await Session.get(lead.id)
-        for (const tool of WRITE_TOOLS) {
-          const denied = during.permission?.some((r) => r.permission === tool && r.action === "deny")
-          expect(denied, `${tool} should be denied during team`).toBe(true)
-        }
+          // Verify deny rules are present
+          const during = await Session.get(lead.id)
+          for (const tool of WRITE_TOOLS) {
+            const denied = during.permission?.some((r) => r.permission === tool && r.action === "deny")
+            expect(denied, `${tool} should be denied during team`).toBe(true)
+          }
 
-        // Cleanup the team
-        await Team.cleanup(name)
+          // Cleanup the team — Bus.publish awaits all subscribers,
+          // so permissions are restored before this returns.
+          await Team.cleanup(name)
 
-        // Verify deny rules are removed
-        const after = await Session.get(lead.id)
-        for (const tool of WRITE_TOOLS) {
-          const denied = after.permission?.some((r) => r.permission === tool && r.action === "deny")
-          expect(denied, `${tool} should NOT be denied after cleanup`).toBeFalsy()
+          // Verify deny rules are removed
+          const after = await Session.get(lead.id)
+          for (const tool of WRITE_TOOLS) {
+            const denied = after.permission?.some((r) => r.permission === tool && r.action === "deny")
+            expect(denied, `${tool} should NOT be denied after cleanup`).toBeFalsy()
+          }
+        } finally {
+          unsub()
         }
       },
     })
@@ -88,39 +94,45 @@ describe("delegate mode cleanup restores permissions", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const lead = await Session.create({})
-        const name = uniqueName("delegate-preserve")
+        const unsub = Team.onCleanedRestorePermissions()
+        try {
+          const lead = await Session.create({})
+          const name = uniqueName("delegate-preserve")
 
-        // Add a custom allow rule before team creation
-        await Session.update(lead.id, (draft) => {
-          draft.permission = [{ permission: "read", pattern: "/safe/*", action: "allow" as const }]
-        })
+          // Add a custom allow rule before team creation
+          await Session.update(lead.id, (draft) => {
+            draft.permission = [{ permission: "read", pattern: "/safe/*", action: "allow" as const }]
+          })
 
-        // Create delegate team + inject deny rules
-        await Team.create({ name, leadSessionID: lead.id, delegate: true })
-        await Session.update(lead.id, (draft) => {
-          const rules = WRITE_TOOLS.map((tool) => ({
-            permission: tool,
-            pattern: "*",
-            action: "deny" as const,
-          }))
-          draft.permission = [...(draft.permission ?? []), ...rules]
-        })
+          // Create delegate team + inject deny rules
+          await Team.create({ name, leadSessionID: lead.id, delegate: true })
+          await Session.update(lead.id, (draft) => {
+            const rules = WRITE_TOOLS.map((tool) => ({
+              permission: tool,
+              pattern: "*",
+              action: "deny" as const,
+            }))
+            draft.permission = [...(draft.permission ?? []), ...rules]
+          })
 
-        // Cleanup
-        await Team.cleanup(name)
+          // Cleanup — Bus.publish awaits all subscribers,
+          // so permissions are restored before this returns.
+          await Team.cleanup(name)
 
-        // Custom allow rule should still be there
-        const after = await Session.get(lead.id)
-        const hasAllow = after.permission?.some(
-          (r) => r.permission === "read" && r.pattern === "/safe/*" && r.action === "allow",
-        )
-        expect(hasAllow).toBe(true)
+          // Custom allow rule should still be there
+          const after = await Session.get(lead.id)
+          const hasAllow = after.permission?.some(
+            (r) => r.permission === "read" && r.pattern === "/safe/*" && r.action === "allow",
+          )
+          expect(hasAllow).toBe(true)
 
-        // Delegate deny rules should be gone
-        for (const tool of WRITE_TOOLS) {
-          const denied = after.permission?.some((r) => r.permission === tool && r.action === "deny")
-          expect(denied, `${tool} should NOT be denied after cleanup`).toBeFalsy()
+          // Delegate deny rules should be gone
+          for (const tool of WRITE_TOOLS) {
+            const denied = after.permission?.some((r) => r.permission === tool && r.action === "deny")
+            expect(denied, `${tool} should NOT be denied after cleanup`).toBeFalsy()
+          }
+        } finally {
+          unsub()
         }
       },
     })
@@ -163,28 +175,33 @@ describe("delegate mode cleanup restores permissions", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const lead = await Session.create({})
-        const name = uniqueName("tool-delegate-msg")
+        const unsub = Team.onCleanedRestorePermissions()
+        try {
+          const lead = await Session.create({})
+          const name = uniqueName("tool-delegate-msg")
 
-        // Create delegate team via the tool
-        const createTool = await TeamCreateTool.init()
-        const createResult = await createTool.execute({ name, delegate: true }, mockCtx(lead.id))
-        expect(createResult.output).toContain("DELEGATE MODE")
+          // Create delegate team via the tool
+          const createTool = await TeamCreateTool.init()
+          const createResult = await createTool.execute({ name, delegate: true }, mockCtx(lead.id))
+          expect(createResult.output).toContain("DELEGATE MODE")
 
-        // Verify deny rules are present
-        const during = await Session.get(lead.id)
-        expect(during.permission?.some((r) => r.permission === "bash" && r.action === "deny")).toBe(true)
+          // Verify deny rules are present
+          const during = await Session.get(lead.id)
+          expect(during.permission?.some((r) => r.permission === "bash" && r.action === "deny")).toBe(true)
 
-        // Cleanup via the tool
-        const cleanupTool = await TeamCleanupTool.init()
-        const cleanupResult = await cleanupTool.execute({ name }, mockCtx(lead.id))
-        expect(cleanupResult.output).toContain("Delegate mode restrictions have been removed")
+          // Cleanup via the tool
+          const cleanupTool = await TeamCleanupTool.init()
+          const cleanupResult = await cleanupTool.execute({ name }, mockCtx(lead.id))
+          expect(cleanupResult.output).toContain("Delegate mode restrictions have been removed")
 
-        // Deny rules should be gone
-        const after = await Session.get(lead.id)
-        for (const tool of WRITE_TOOLS) {
-          const denied = after.permission?.some((r) => r.permission === tool && r.action === "deny")
-          expect(denied, `${tool} should NOT be denied after cleanup`).toBeFalsy()
+          // Deny rules should be gone — Bus.publish awaits all subscribers
+          const after = await Session.get(lead.id)
+          for (const tool of WRITE_TOOLS) {
+            const denied = after.permission?.some((r) => r.permission === tool && r.action === "deny")
+            expect(denied, `${tool} should NOT be denied after cleanup`).toBeFalsy()
+          }
+        } finally {
+          unsub()
         }
       },
     })

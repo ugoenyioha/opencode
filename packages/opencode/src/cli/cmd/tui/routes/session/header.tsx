@@ -1,4 +1,4 @@
-import { type Accessor, createMemo, createSignal, For, Match, Show, Switch, onCleanup, onMount } from "solid-js"
+import { type Accessor, createMemo, createSignal, For, Match, Show, Switch } from "solid-js"
 import { useRouteData } from "@tui/context/route"
 import { useSync } from "@tui/context/sync"
 import { pipe, sumBy } from "remeda"
@@ -10,7 +10,6 @@ import { useKeybind } from "../../context/keybind"
 import { Installation } from "@/installation"
 import { useTerminalDimensions } from "@opentui/solid"
 import { useRoute } from "@tui/context/route"
-import { useSDK } from "@tui/context/sdk"
 
 function memberStatusIcon(status: string): string {
   switch (status) {
@@ -133,37 +132,6 @@ function TeamStatusBar(props: { teamInfo: any }) {
         </text>
       </Show>
     </box>
-  )
-}
-
-/** Shows a small indicator when background tasks are running */
-function TaskBadge() {
-  const { theme } = useTheme()
-  const sdk = useSDK()
-  const [count, setCount] = createSignal(0)
-
-  const poll = async () => {
-    try {
-      const res = await sdk.fetch(`${sdk.url}/task`)
-      if (res.ok) {
-        const tasks = (await res.json()) as { status: string }[]
-        setCount(tasks.filter((t) => t.status === "running").length)
-      }
-    } catch {}
-  }
-
-  onMount(() => {
-    poll()
-  })
-  const interval = setInterval(poll, 3000)
-  onCleanup(() => clearInterval(interval))
-
-  return (
-    <Show when={count() > 0}>
-      <text fg={theme.warning} wrapMode="none" flexShrink={0}>
-        {count()} bg task{count() > 1 ? "s" : ""}
-      </text>
-    </Show>
   )
 }
 
@@ -299,7 +267,6 @@ export function Header(props: { sidebarVisible?: boolean }) {
               <box flexDirection={narrow() ? "column" : "row"} justifyContent="space-between" gap={1}>
                 <Title session={session} />
                 <box flexDirection="row" gap={1} flexShrink={0}>
-                  <TaskBadge />
                   <ContextInfo context={context} cost={cost} />
                   <text fg={theme.textMuted}>v{Installation.VERSION}</text>
                 </box>

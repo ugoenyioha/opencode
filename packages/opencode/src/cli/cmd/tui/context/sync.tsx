@@ -73,9 +73,6 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       formatter: FormatterStatus[]
       vcs: VcsInfo | undefined
       path: Path
-      suggestion: {
-        [sessionID: string]: string
-      }
       team: {
         [sessionID: string]: {
           teamName: string
@@ -129,7 +126,6 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       vcs: undefined,
       path: { state: "", config: "", worktree: "", directory: "" },
       team: {},
-      suggestion: {} as { [sessionID: string]: string },
     })
 
     const sdk = useSDK()
@@ -242,7 +238,6 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
                 delete draft.session_status[id]
                 delete draft.permission[id]
                 delete draft.question[id]
-                delete draft.suggestion[id]
                 delete draft.team[id]
               }),
             )
@@ -376,12 +371,6 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         // ---------- Custom events (not in typed Event union) ----------
         default: {
           const raw = event as any
-
-          // Prompt suggestion event
-          if (raw.type === "session.suggestion" && raw.properties?.sessionID) {
-            setStore("suggestion", raw.properties.sessionID, raw.properties.text)
-            break
-          }
 
           // Team events arrive as raw bus events with type "team.*"
           if (typeof raw.type !== "string" || !raw.type.startsWith("team.")) break
@@ -615,7 +604,8 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           // Must use sdk.fetch (RPC to worker) since bare fetch can't reach
           // the internal server in direct-RPC mode.
           if (!store.team[sessionID]) {
-            sdk.fetch(`${sdk.url}/team/by-session/${sessionID}`)
+            sdk
+              .fetch(`${sdk.url}/team/by-session/${sessionID}`)
               .then((r) => r.json())
               .then((data: any) => {
                 if (!data) return
