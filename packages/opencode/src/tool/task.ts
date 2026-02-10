@@ -142,7 +142,8 @@ export const TaskTool = Tool.define("task", async (ctx) => {
         parts: promptParts,
       })
 
-      const text = result.parts.findLast((x) => x.type === "text")?.text ?? ""
+      const response = (result as SessionPrompt.LoopResult).message
+      const text = response?.parts.findLast((x: MessageV2.Part) => x.type === "text")?.text ?? ""
 
       const output = [
         `task_id: ${session.id} (for resuming to continue this task if needed)`,

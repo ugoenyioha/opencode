@@ -226,10 +226,7 @@ describe("Team e2e: full lifecycle", () => {
 
         // 4. Teammate claims a task
         const claimTool = await TeamClaimTool.init()
-        const claimResult = await claimTool.execute(
-          { task_id: "t1" },
-          mockCtx(childSession.id),
-        )
+        const claimResult = await claimTool.execute({ task_id: "t1" }, mockCtx(childSession.id))
         expect(claimResult.title).toContain("Claimed")
 
         // Verify claim
@@ -240,10 +237,7 @@ describe("Team e2e: full lifecycle", () => {
 
         // 5. Teammate completes the task
         const tasksTool = await TeamTasksTool.init()
-        const completeResult = await tasksTool.execute(
-          { action: "complete", task_id: "t1" },
-          mockCtx(childSession.id),
-        )
+        const completeResult = await tasksTool.execute({ action: "complete", task_id: "t1" }, mockCtx(childSession.id))
         expect(completeResult.title).toContain("Completed")
 
         // Verify t2 is now unblocked
@@ -279,18 +273,13 @@ describe("Team e2e: full lifecycle", () => {
         // Verify the message was injected into lead's session
         const leadMsgs = await Session.messages({ sessionID: leadSession.id })
         const teamMsg = leadMsgs.find((m) =>
-          m.parts.some(
-            (p) => p.type === "text" && p.text.includes("[Team message from researcher]"),
-          ),
+          m.parts.some((p) => p.type === "text" && p.text.includes("[Team message from researcher]")),
         )
         expect(teamMsg).toBeDefined()
 
         // 7. Lead sends shutdown
         const shutdownTool = await TeamShutdownTool.init()
-        const shutResult = await shutdownTool.execute(
-          { name: "researcher" },
-          mockCtx(leadSession.id),
-        )
+        const shutResult = await shutdownTool.execute({ name: "researcher" }, mockCtx(leadSession.id))
         expect(shutResult.title).toContain("Shutdown")
 
         // Verify member status changed
@@ -299,10 +288,7 @@ describe("Team e2e: full lifecycle", () => {
 
         // 8. Cleanup
         const cleanupTool = await TeamCleanupTool.init()
-        const cleanupResult = await cleanupTool.execute(
-          { name: "e2e-team" },
-          mockCtx(leadSession.id),
-        )
+        const cleanupResult = await cleanupTool.execute({ name: "e2e-team" }, mockCtx(leadSession.id))
         expect(cleanupResult.title).toContain("cleaned up")
 
         // Verify team is gone
@@ -408,7 +394,8 @@ describe("Team e2e: full lifecycle", () => {
         const result = await SessionPrompt.loop({ sessionID: childSession.id })
 
         // Verify the loop completed — result should be an assistant message
-        expect(result.info.role).toBe("assistant")
+        expect(result.reason).toBe("completed")
+        expect(result.message!.info.role).toBe("assistant")
 
         // Verify the response text was captured
         const childMsgs = await Session.messages({ sessionID: childSession.id })
@@ -916,9 +903,7 @@ describe("Team e2e: bus events", () => {
         await Team.addMember("event-team", { name: "worker", sessionID: sess.id, agent: "general", status: "active" })
         expect(events).toContain("member_spawned")
 
-        await TeamTasks.add("event-team", [
-          { id: "t1", content: "task", status: "pending", priority: "high" },
-        ])
+        await TeamTasks.add("event-team", [{ id: "t1", content: "task", status: "pending", priority: "high" }])
         expect(events).toContain("task_updated")
 
         await TeamTasks.claim("event-team", "t1", "worker")

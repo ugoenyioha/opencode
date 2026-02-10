@@ -260,18 +260,26 @@ export namespace SessionPrompt {
     return
   }
 
+  export type LoopResult = {
+    reason: "completed" | "cancelled"
+    message?: MessageV2.WithParts
+  }
+
   export const LoopInput = z.object({
     sessionID: Identifier.schema("session"),
     resume_existing: z.boolean().optional(),
   })
-  export const loop = fn(LoopInput, async (input) => {
+  export const loop = fn(LoopInput, async (input): Promise<LoopResult> => {
     const { sessionID, resume_existing } = input
 
     const abort = resume_existing ? resume(sessionID) : start(sessionID)
     if (!abort) {
-      return new Promise<MessageV2.WithParts>((resolve, reject) => {
+      return new Promise<LoopResult>((resolve, reject) => {
         const callbacks = state()[sessionID].callbacks
-        callbacks.push({ resolve, reject })
+        callbacks.push({
+          resolve: (msg) => resolve({ reason: "completed", message: msg }),
+          reject,
+        })
       })
     }
 
@@ -642,6 +650,8 @@ export namespace SessionPrompt {
       }
       continue
     }
+    if (abort.aborted) return { reason: "cancelled" as const }
+
     SessionCompaction.prune({ sessionID })
     for await (const item of MessageV2.stream(sessionID)) {
       if (item.info.role === "user") continue
@@ -649,7 +659,7 @@ export namespace SessionPrompt {
       for (const q of queued) {
         q.resolve(item)
       }
-      return item
+      return { reason: "completed" as const, message: item }
     }
     throw new Error("Impossible")
   })

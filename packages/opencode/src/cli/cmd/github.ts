@@ -907,20 +907,22 @@ export const GithubRunCommand = cmd({
           ],
         })
 
+        // result is a LoopResult — unwrap the message
+        const msg = (result as SessionPrompt.LoopResult).message
+        if (!msg) throw new Error("No response from agent")
+
         // result should always be assistant just satisfying type checker
-        if (result.info.role === "assistant" && result.info.error) {
-          console.error("Agent error:", result.info.error)
-          throw new Error(
-            `${result.info.error.name}: ${"message" in result.info.error ? result.info.error.message : ""}`,
-          )
+        if (msg.info.role === "assistant" && msg.info.error) {
+          console.error("Agent error:", msg.info.error)
+          throw new Error(`${msg.info.error.name}: ${"message" in msg.info.error ? msg.info.error.message : ""}`)
         }
 
-        const text = extractResponseText(result.parts)
+        const text = extractResponseText(msg.parts)
         if (text) return text
 
         // No text part (tool-only or reasoning-only) - ask agent to summarize
         console.log("Requesting summary from agent...")
-        const summary = await SessionPrompt.prompt({
+        const summaryResult = await SessionPrompt.prompt({
           sessionID: session.id,
           messageID: Identifier.ascending("message"),
           model: {
@@ -936,6 +938,9 @@ export const GithubRunCommand = cmd({
             },
           ],
         })
+
+        const summary = (summaryResult as SessionPrompt.LoopResult).message
+        if (!summary) throw new Error("No summary response from agent")
 
         if (summary.info.role === "assistant" && summary.info.error) {
           console.error("Summary agent error:", summary.info.error)
