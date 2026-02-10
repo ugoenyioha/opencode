@@ -291,6 +291,33 @@ describe("TeamTasks", () => {
     })
   })
 
+  test("self-dependency is removed during task resolution", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      init: async () => {
+        Env.set("ANTHROPIC_API_KEY", "test-key")
+      },
+      fn: async () => {
+        await Team.create({ name: "self-dep-team", leadSessionID: "ses_lead" })
+        await TeamTasks.add("self-dep-team", [
+          {
+            id: "t1",
+            content: "Do work",
+            status: "pending",
+            priority: "high",
+            depends_on: ["t1"],
+          },
+        ])
+
+        const tasks = await TeamTasks.list("self-dep-team")
+        expect(tasks[0].depends_on).toHaveLength(0)
+        expect(tasks[0].status).toBe("pending")
+
+        await Team.cleanup("self-dep-team")
+      },
+    })
+  })
+
   test("complete auto-unblocks dependent tasks", async () => {
     await Instance.provide({
       directory: projectRoot,

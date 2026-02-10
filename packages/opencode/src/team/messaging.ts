@@ -7,6 +7,12 @@ import { Identifier } from "../id/id"
 import { Team, TeamEvent } from "./index"
 
 const log = Log.create({ service: "team.messaging" })
+const MAX_TEXT = 10 * 1024
+
+function validateText(text: string) {
+  if (text.length <= MAX_TEXT) return
+  throw new Error(`Team message too large (${text.length} chars). Maximum is ${MAX_TEXT} chars.`)
+}
 
 export namespace TeamMessaging {
   /**
@@ -15,6 +21,7 @@ export namespace TeamMessaging {
    * so the LLM sees it and responds.
    */
   export async function send(input: { teamName: string; from: string; to: string; text: string }): Promise<void> {
+    validateText(input.text)
     const team = await Team.get(input.teamName)
     if (!team) throw new Error(`Team "${input.teamName}" not found`)
 
@@ -51,6 +58,7 @@ export namespace TeamMessaging {
    * Broadcast a message from one member to all other members.
    */
   export async function broadcast(input: { teamName: string; from: string; text: string }): Promise<void> {
+    validateText(input.text)
     const team = await Team.get(input.teamName)
     if (!team) throw new Error(`Team "${input.teamName}" not found`)
 

@@ -52,7 +52,7 @@ async function seedUserMessage(sessionID: string, text: string = "init") {
 // ---------- Concurrent Team Creation ----------
 
 describe("Edge case: concurrent team creation", () => {
-  test("two sessions try to create teams with the same name — both may succeed due to TOCTOU race", async () => {
+  test("two sessions try to create teams with the same name — only one succeeds", async () => {
     await using tmp = await tmpdir({ git: true })
 
     await Instance.provide({
@@ -68,9 +68,7 @@ describe("Edge case: concurrent team creation", () => {
 
         const fulfilled = results.filter((r) => r.status === "fulfilled")
 
-        // Due to TOCTOU race (get then write without lock), both may succeed.
-        // The important thing is the team exists and is in a valid state.
-        expect(fulfilled.length).toBeGreaterThanOrEqual(1)
+        expect(fulfilled.length).toBe(1)
 
         const team = await Team.get("contested")
         expect(team).toBeDefined()
@@ -174,7 +172,7 @@ describe("Edge case: empty task list operations", () => {
 // ---------- Task Self-Dependency ----------
 
 describe("Edge case: task self-dependency", () => {
-  test("task depending on itself stays blocked (self-dependency)", async () => {
+  test("task depending on itself is unblocked by dropping self-dependency", async () => {
     await using tmp = await tmpdir({ git: true })
 
     await Instance.provide({
@@ -188,11 +186,12 @@ describe("Edge case: task self-dependency", () => {
         ])
 
         const tasks = await TeamTasks.list("self-dep")
-        expect(tasks[0].status).toBe("blocked") // blocked because dep (itself) isn't completed
+        expect(tasks[0].status).toBe("pending")
+        expect(tasks[0].depends_on).toHaveLength(0)
 
-        // Cannot claim blocked task
+        // Should be claimable
         const claimed = await TeamTasks.claim("self-dep", "loop", "worker")
-        expect(claimed).toBe(false)
+        expect(claimed).toBe(true)
 
         await Team.cleanup("self-dep")
       },
@@ -305,7 +304,7 @@ describe("Edge case: rapid status transitions", () => {
 // ---------- Large Message Payloads ----------
 
 describe("Edge case: large message payloads", () => {
-  test("100KB team message is delivered without truncation", async () => {
+  test("rejects oversized team message payloads", async () => {
     await using tmp = await tmpdir({ git: true })
 
     await Instance.provide({
@@ -322,23 +321,46 @@ describe("Edge case: large message payloads", () => {
 
         // 100KB message
         const bigText = "A".repeat(100 * 1024)
-        await TeamMessaging.send({
-          teamName: "big-msg-team",
-          from: "sender",
-          to: "lead",
-          text: bigText,
-        })
-
-        const leadMsgs = await Session.messages({ sessionID: lead.id })
-        const received = leadMsgs.find((m) =>
-          m.parts.some((p) => p.type === "text" && p.text.includes("[Team message from sender]")),
-        )
-        expect(received).toBeDefined()
-        const textPart = received!.parts.find((p) => p.type === "text") as any
-        expect(textPart.text.length).toBeGreaterThan(100 * 1024)
+        await expect(
+          TeamMessaging.send({
+            teamName: "big-msg-team",
+            from: "sender",
+            to: "lead",
+            text: bigText,
+          }),
+        ).rejects.toThrow("Team message too large")
 
         await Team.setMemberStatus("big-msg-team", "sender", "shutdown")
         await Team.cleanup("big-msg-team")
+      },
+    })
+  })
+
+  test("rejects oversized broadcast payloads", async () => {
+    await using tmp = await tmpdir({ git: true })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const lead = await Session.create({})
+        await Team.create({ name: "big-bcast-team", leadSessionID: lead.id })
+
+        const sess = await Session.create({ parentID: lead.id })
+        await seedUserMessage(sess.id)
+
+        await Team.addMember("big-bcast-team", { name: "sender", sessionID: sess.id, agent: "general", status: "busy" })
+
+        const bigText = "B".repeat(100 * 1024)
+        await expect(
+          TeamMessaging.broadcast({
+            teamName: "big-bcast-team",
+            from: "sender",
+            text: bigText,
+          }),
+        ).rejects.toThrow("Team message too large")
+
+        await Team.setMemberStatus("big-bcast-team", "sender", "shutdown")
+        await Team.cleanup("big-bcast-team")
       },
     })
   })

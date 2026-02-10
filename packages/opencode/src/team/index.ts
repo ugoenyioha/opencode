@@ -3,6 +3,7 @@ import { Log } from "../util/log"
 import { Bus } from "../bus"
 import { Instance } from "../project/instance"
 import { Storage } from "../storage/storage"
+import { Lock } from "../util/lock"
 import { fn } from "../util/fn"
 import {
   TeamEvent,
@@ -50,6 +51,8 @@ const TERMINAL_EXECUTION_STATES = new Set<ExecutionStatusType>([
   "failed",
   "timed_out",
 ])
+
+const CREATE_LOCK_KEY = () => `team:create:${Instance.project.id}`
 
 const MEMBER_TRANSITIONS: Record<MemberStatus, MemberStatus[]> = {
   ready: ["busy", "shutdown_requested", "shutdown", "error"],
@@ -164,6 +167,8 @@ export namespace Team {
       delegate: z.boolean().optional(),
     }),
     async (input) => {
+      using _ = await Lock.write(CREATE_LOCK_KEY())
+
       const existing = await get(input.name)
       if (existing) throw new Error(`Team "${input.name}" already exists`)
 
@@ -706,6 +711,7 @@ export namespace Team {
    */
   export async function cancelMember(teamName: string, memberName: string): Promise<boolean> {
     const { SessionPrompt } = await import("../session/prompt")
+    const { SessionStatus } = await import("../session/status")
 
     const team = await get(teamName)
     if (!team) return false
@@ -727,6 +733,20 @@ export namespace Team {
       if (!current) break
       if (TERMINAL_EXECUTION_STATES.has(current.execution_status ?? "idle")) break
       if (current.status !== "busy") break
+    }
+
+    const next = await get(teamName)
+    const current = next?.members.find((m) => m.name === memberName)
+    if (!current) return true
+    if (TERMINAL_EXECUTION_STATES.has(current.execution_status ?? "idle")) return true
+
+    const runtime = SessionStatus.get(member.sessionID)
+    if (runtime.type !== "idle") return false
+
+    await transitionExecutionStatus(teamName, memberName, "cancelled", { force: true })
+    await transitionExecutionStatus(teamName, memberName, "idle", { force: true })
+    if (current.status === "busy") {
+      await transitionMemberStatus(teamName, memberName, "ready", { force: true })
     }
     return true
   }
@@ -905,7 +925,7 @@ export namespace TeamTasks {
 
     return tasks.map((task) => {
       if (task.depends_on) {
-        task = { ...task, depends_on: task.depends_on.filter((id) => validIds.has(id)) }
+        task = { ...task, depends_on: task.depends_on.filter((id) => validIds.has(id) && id !== task.id) }
       }
       if (!task.depends_on?.length) return task
 
