@@ -660,6 +660,21 @@ export namespace SessionPrompt {
     }
     if (abort.aborted) return { reason: "cancelled" }
 
+    // Mark inbox messages as read after the LLM has processed them.
+    // This covers both spawnMember() and autoWake() callers since both
+    // go through SessionPrompt.loop().
+    if (session.teammate) {
+      const { Team } = await import("../team")
+      const { TeamMessaging } = await import("../team/messaging")
+      const match = await Team.findBySession(sessionID)
+      if (match) {
+        const agent = match.role === "lead" ? "lead" : match.memberName!
+        await TeamMessaging.markRead(match.team.name, agent).catch((err: unknown) => {
+          log.warn("failed to mark inbox read", { sessionID, error: err instanceof Error ? err.message : String(err) })
+        })
+      }
+    }
+
     SessionCompaction.prune({ sessionID })
     for await (const item of MessageV2.stream(sessionID)) {
       if (item.info.role === "user") continue

@@ -693,6 +693,11 @@ export namespace Team {
       )
     }
 
+    const { Inbox } = await import("./inbox")
+    await Inbox.removeAll(
+      teamName,
+      team.members.map((m) => m.name),
+    )
     await Storage.remove(configKey(teamName))
     await Storage.remove(tasksKey(teamName))
 
@@ -796,6 +801,20 @@ export namespace Team {
         await transitionMemberStatus(team.name, member.name, "ready", { force: true })
         names.push(member.name)
         count++
+      }
+
+      // Recover undelivered inbox messages for interrupted members and the lead
+      try {
+        const { TeamMessaging } = await import("./messaging")
+        for (const member of active) {
+          await TeamMessaging.recoverInbox(team.name, member.name, member.sessionID)
+        }
+        await TeamMessaging.recoverInbox(team.name, "lead", team.leadSessionID)
+      } catch (err: unknown) {
+        log.warn("inbox recovery failed", {
+          teamName: team.name,
+          error: err instanceof Error ? err.message : String(err),
+        })
       }
 
       try {
