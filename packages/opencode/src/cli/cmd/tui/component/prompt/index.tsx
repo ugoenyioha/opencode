@@ -218,7 +218,7 @@ export function Prompt(props: PromptProps) {
         keybind: "session_interrupt",
         category: "Session",
         hidden: true,
-        enabled: status().type !== "idle",
+        enabled: status().type !== "idle" || teamBusy() > 0,
         onSelect: (dialog) => {
           if (autocomplete.visible) return
           if (!input.focused) return
@@ -229,6 +229,21 @@ export function Prompt(props: PromptProps) {
           }
           if (!props.sessionID) return
 
+          // Lead is idle but teammates are busy — cancel teammates directly
+          if (status().type === "idle" && teamBusy() > 0) {
+            const team = sync.data.team?.[props.sessionID]
+            if (team?.members) {
+              for (const m of team.members) {
+                const s = sync.data.session_status?.[m.sessionID]
+                if (s?.type === "busy") {
+                  sdk.client.session.abort({ sessionID: m.sessionID }).catch(() => {})
+                }
+              }
+            }
+            dialog.clear()
+            return
+          }
+
           setStore("interrupt", store.interrupt + 1)
 
           setTimeout(() => {
@@ -236,6 +251,8 @@ export function Prompt(props: PromptProps) {
           }, 5000)
 
           if (store.interrupt >= 2) {
+            // Abort the lead session — server-side abort propagation
+            // (session.ts route) will also cancel active teammates
             sdk.client.session.abort({
               sessionID: props.sessionID,
             })
