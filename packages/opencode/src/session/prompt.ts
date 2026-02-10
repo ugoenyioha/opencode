@@ -13,11 +13,9 @@ import { type Tool as AITool, tool, jsonSchema, type ToolCallOptions, asSchema }
 import { SessionCompaction } from "./compaction"
 import { Instance } from "../project/instance"
 import { Bus } from "../bus"
-import { BusEvent } from "../bus/bus-event"
 import { ProviderTransform } from "../provider/transform"
 import { SystemPrompt } from "./system"
 import { InstructionPrompt } from "./instruction"
-import { Todo } from "./todo"
 import { Plugin } from "../plugin"
 import PROMPT_PLAN from "../session/prompt/plan.txt"
 import BUILD_SWITCH from "../session/prompt/build-switch.txt"
@@ -36,8 +34,6 @@ import { spawn } from "child_process"
 import { Command } from "../command"
 import { $, fileURLToPath, pathToFileURL } from "bun"
 import { ConfigMarkdown } from "../config/markdown"
-import { Config } from "../config/config"
-import { SessionSuggestion } from "./suggest"
 import { SessionSummary } from "./summary"
 import { NamedError } from "@opencode-ai/util/error"
 import { fn } from "@/util/fn"
@@ -50,7 +46,6 @@ import { LLM } from "./llm"
 import { iife } from "@/util/iife"
 import { Shell } from "@/shell/shell"
 import { Truncate } from "@/tool/truncation"
-import { Skill } from "@/skill"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -330,71 +325,10 @@ export namespace SessionPrompt {
         lastUser.id < lastAssistant.id
       ) {
         log.info("exiting loop", { sessionID })
-        // Fire-and-forget prompt suggestion generation for non-subagent sessions
-        if (!session.parentID) {
-          SessionSuggestion.generate({
-            sessionID,
-            providerID: lastUser.model.providerID,
-            modelID: lastUser.model.modelID,
-          }).catch(() => {})
-        }
         break
       }
 
       step++
-
-      // Max turns guard — abort if session exceeds configured turn limit
-      const config = await Config.get()
-      const maxTurns = config.experimental?.max_turns
-      if (maxTurns && step > maxTurns) {
-        const msg = `Session stopped: reached ${maxTurns}-turn limit (step ${step})`
-        log.warn("max turns exceeded, stopping session", { sessionID, step, maxTurns })
-        Bus.publish(LimitEvent, {
-          sessionID,
-          kind: "max_turns",
-          severity: "reached",
-          message: msg,
-        })
-        break
-      }
-
-      // Max budget guard — abort if cumulative cost exceeds configured budget
-      const maxBudget = config.experimental?.max_budget_usd
-      if (maxBudget) {
-        const cumulativeCost = msgs.reduce((sum, m) => {
-          if (m.info.role === "assistant") {
-            return sum + (m.info as any).cost
-          }
-          return sum
-        }, 0)
-
-        // 80% warning (fire once per session)
-        if (cumulativeCost > maxBudget * 0.8 && cumulativeCost <= maxBudget && !budgetWarned.has(sessionID)) {
-          budgetWarned.add(sessionID)
-          const pct = Math.round((cumulativeCost / maxBudget) * 100)
-          const warnMsg = `Budget warning: $${cumulativeCost.toFixed(4)} spent of $${maxBudget} limit (${pct}%)`
-          log.warn("approaching budget limit", { sessionID, cumulativeCost, maxBudget, pct })
-          Bus.publish(LimitEvent, {
-            sessionID,
-            kind: "max_budget",
-            severity: "warning",
-            message: warnMsg,
-          })
-        }
-
-        if (cumulativeCost > maxBudget) {
-          const msg = `Session stopped: exceeded $${maxBudget} budget limit ($${cumulativeCost.toFixed(4)} spent)`
-          log.warn("max budget exceeded, stopping session", { sessionID, cumulativeCost, maxBudget })
-          Bus.publish(LimitEvent, {
-            sessionID,
-            kind: "max_budget",
-            severity: "reached",
-            message: msg,
-          })
-          break
-        }
-      }
-
       if (step === 1)
         ensureTitle({
           session,
@@ -585,8 +519,6 @@ export namespace SessionPrompt {
           abort,
           sessionID,
           auto: task.auto,
-          instructions: task.instructions,
-          boundaryMessageID: task.boundaryMessageID,
         })
         if (result === "stop") break
         continue
@@ -698,19 +630,7 @@ export namespace SessionPrompt {
         agent,
         abort,
         sessionID,
-        system: [
-          ...(await SystemPrompt.environment(model)),
-          ...(await InstructionPrompt.system()),
-          ...(agent.skills?.length
-            ? await Skill.preload(agent.skills).then((loaded) =>
-                loaded.map(
-                  (s) =>
-                    `<skill_content name="${s.name}">\n${s.content}\n</skill_content>`,
-                ),
-              )
-            : []),
-          ...(await Todo.systemContext(sessionID, msgs)),
-        ],
+        system: [...(await SystemPrompt.environment(model)), ...(await InstructionPrompt.system())],
         messages: [
           ...MessageV2.toModelMessages(sessionMessages, model),
           ...(isLastStep
@@ -1709,97 +1629,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       await Session.updatePart(part)
     }
     return { info: msg, parts: [part] }
-  }
-
-  // --- Team message: like shell mode but for sending team messages ---
-  export const TeamMessageInput = z.object({
-    sessionID: Identifier.schema("session"),
-    agent: z.string(),
-    to: z.string(),
-    text: z.string(),
-  })
-  export type TeamMessageInput = z.infer<typeof TeamMessageInput>
-
-  export async function teamMessage(input: TeamMessageInput) {
-    const { TeamMessaging } = await import("../team/messaging")
-    const { Team } = await import("../team")
-
-    const teamInfo = await Team.findBySession(input.sessionID)
-    if (!teamInfo) throw new Error("Session is not part of any team")
-
-    const fromName = teamInfo.role === "lead" ? "lead" : teamInfo.memberName ?? "unknown"
-
-    // Create synthetic user message recording what the user did
-    const userMsg: MessageV2.User = {
-      id: Identifier.ascending("message"),
-      sessionID: input.sessionID,
-      time: { created: Date.now() },
-      role: "user",
-      agent: input.agent,
-      model: { providerID: "system", modelID: "system" },
-    }
-    await Session.updateMessage(userMsg)
-    await Session.updatePart({
-      type: "text",
-      id: Identifier.ascending("part"),
-      messageID: userMsg.id,
-      sessionID: input.sessionID,
-      text: `Message to @${input.to}: ${input.text}`,
-      synthetic: true,
-    })
-
-    // Create synthetic assistant message recording the tool call
-    const assistantMsg: MessageV2.Assistant = {
-      id: Identifier.ascending("message"),
-      sessionID: input.sessionID,
-      parentID: userMsg.id,
-      mode: input.agent,
-      agent: input.agent,
-      cost: 0,
-      path: { cwd: Instance.directory, root: Instance.worktree },
-      time: { created: Date.now() },
-      role: "assistant",
-      tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-      modelID: "system",
-      providerID: "system",
-    }
-    await Session.updateMessage(assistantMsg)
-
-    // Actually send the message
-    await TeamMessaging.send({
-      teamName: teamInfo.team.name,
-      from: fromName,
-      to: input.to,
-      text: input.text,
-    })
-
-    // Record as completed tool call
-    const toolPart: MessageV2.Part = {
-      type: "tool",
-      id: Identifier.ascending("part"),
-      messageID: assistantMsg.id,
-      sessionID: input.sessionID,
-      tool: "team_message",
-      callID: ulid(),
-      state: {
-        status: "completed",
-        title: `Message to @${input.to}`,
-        metadata: {},
-        time: { start: Date.now(), end: Date.now() },
-        input: { to: input.to, text: input.text },
-        output: `Message delivered to "${input.to}".`,
-      },
-    }
-    await Session.updatePart(toolPart)
-
-    // Mark assistant message as finished
-    await Session.updateMessage({
-      ...assistantMsg,
-      time: { ...assistantMsg.time, completed: Date.now() },
-      finish: "stop",
-    })
-
-    return { info: assistantMsg, parts: [toolPart] }
   }
 
   export const CommandInput = z.object({

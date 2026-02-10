@@ -528,8 +528,6 @@ export const SessionRoutes = lazy(() =>
           providerID: z.string(),
           modelID: z.string(),
           auto: z.boolean().optional().default(false),
-          instructions: z.string().optional(),
-          boundaryMessageID: z.string().optional(),
         }),
       ),
       async (c) => {
@@ -554,8 +552,6 @@ export const SessionRoutes = lazy(() =>
             modelID: body.modelID,
           },
           auto: body.auto,
-          instructions: body.instructions,
-          boundaryMessageID: body.boundaryMessageID,
         })
         await SessionPrompt.loop({ sessionID })
         return c.json(true)
@@ -850,35 +846,6 @@ export const SessionRoutes = lazy(() =>
         const sessionID = c.req.valid("param").sessionID
         const body = c.req.valid("json")
         const msg = await SessionPrompt.shell({ ...body, sessionID })
-        return c.json(msg)
-      },
-    )
-    .post(
-      "/:sessionID/team-message",
-      describeRoute({
-        summary: "Send team message",
-        description: "Send a message to a teammate or the team lead, creating synthetic conversation entries.",
-        operationId: "session.teamMessage",
-        responses: {
-          200: {
-            description: "Message sent",
-            content: {
-              "application/json": {
-                schema: { type: "object" },
-              },
-            },
-          },
-        },
-      }),
-      validator("param", z.object({ sessionID: z.string() })),
-      validator(
-        "json",
-        SessionPrompt.TeamMessageInput.omit({ sessionID: true }),
-      ),
-      async (c) => {
-        const sessionID = c.req.valid("param").sessionID
-        const body = c.req.valid("json")
-        const msg = await SessionPrompt.teamMessage({ ...body, sessionID })
         return c.json(msg)
       },
     )

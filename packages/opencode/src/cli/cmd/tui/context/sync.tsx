@@ -262,14 +262,8 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
 
         case "session.status": {
           setStore("session_status", event.properties.sessionID, event.properties.status)
-          // Clear suggestion when session goes busy (user sent a new prompt)
-          if (event.properties.status.type === "busy") {
-            setStore("suggestion", event.properties.sessionID, undefined as any)
-          }
           break
         }
-
-
 
         case "message.updated": {
           const messages = store.message[event.properties.info.sessionID]
@@ -315,9 +309,10 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           const result = Binary.search(messages, event.properties.messageID, (m) => m.id)
           if (result.found) {
             setStore(
+              "message",
+              event.properties.sessionID,
               produce((draft) => {
-                draft.message[event.properties.sessionID].splice(result.index, 1)
-                delete draft.part[event.properties.messageID]
+                draft.splice(result.index, 1)
               }),
             )
           }

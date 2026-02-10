@@ -3,9 +3,16 @@ import { Tool } from "./tool"
 import { Team, TeamTasks, WRITE_TOOLS, type TeamTask } from "../team"
 import { TeamMessaging } from "../team/messaging"
 import { Session } from "../session"
+import { SessionPrompt } from "../session/prompt"
 import { Agent } from "../agent/agent"
+import { Provider } from "../provider/provider"
+import { Identifier } from "../id/id"
+import { Instance } from "../project/instance"
+import { Log } from "../util/log"
 import { Bus } from "../bus"
 import { TeamEvent } from "../team/events"
+
+const log = Log.create({ service: "tool.team" })
 
 /**
  * Create a new agent team. Only the lead session should call this.
@@ -38,18 +45,19 @@ export const TeamCreateTool = Tool.define("team_create", {
       ),
   }),
   async execute(params, ctx): Promise<{ title: string; output: string; metadata: Record<string, any> }> {
-    const existing = await Team.findBySession(ctx.sessionID)
-    if (existing?.role === "member") {
+    // Constraint: no nested teams — teammates cannot create teams
+    const existingTeam = await Team.findBySession(ctx.sessionID)
+    if (existingTeam && existingTeam.role === "member") {
       return {
         title: "Error",
         output: "Teammates cannot create new teams. Only the lead session or an independent session can create a team.",
         metadata: {},
       }
     }
-    if (existing?.role === "lead") {
+    if (existingTeam && existingTeam.role === "lead") {
       return {
         title: "Error",
-        output: `You are already leading team "${existing.team.name}". Only one team per session is allowed.`,
+        output: `You are already leading team "${existingTeam.team.name}". Only one team per session is allowed.`,
         metadata: {},
       }
     }
@@ -61,19 +69,22 @@ export const TeamCreateTool = Tool.define("team_create", {
     })
 
     if (params.tasks?.length) {
-      await TeamTasks.add(
-        params.name,
-        params.tasks.map((t) => ({ ...t, status: "pending" as const })),
-      )
+      const tasks: TeamTask[] = params.tasks.map((t) => ({
+        ...t,
+        status: "pending" as const,
+      }))
+      await TeamTasks.add(params.name, tasks)
     }
 
     // Delegate mode: restrict the lead to coordination-only tools
     if (params.delegate) {
       await Session.update(ctx.sessionID, (draft) => {
-        draft.permission = [
-          ...(draft.permission ?? []),
-          ...WRITE_TOOLS.map((tool) => ({ permission: tool, pattern: "*", action: "deny" as const })),
-        ]
+        const delegateDenyRules = WRITE_TOOLS.map((tool) => ({
+          permission: tool,
+          pattern: "*",
+          action: "deny" as const,
+        }))
+        draft.permission = [...(draft.permission ?? []), ...delegateDenyRules]
       })
     }
 
@@ -134,10 +145,16 @@ export const TeamSpawnTool = Tool.define("team_spawn", {
       ),
   }),
   async execute(params, ctx): Promise<{ title: string; output: string; metadata: Record<string, any> }> {
+    // Reserve "lead" — it's used as a routing keyword in messaging
     if (params.name === "lead") {
-      return { title: "Error", output: `Name "lead" is reserved. Choose a different name.`, metadata: {} }
+      return {
+        title: "Error",
+        output: `Name "lead" is reserved. Choose a different name for this teammate.`,
+        metadata: {},
+      }
     }
 
+    // Constraint: only the lead can spawn — teammates cannot spawn (no nesting)
     const teamInfo = await Team.findBySession(ctx.sessionID)
     if (!teamInfo) {
       return {
@@ -153,7 +170,9 @@ export const TeamSpawnTool = Tool.define("team_spawn", {
         metadata: {},
       }
     }
+    const teamName = teamInfo.team.name
 
+    // Resolve agent
     const agentName = params.agent ?? "general"
     const agent = await Agent.get(agentName)
     if (!agent) {
@@ -164,45 +183,211 @@ export const TeamSpawnTool = Tool.define("team_spawn", {
       }
     }
 
-    // Resolve model — fail fast before creating session
-    const model = await Team.resolveModel({
-      model: params.model,
-      agent,
-      messages: ctx.messages,
-    })
-    if ("error" in model) {
-      return { title: "Error", output: model.error, metadata: {} }
-    }
+    // Resolve the model for this teammate early — fail fast before creating session.
+    // Priority: explicit params.model > agent.model > lead's current model > default
+    const model = await (async () => {
+      // 1. Explicit model param — parse and validate against configured providers
+      if (params.model) {
+        const parsed = Provider.parseModel(params.model)
+        try {
+          await Provider.getModel(parsed.providerID, parsed.modelID)
+        } catch (e: unknown) {
+          if (Provider.ModelNotFoundError.isInstance(e)) {
+            const suggestions = e.data.suggestions?.length ? ` Did you mean: ${e.data.suggestions.join(", ")}?` : ""
+            return { error: `Model not found: ${params.model}.${suggestions}` } as const
+          }
+          throw e
+        }
+        return parsed
+      }
+      // 2. Agent's configured model
+      if (agent.model) return agent.model
+      // 3. Lead's current model (from the last user message in the lead's session)
+      const lastUser = ctx.messages.findLast((m) => m.info.role === "user")
+      if (lastUser) {
+        const info = lastUser.info as { model: { providerID: string; modelID: string } }
+        return info.model
+      }
+      // 4. Global default model
+      return await Provider.defaultModel()
+    })()
 
-    let result: { sessionID: string; label: string }
-    try {
-      result = await Team.spawnMember({
-        teamName: teamInfo.team.name,
-        name: params.name,
-        parentSessionID: ctx.sessionID,
-        agent: {
-          name: agentName,
-          prompt: agent.prompt,
-          skills: (agent as Record<string, unknown>).skills as string[] | undefined,
-        },
-        model,
-        prompt: params.prompt,
-        claimTask: params.claim_task,
-        planApproval: !!params.require_plan_approval,
-      })
-    } catch (err: unknown) {
+    // Bail out if model resolution failed
+    if ("error" in model) {
       return {
         title: "Error",
-        output: `Failed to spawn teammate: ${err instanceof Error ? err.message : String(err)}`,
+        output: model.error,
         metadata: {},
       }
     }
 
+    const modelLabel = `${model.providerID}/${model.modelID}`
+
+    // Build permission rules for the child session
+    const permissionRules: Array<{ permission: string; pattern: string; action: "deny" | "allow" }> = [
+      // Deny lead-only tools — teammates cannot create teams, spawn, shutdown, or cleanup
+      { permission: "team_create", pattern: "*", action: "deny" },
+      { permission: "team_spawn", pattern: "*", action: "deny" },
+      { permission: "team_shutdown", pattern: "*", action: "deny" },
+      { permission: "team_cleanup", pattern: "*", action: "deny" },
+      { permission: "team_approve_plan", pattern: "*", action: "deny" },
+      // Allow todowrite/todoread — per-session todo isolation means no cross-contamination.
+      // The sidebar reads sync.data.todo[member.sessionID] to display each teammate's progress.
+    ]
+
+    // Plan approval: deny write tools until the lead approves.
+    // Uses a tagged pattern so only these rules are removed on approval.
+    if (params.require_plan_approval) {
+      permissionRules.push(
+        ...WRITE_TOOLS.map((tool) => ({ permission: tool, pattern: "*:plan-approval", action: "deny" as const })),
+      )
+    }
+
+    // Create a child session for the teammate.
+    // Uses createNext directly to set the teammate flag, which is intentionally
+    // excluded from the public Session.create schema (HTTP API surface).
+    const session = await Session.createNext({
+      parentID: ctx.sessionID,
+      teammate: true,
+      directory: Instance.directory,
+      title: `${params.name} (@${agentName} teammate, ${modelLabel})${params.require_plan_approval ? " [plan mode]" : ""}`,
+      permission: permissionRules,
+    })
+
+    // Register as team member
+    await Team.addMember(teamName, {
+      name: params.name,
+      sessionID: session.id,
+      agent: agentName,
+      status: "active",
+      prompt: params.prompt,
+      model: modelLabel,
+      planApproval: params.require_plan_approval ? "pending" : "none",
+    })
+
+    // Auto-claim a task if requested
+    if (params.claim_task) {
+      await TeamTasks.claim(teamName, params.claim_task, params.name).catch(() => {})
+    }
+
+    // Build the teammate's system context
+    const planModeInstructions = params.require_plan_approval
+      ? [
+          "",
+          "IMPORTANT: You are in PLAN MODE (read-only). You can read files, search, and explore,",
+          "but you CANNOT write, edit, or run bash commands until the lead approves your plan.",
+          "",
+          "Your workflow:",
+          "1. Research and explore the codebase to understand the problem",
+          "2. Formulate a detailed implementation plan",
+          "3. Send your plan to the lead using team_message (to: 'lead')",
+          "4. Wait for the lead to approve your plan (you'll receive a message when approved)",
+          "5. Once approved, your write permissions will be unlocked and you can implement",
+          "",
+        ]
+      : []
+
+    const skillContext = agent.skills?.length
+      ? [
+          "",
+          `Preloaded skills: ${agent.skills.join(", ")}`,
+          "These skills are already loaded into your context — you do not need to invoke the skill tool for them.",
+          "",
+        ]
+      : []
+
+    const teamContext = [
+      `You are "${params.name}", a teammate in team "${teamName}".`,
+      `Your agent type is "${agentName}", using model ${modelLabel}.`,
+      "",
+      "Team tools available to you:",
+      "- team_message: send a message to the lead or another teammate",
+      "- team_broadcast: send a message to all teammates",
+      "- team_tasks: view/add/complete tasks on the shared task list",
+      "- team_claim: claim a pending task from the shared task list",
+      "",
+      "You do NOT have access to team_create, team_spawn, team_shutdown, or team_cleanup.",
+      "Only the team lead can manage the team structure.",
+      ...skillContext,
+      ...planModeInstructions,
+      "When you finish a task, mark it done with team_tasks and send a summary to the lead with team_message.",
+      "You can message any teammate by name — not just the lead. Coordinate directly with peers when useful.",
+      "",
+      "SUBAGENT RELAY: If you use the task tool to spawn subagents, they CANNOT communicate with the team.",
+      "You are responsible for relaying any relevant findings from subagents via team_message or team_broadcast.",
+      "",
+      "IMPORTANT: Your plain text output is NOT visible to the team lead or other teammates.",
+      "You MUST use team_message or team_broadcast to communicate. Just typing a response is not enough.",
+      "",
+      "Your instructions:",
+      params.prompt,
+    ].join("\n")
+
+    const msgId = Identifier.ascending("message")
+    await Session.updateMessage({
+      id: msgId,
+      sessionID: session.id,
+      role: "user",
+      agent: agentName,
+      model,
+      time: { created: Date.now() },
+    })
+    await Session.updatePart({
+      id: Identifier.ascending("part"),
+      messageID: msgId,
+      sessionID: session.id,
+      type: "text",
+      text: teamContext,
+    })
+
+    // Fire off the teammate's prompt loop in the background (non-blocking).
+    // The lead stays interactive and receives messages via auto-wake.
+    log.info("spawning teammate", { teamName, name: params.name, sessionID: session.id })
+    const notifyLead = async (status: "finished" | "errored", error?: string) => {
+      try {
+        // Only transition to idle if the member isn't already shutdown.
+        // A shutdown request sets status to "shutdown" before the loop finishes —
+        // overwriting it with "idle" would break auto-cleanup.
+        const team = await Team.get(teamName)
+        const member = team?.members.find((m) => m.name === params.name)
+        if (member?.status === "shutdown") return
+
+        await Team.setMemberStatus(teamName, params.name, "idle")
+        // Send an idle notification to the lead — this injects a message
+        // into the lead's session and triggers auto-wake if idle.
+        await TeamMessaging.send({
+          teamName,
+          from: params.name,
+          to: "lead",
+          text:
+            status === "finished"
+              ? `I have finished my current work and am now idle. Review my session (${session.id}) for detailed results. You can use team_shutdown to shut me down if no more work is needed.`
+              : `I encountered an error and stopped: ${error ?? "unknown error"}. Review my session (${session.id}). You can use team_shutdown to shut me down, or send me a message to retry.`,
+        })
+      } catch (notifyErr: unknown) {
+        log.warn("failed to notify lead of teammate completion", {
+          teamName,
+          name: params.name,
+          error: notifyErr instanceof Error ? notifyErr.message : String(notifyErr),
+        })
+      }
+    }
+
+    SessionPrompt.loop({ sessionID: session.id })
+      .then(() => {
+        log.info("teammate loop finished", { teamName, name: params.name })
+        notifyLead("finished")
+      })
+      .catch((err) => {
+        log.warn("teammate loop error", { teamName, name: params.name, error: err.message })
+        notifyLead("errored", err.message)
+      })
+
     return {
       title: `Spawned teammate: ${params.name}`,
       output: [
-        `Teammate "${params.name}" spawned with agent "${agentName}" using model ${result.label}.`,
-        `Session ID: ${result.sessionID}`,
+        `Teammate "${params.name}" spawned with agent "${agentName}" using model ${modelLabel}.`,
+        `Session ID: ${session.id}`,
         params.claim_task ? `Auto-claimed task: ${params.claim_task}` : "",
         params.require_plan_approval
           ? "Plan approval REQUIRED: teammate is in read-only mode until you approve their plan with team_approve_plan."
@@ -214,10 +399,10 @@ export const TeamSpawnTool = Tool.define("team_spawn", {
         .filter(Boolean)
         .join("\n"),
       metadata: {
-        teamName: teamInfo.team.name,
+        teamName,
         memberName: params.name,
-        sessionID: result.sessionID,
-        model: result.label,
+        sessionID: session.id,
+        model: modelLabel,
         planApproval: params.require_plan_approval,
       },
     }
@@ -239,12 +424,18 @@ export const TeamMessageTool = Tool.define("team_message", {
   async execute(params, ctx): Promise<{ title: string; output: string; metadata: Record<string, any> }> {
     const teamInfo = await Team.findBySession(ctx.sessionID)
     if (!teamInfo) {
-      return { title: "Error", output: "You are not part of any team.", metadata: {} }
+      return {
+        title: "Error",
+        output: "You are not part of any team.",
+        metadata: {},
+      }
     }
+
+    const fromName = teamInfo.role === "lead" ? "lead" : teamInfo.memberName!
 
     await TeamMessaging.send({
       teamName: teamInfo.team.name,
-      from: teamInfo.role === "lead" ? "lead" : teamInfo.memberName!,
+      from: fromName,
       to: params.to,
       text: params.text,
     })
@@ -270,12 +461,18 @@ export const TeamBroadcastTool = Tool.define("team_broadcast", {
   async execute(params, ctx): Promise<{ title: string; output: string; metadata: Record<string, any> }> {
     const teamInfo = await Team.findBySession(ctx.sessionID)
     if (!teamInfo) {
-      return { title: "Error", output: "You are not part of any team.", metadata: {} }
+      return {
+        title: "Error",
+        output: "You are not part of any team.",
+        metadata: {},
+      }
     }
+
+    const fromName = teamInfo.role === "lead" ? "lead" : teamInfo.memberName!
 
     await TeamMessaging.broadcast({
       teamName: teamInfo.team.name,
-      from: teamInfo.role === "lead" ? "lead" : teamInfo.memberName!,
+      from: fromName,
       text: params.text,
     })
 
@@ -325,26 +522,21 @@ export const TeamTasksTool = Tool.define("team_tasks", {
         if (tasks.length === 0) {
           return { title: "Task list", output: "No tasks in the team task list.", metadata: {} }
         }
-        return {
-          title: "Task list",
-          output: tasks
-            .map((t) => {
-              const status = t.status === "in_progress" ? `in_progress (${t.assignee ?? "?"})` : t.status
-              const deps = t.depends_on?.length ? ` [deps: ${t.depends_on.join(", ")}]` : ""
-              return `[${t.id}] ${t.content} — ${status} (${t.priority})${deps}`
-            })
-            .join("\n"),
-          metadata: { count: tasks.length },
-        }
+        const output = tasks
+          .map((t) => {
+            const status = t.status === "in_progress" ? `in_progress (${t.assignee ?? "?"})` : t.status
+            const deps = t.depends_on?.length ? ` [deps: ${t.depends_on.join(", ")}]` : ""
+            return `[${t.id}] ${t.content} — ${status} (${t.priority})${deps}`
+          })
+          .join("\n")
+        return { title: "Task list", output, metadata: { count: tasks.length } }
       }
       case "add": {
         if (!params.tasks?.length) {
           return { title: "Error", output: "No tasks provided to add.", metadata: {} }
         }
-        await TeamTasks.add(
-          teamName,
-          params.tasks.map((t) => ({ ...t, status: "pending" as const })),
-        )
+        const newTasks: TeamTask[] = params.tasks.map((t) => ({ ...t, status: "pending" as const }))
+        await TeamTasks.add(teamName, newTasks)
         return {
           title: `Added ${params.tasks.length} tasks`,
           output: `Added ${params.tasks.length} task(s) to the shared list.`,
@@ -384,7 +576,7 @@ export const TeamClaimTool = Tool.define("team_claim", {
   description:
     "Claim a pending task from the team's shared task list. " +
     "Only pending, unassigned tasks with resolved dependencies can be claimed. " +
-    "Atomic operation — prevents race conditions.",
+    "Uses file locking to prevent race conditions.",
   parameters: z.object({
     task_id: z.string().describe("The ID of the task to claim"),
   }),
@@ -394,18 +586,21 @@ export const TeamClaimTool = Tool.define("team_claim", {
       return { title: "Error", output: "You are not part of any team.", metadata: {} }
     }
 
-    const name = teamInfo.role === "lead" ? "lead" : teamInfo.memberName!
-    if (await TeamTasks.claim(teamInfo.team.name, params.task_id, name)) {
+    const memberName = teamInfo.role === "lead" ? "lead" : teamInfo.memberName!
+    const claimed = await TeamTasks.claim(teamInfo.team.name, params.task_id, memberName)
+
+    if (claimed) {
       return {
         title: `Claimed task ${params.task_id}`,
         output: `You claimed task "${params.task_id}". It's now in_progress assigned to you.`,
         metadata: { taskId: params.task_id },
       }
-    }
-    return {
-      title: "Claim failed",
-      output: `Could not claim task "${params.task_id}". It may already be taken, blocked, or not found.`,
-      metadata: {},
+    } else {
+      return {
+        title: "Claim failed",
+        output: `Could not claim task "${params.task_id}". It may already be taken, blocked, or not found.`,
+        metadata: {},
+      }
     }
   },
 })
@@ -433,7 +628,6 @@ export const TeamApprovePlanTool = Tool.define("team_approve_plan", {
     if (!member) {
       return { title: "Error", output: `Teammate "${params.name}" not found.`, metadata: {} }
     }
-    // Allow re-review of rejected plans — teammate revises and resubmits
     if (member.planApproval !== "pending" && member.planApproval !== "rejected") {
       return {
         title: "Error",
@@ -442,24 +636,63 @@ export const TeamApprovePlanTool = Tool.define("team_approve_plan", {
       }
     }
 
-    await Team.approvePlan({
-      teamName: teamInfo.team.name,
-      memberName: params.name,
-      approved: params.approved,
-      feedback: params.feedback,
-    })
-
     if (params.approved) {
+      // Remove only plan-approval deny rules (tagged with "*:plan-approval" pattern)
+      await Session.update(member.sessionID, (draft) => {
+        if (draft.permission) {
+          draft.permission = draft.permission.filter((rule) => rule.pattern !== "*:plan-approval")
+        }
+      })
+
+      // Update member state
+      await Team.setMemberPlanApproval(teamInfo.team.name, params.name, "approved")
+
+      // Notify the teammate
+      await TeamMessaging.send({
+        teamName: teamInfo.team.name,
+        from: "lead",
+        to: params.name,
+        text: params.feedback
+          ? `Your plan has been APPROVED. You now have full write access. Feedback: ${params.feedback}`
+          : "Your plan has been APPROVED. You now have full write access. Proceed with implementation.",
+      })
+
+      await Bus.publish(TeamEvent.PlanApproval, {
+        teamName: teamInfo.team.name,
+        memberName: params.name,
+        approved: true,
+        feedback: params.feedback,
+      })
+
       return {
         title: `Plan approved: ${params.name}`,
         output: `Approved "${params.name}"'s plan. Write tools are now unlocked for this teammate.`,
         metadata: { approved: true },
       }
-    }
-    return {
-      title: `Plan rejected: ${params.name}`,
-      output: `Rejected "${params.name}"'s plan. They remain in read-only mode and should revise.`,
-      metadata: { approved: false },
+    } else {
+      // Rejected — keep read-only mode, mark as rejected.
+      // The teammate's next plan submission resets to "pending".
+      await Team.setMemberPlanApproval(teamInfo.team.name, params.name, "rejected")
+
+      await TeamMessaging.send({
+        teamName: teamInfo.team.name,
+        from: "lead",
+        to: params.name,
+        text: `Your plan has been REJECTED. Please revise and resubmit. Feedback: ${params.feedback ?? "No specific feedback provided."}`,
+      })
+
+      await Bus.publish(TeamEvent.PlanApproval, {
+        teamName: teamInfo.team.name,
+        memberName: params.name,
+        approved: false,
+        feedback: params.feedback,
+      })
+
+      return {
+        title: `Plan rejected: ${params.name}`,
+        output: `Rejected "${params.name}"'s plan. They remain in read-only mode and should revise.`,
+        metadata: { approved: false },
+      }
     }
   },
 })
@@ -484,18 +717,29 @@ export const TeamShutdownTool = Tool.define("team_shutdown", {
 
     const member = teamInfo.team.members.find((m) => m.name === params.name)
     if (!member) {
-      return { title: "Error", output: `Teammate "${params.name}" not found.`, metadata: {} }
+      return {
+        title: "Error",
+        output: `Teammate "${params.name}" not found.`,
+        metadata: {},
+      }
     }
     if (member.status === "shutdown") {
-      return { title: "Already shutdown", output: `Teammate "${params.name}" is already shut down.`, metadata: {} }
+      return {
+        title: "Already shutdown",
+        output: `Teammate "${params.name}" is already shut down.`,
+        metadata: {},
+      }
     }
 
+    const reason = params.reason ?? "The lead has requested you shut down."
+
+    // Send a shutdown request message — the teammate can approve or reject
     await TeamMessaging.send({
       teamName: teamInfo.team.name,
       from: "lead",
       to: params.name,
       text: [
-        `SHUTDOWN REQUEST: ${params.reason ?? "The lead has requested you shut down."}`,
+        `SHUTDOWN REQUEST: ${reason}`,
         "",
         "Please do one of the following:",
         "1. If you can wrap up, summarize your findings and send them to the lead, then stop working.",
@@ -508,9 +752,7 @@ export const TeamShutdownTool = Tool.define("team_shutdown", {
       memberName: params.name,
     })
 
-    // Status set to "shutdown" immediately — the teammate's prompt loop will exit on
-    // its next iteration. If the teammate "rejects" the shutdown, they continue working
-    // but their status stays "shutdown" (the rejection is informational to the lead).
+    // Mark as shutdown — the teammate's loop will finish naturally after processing
     await Team.setMemberStatus(teamInfo.team.name, params.name, "shutdown")
 
     return {
@@ -532,9 +774,14 @@ export const TeamCleanupTool = Tool.define("team_cleanup", {
     name: z.string().describe("Team name to clean up"),
   }),
   async execute(params, ctx) {
+    // Authorization: only the lead of this specific team can clean it up
     const teamInfo = await Team.findBySession(ctx.sessionID)
     if (!teamInfo || teamInfo.role !== "lead" || teamInfo.team.name !== params.name) {
-      return { title: "Error", output: "Only the lead of this team can clean it up.", metadata: {} }
+      return {
+        title: "Error",
+        output: "Only the lead of this team can clean it up.",
+        metadata: {},
+      }
     }
 
     try {
@@ -551,9 +798,10 @@ export const TeamCleanupTool = Tool.define("team_cleanup", {
         metadata: {},
       }
     } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
       return {
         title: "Cleanup failed",
-        output: `Failed to clean up team: ${err instanceof Error ? err.message : String(err)}`,
+        output: `Failed to clean up team: ${msg}`,
         metadata: {},
       }
     }
