@@ -127,5 +127,33 @@ export const TeamRoutes = lazy(() =>
         await Team.setDelegate(name, enabled)
         return c.json({ ok: true, delegate: enabled })
       },
+    )
+    .post(
+      "/:name/cancel",
+      describeRoute({
+        summary: "Cancel teammates",
+        description:
+          "Cancel active teammates' prompt loops. " + "Pass { member: name } to cancel one, or omit to cancel all.",
+        operationId: "team.cancel",
+        responses: {
+          200: { description: "Number of cancelled members" },
+          ...errors(404),
+        },
+      }),
+      validator("param", z.object({ name: z.string() })),
+      validator("json", z.object({ member: z.string().optional() })),
+      async (c) => {
+        const { name } = c.req.valid("param")
+        const { member } = c.req.valid("json")
+        const team = await Team.get(name)
+        if (!team) return c.json({ error: "Team not found" }, 404)
+
+        if (member) {
+          const ok = await Team.cancelMember(name, member)
+          return c.json({ ok, cancelled: ok ? 1 : 0 })
+        }
+        const cancelled = await Team.cancelAllMembers(name)
+        return c.json({ ok: true, cancelled })
+      },
     ),
 )

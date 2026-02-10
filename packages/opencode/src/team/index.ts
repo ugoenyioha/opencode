@@ -568,6 +568,46 @@ export namespace Team {
   }
 
   /**
+   * Cancel a single teammate's prompt loop by calling SessionPrompt.cancel.
+   * This mirrors how the Task tool propagates abort to subagents (task.ts:121-125).
+   * Returns true if the member was found and cancelled.
+   */
+  export async function cancelMember(teamName: string, memberName: string): Promise<boolean> {
+    const { SessionPrompt } = await import("../session/prompt")
+
+    const team = await get(teamName)
+    if (!team) return false
+
+    const member = team.members.find((m) => m.name === memberName)
+    if (!member) return false
+    if (member.status !== "active") return false
+
+    log.info("cancelling member", { teamName, memberName, sessionID: member.sessionID })
+    SessionPrompt.cancel(member.sessionID)
+    return true
+  }
+
+  /**
+   * Cancel all active teammates' prompt loops.
+   * Returns the count of members that were cancelled.
+   */
+  export async function cancelAllMembers(teamName: string): Promise<number> {
+    const { SessionPrompt } = await import("../session/prompt")
+
+    const team = await get(teamName)
+    if (!team) return 0
+
+    let count = 0
+    for (const member of team.members) {
+      if (member.status !== "active") continue
+      log.info("cancelling member", { teamName, memberName: member.name, sessionID: member.sessionID })
+      SessionPrompt.cancel(member.sessionID)
+      count++
+    }
+    return count
+  }
+
+  /**
    * Mark teammates that were active when the server died as "interrupted"
    * and inject a notification into the lead session.
    * Called once during InstanceBootstrap.
