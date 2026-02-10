@@ -14,13 +14,18 @@ import { useRoute } from "@tui/context/route"
 function memberStatusIcon(status: string): string {
   switch (status) {
     case "active":
+    case "busy":
       return "*"
     case "idle":
+    case "ready":
       return "o"
     case "interrupted":
+    case "shutdown_requested":
       return "!"
     case "shutdown":
       return "x"
+    case "error":
+      return "!"
     default:
       return "?"
   }
@@ -31,8 +36,8 @@ function TeamBadge(props: { teamInfo: any }) {
   const info = () => props.teamInfo
   if (!info()) return null
 
-  const activeCount = () => info().members?.filter((m: any) => m.status === "active").length ?? 0
-  const idleCount = () => info().members?.filter((m: any) => m.status === "idle").length ?? 0
+  const activeCount = () => info().members?.filter((m: any) => m.status === "active" || m.status === "busy").length ?? 0
+  const idleCount = () => info().members?.filter((m: any) => m.status === "idle" || m.status === "ready").length ?? 0
   const totalCount = () => info().members?.length ?? 0
 
   return (
@@ -84,12 +89,17 @@ function TeamStatusBar(props: { teamInfo: any }) {
             if (member.planApproval === "pending") return theme.warning
             switch (member.status) {
               case "active":
+              case "busy":
                 return theme.success
               case "idle":
+              case "ready":
                 return theme.textMuted
               case "interrupted":
+              case "shutdown_requested":
                 return theme.warning
               case "shutdown":
+                return theme.error
+              case "error":
                 return theme.error
               default:
                 return theme.textMuted

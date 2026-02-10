@@ -386,9 +386,13 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
 function memberColor(status: string, theme: any) {
   switch (status) {
     case "active":
+    case "busy":
       return theme.success
     case "interrupted":
+    case "shutdown_requested":
       return theme.warning
+    case "error":
+      return theme.error
     case "shutdown":
       return theme.error
     default:
@@ -423,7 +427,8 @@ function TeamLeadSidebar(props: {
           <Show when={!expanded()}>
             <span style={{ fg: theme.textMuted }}>
               {" "}
-              ({props.teamMembers.filter((m) => m.status === "active").length} active, {props.teamMembers.length} total)
+              ({props.teamMembers.filter((m) => m.status === "active" || m.status === "busy").length} active,{" "}
+              {props.teamMembers.length} total)
             </span>
           </Show>
         </text>
@@ -452,7 +457,7 @@ function TeamLeadSidebar(props: {
                     <span style={{ fg: theme.textMuted }}> ({member.agent})</span>
                   </text>
                 </box>
-                <Show when={member.status === "active"}>
+                <Show when={member.status === "active" || member.status === "busy"}>
                   <TeammateActivity sessionID={member.sessionID} />
                 </Show>
                 <Show when={visible().length > 0}>
@@ -499,7 +504,12 @@ function TeamLeadSidebar(props: {
                       blocked by {task.depends_on!.map((d) => `#${d}`).join(", ")}
                     </text>
                   </Show>
-                  <Show when={task.status === "in_progress" && assignee()?.status === "active"}>
+                  <Show
+                    when={
+                      task.status === "in_progress" &&
+                      (assignee()?.status === "active" || assignee()?.status === "busy")
+                    }
+                  >
                     <TeammateActivity sessionID={assignee()!.sessionID} />
                   </Show>
                 </box>

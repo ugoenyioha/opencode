@@ -1,8 +1,32 @@
 import z from "zod"
 import { BusEvent } from "../bus/bus-event"
 
-export const MemberStatus = z.enum(["active", "idle", "shutdown", "interrupted"])
+export const MemberStatus = z.enum([
+  "active",
+  "idle",
+  "interrupted",
+  "shutdown",
+  "error",
+  // compatibility aliases
+  "ready",
+  "busy",
+  "shutdown_requested",
+])
 export type MemberStatus = z.infer<typeof MemberStatus>
+
+export const ExecutionStatus = z.enum([
+  "idle",
+  "starting",
+  "running",
+  "cancel_requested",
+  "cancelling",
+  "cancelled",
+  "completing",
+  "completed",
+  "failed",
+  "timed_out",
+])
+export type ExecutionStatus = z.infer<typeof ExecutionStatus>
 
 /** Validates safe identifiers for team/member names — prevents path traversal */
 const SafeName = z
@@ -14,6 +38,7 @@ export const TeamMemberSchema = z.object({
   sessionID: z.string(),
   agent: z.string(),
   status: MemberStatus,
+  execution_status: ExecutionStatus.optional(),
   prompt: z.string().optional(),
   /** Model this teammate is using, in "providerID/modelID" format. */
   model: z.string().optional(),
@@ -62,6 +87,15 @@ export namespace TeamEvent {
       teamName: z.string(),
       memberName: z.string(),
       status: MemberStatus,
+    }),
+  )
+
+  export const MemberExecutionChanged = BusEvent.define(
+    "team.member.execution",
+    z.object({
+      teamName: z.string(),
+      memberName: z.string(),
+      status: ExecutionStatus,
     }),
   )
 

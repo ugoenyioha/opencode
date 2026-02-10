@@ -6,15 +6,25 @@ import { Storage } from "../storage/storage"
 import { fn } from "../util/fn"
 import {
   TeamEvent,
+  ExecutionStatus,
   TeamInfoSchema,
   TeamTaskSchema,
   type TeamInfo,
   type TeamMember,
   type TeamTask,
   type MemberStatus,
+  type ExecutionStatus as ExecutionStatusType,
 } from "./events"
 
-export { TeamEvent, TeamInfoSchema, TeamTaskSchema, type TeamInfo, type TeamMember, type TeamTask } from "./events"
+export {
+  TeamEvent,
+  ExecutionStatus,
+  TeamInfoSchema,
+  TeamTaskSchema,
+  type TeamInfo,
+  type TeamMember,
+  type TeamTask,
+} from "./events"
 
 /** Write tools that are denied during plan-approval or delegate mode */
 export const WRITE_TOOLS = ["bash", "write", "edit", "multiedit", "apply_patch"] as const
@@ -30,6 +40,91 @@ function configKey(name: string): string[] {
  *  Storage.list(["team", projectID]) only returns config keys, not task data */
 function tasksKey(name: string): string[] {
   return ["team_tasks", Instance.project.id, name]
+}
+
+const TERMINAL_EXECUTION_STATES = new Set<ExecutionStatusType>([
+  "idle",
+  "cancelled",
+  "completed",
+  "failed",
+  "timed_out",
+])
+
+const MEMBER_TRANSITIONS: Record<MemberStatus, MemberStatus[]> = {
+  active: ["idle", "interrupted", "shutdown", "error"],
+  idle: ["active", "shutdown", "error"],
+  interrupted: ["active", "idle", "shutdown", "error"],
+  shutdown: [],
+  error: ["idle", "shutdown"],
+  ready: ["active", "idle", "interrupted", "shutdown", "error"],
+  busy: ["active", "idle", "interrupted", "shutdown", "error"],
+  shutdown_requested: ["interrupted", "shutdown", "active", "idle", "error"],
+}
+
+const EXECUTION_TRANSITIONS: Record<ExecutionStatusType, ExecutionStatusType[]> = {
+  idle: ["starting"],
+  starting: ["running", "cancel_requested", "cancelling", "failed", "timed_out"],
+  running: ["cancel_requested", "cancelling", "completing", "failed", "timed_out"],
+  cancel_requested: ["cancelling", "cancelled", "failed", "timed_out"],
+  cancelling: ["cancelled", "failed", "timed_out"],
+  cancelled: ["idle"],
+  completing: ["completed", "failed", "timed_out"],
+  completed: ["idle"],
+  failed: ["idle"],
+  timed_out: ["idle"],
+}
+
+function normalizeMember(member: TeamMember): TeamMember {
+  const rawStatus = member.status as string
+  const status = (() => {
+    switch (rawStatus) {
+      case "busy":
+      case "active":
+        return "active"
+      case "ready":
+      case "idle":
+        return "idle"
+      case "shutdown_requested":
+      case "interrupted":
+        return "interrupted"
+      case "shutdown":
+        return "shutdown"
+      case "error":
+        return "error"
+      default:
+        return "idle"
+    }
+  })()
+  const legacyExecution = (member as TeamMember & { execution_status?: string }).execution_status
+  const execution_status = ExecutionStatus.safeParse(legacyExecution).success
+    ? (legacyExecution as ExecutionStatusType)
+    : (() => {
+        switch (status) {
+          case "active":
+            return "running"
+          case "interrupted":
+            return "cancelled"
+          default:
+            return "idle"
+        }
+      })()
+  return {
+    ...member,
+    status,
+    execution_status,
+  }
+}
+
+function normalizeTeam(team: TeamInfo): TeamInfo {
+  return {
+    ...team,
+    members: team.members.map(normalizeMember),
+  }
+}
+
+function canTransition<T extends string>(current: T, next: T, map: Record<T, T[]>) {
+  if (current === next) return true
+  return map[current]?.includes(next) === true
 }
 
 export namespace Team {
@@ -129,7 +224,7 @@ export namespace Team {
    */
   export const get = fn(z.string(), async (name) => {
     try {
-      return await Storage.read<TeamInfo>(configKey(name))
+      return normalizeTeam(await Storage.read<TeamInfo>(configKey(name)))
     } catch {
       return undefined
     }
@@ -141,9 +236,9 @@ export namespace Team {
   export async function list(): Promise<TeamInfo[]> {
     try {
       const keys = await Storage.list(["team", Instance.project.id])
-      return (await Promise.all(keys.map((key) => Storage.read<TeamInfo>(key).catch(() => undefined)))).filter(
-        (t): t is TeamInfo => t !== undefined,
-      )
+      return (await Promise.all(keys.map((key) => Storage.read<TeamInfo>(key).catch(() => undefined))))
+        .filter((t): t is TeamInfo => t !== undefined)
+        .map(normalizeTeam)
     } catch {
       return []
     }
@@ -169,10 +264,59 @@ export namespace Team {
     await Bus.publish(TeamEvent.MemberSpawned, { teamName, member })
   }
 
+  export async function transitionMemberStatus(
+    teamName: string,
+    memberName: string,
+    status: MemberStatus,
+    options?: { guard?: boolean; force?: boolean },
+  ): Promise<boolean> {
+    let changed = false
+    try {
+      await Storage.update<TeamInfo>(configKey(teamName), (draft) => {
+        const member = draft.members.find((m) => m.name === memberName)
+        if (!member) return
+        if (options?.guard && member.status === "shutdown") return
+        const from = member.status
+        if (!options?.force && !canTransition(from, status, MEMBER_TRANSITIONS)) return
+        if (from === status) return
+        member.status = status
+        changed = true
+      })
+    } catch {
+      return false
+    }
+    if (!changed) return false
+    await Bus.publish(TeamEvent.MemberStatusChanged, { teamName, memberName, status })
+    return true
+  }
+
+  export async function transitionExecutionStatus(
+    teamName: string,
+    memberName: string,
+    status: ExecutionStatusType,
+    options?: { force?: boolean },
+  ): Promise<boolean> {
+    let changed = false
+    try {
+      await Storage.update<TeamInfo>(configKey(teamName), (draft) => {
+        const member = draft.members.find((m) => m.name === memberName)
+        if (!member) return
+        const from = normalizeMember(member).execution_status ?? "idle"
+        if (!options?.force && !canTransition(from, status, EXECUTION_TRANSITIONS)) return
+        if (from === status) return
+        member.execution_status = status
+        changed = true
+      })
+    } catch {
+      return false
+    }
+    if (!changed) return false
+    await Bus.publish(TeamEvent.MemberExecutionChanged, { teamName, memberName, status })
+    return true
+  }
+
   /**
-   * Update a member's status atomically via Storage.update.
-   * When options.guard is true, won't overwrite an existing "shutdown" status
-   * (prevents TOCTOU race in notifyLead).
+   * Backward-compatible setter for tests and call sites that need direct status updates.
    */
   export async function setMemberStatus(
     teamName: string,
@@ -180,19 +324,7 @@ export namespace Team {
     status: MemberStatus,
     options?: { guard?: boolean },
   ): Promise<void> {
-    try {
-      await Storage.update<TeamInfo>(configKey(teamName), (draft) => {
-        const member = draft.members.find((m) => m.name === memberName)
-        if (!member) return
-        if (options?.guard && member.status === "shutdown") return
-        member.status = status
-      })
-    } catch {
-      // Team was deleted between check and write — safe to ignore
-      return
-    }
-
-    await Bus.publish(TeamEvent.MemberStatusChanged, { teamName, memberName, status })
+    await transitionMemberStatus(teamName, memberName, status, { guard: options?.guard, force: true })
   }
 
   /**
@@ -341,6 +473,7 @@ export namespace Team {
         sessionID: session.id,
         agent: input.agent.name,
         status: "active",
+        execution_status: "idle",
         prompt: input.prompt,
         model: label,
         planApproval: input.planApproval ? "pending" : "none",
@@ -429,18 +562,43 @@ export namespace Team {
       text: context,
     })
 
+    await transitionMemberStatus(input.teamName, input.name, "active")
+    await transitionExecutionStatus(input.teamName, input.name, "starting")
+
     // Fire-and-forget the teammate's prompt loop.
     // Wrapped in Promise.resolve().then() to guard against synchronous throws.
     log.info("spawning teammate", { teamName: input.teamName, name: input.name, sessionID: session.id })
     Promise.resolve()
-      .then(() => SessionPrompt.loop({ sessionID: session.id }))
-      .then((result) => {
-        log.info("teammate loop ended", { teamName: input.teamName, name: input.name, reason: result.reason })
-        notifyLead(input.teamName, input.name, session.id, result.reason)
+      .then(async () => {
+        await transitionExecutionStatus(input.teamName, input.name, "running")
+        return SessionPrompt.loop({ sessionID: session.id })
       })
-      .catch((err) => {
+      .then(async (result) => {
+        log.info("teammate loop ended", { teamName: input.teamName, name: input.name, reason: result.reason })
+        if (result.reason === "completed") {
+          await transitionExecutionStatus(input.teamName, input.name, "completing")
+          await transitionExecutionStatus(input.teamName, input.name, "completed")
+        }
+        if (result.reason === "cancelled") {
+          await transitionExecutionStatus(input.teamName, input.name, "cancelling")
+          await transitionExecutionStatus(input.teamName, input.name, "cancelled")
+        }
+        await transitionExecutionStatus(input.teamName, input.name, "idle")
+        const team = await get(input.teamName)
+        const member = team?.members.find((m) => m.name === input.name)
+        if (member?.status === "shutdown") {
+          await transitionMemberStatus(input.teamName, input.name, "shutdown")
+        } else {
+          await transitionMemberStatus(input.teamName, input.name, "idle")
+        }
+        await notifyLead(input.teamName, input.name, session.id, result.reason)
+      })
+      .catch(async (err) => {
         log.warn("teammate loop error", { teamName: input.teamName, name: input.name, error: err.message })
-        notifyLead(input.teamName, input.name, session.id, "errored", err.message)
+        await transitionExecutionStatus(input.teamName, input.name, "failed")
+        await transitionExecutionStatus(input.teamName, input.name, "idle")
+        await transitionMemberStatus(input.teamName, input.name, "error")
+        await notifyLead(input.teamName, input.name, session.id, "errored", err.message)
       })
 
     return { sessionID: session.id, label }
@@ -520,10 +678,6 @@ export namespace Team {
       const member = team.members.find((m) => m.name === name)
       if (member?.status === "shutdown") return
 
-      await setMemberStatus(teamName, name, "idle", { guard: true })
-      const next = await get(teamName)
-      if (next?.members.find((m) => m.name === name)?.status === "shutdown") return
-
       const text =
         status === "cancelled"
           ? `I was interrupted by the lead and am now idle. Send me a message to resume work.`
@@ -588,10 +742,22 @@ export namespace Team {
     const member = team.members.find((m) => m.name === memberName)
     if (!member) return false
     if (member.status !== "active") return false
+    if (TERMINAL_EXECUTION_STATES.has(member.execution_status ?? "idle")) return false
 
     log.info("cancelling member", { teamName, memberName, sessionID: member.sessionID })
-    await setMemberStatus(teamName, memberName, "interrupted", { guard: true })
-    SessionPrompt.cancel(member.sessionID)
+    await transitionMemberStatus(teamName, memberName, "interrupted", { force: true })
+    await transitionExecutionStatus(teamName, memberName, "cancel_requested")
+
+    for (const _ of [0, 1, 2]) {
+      SessionPrompt.cancel(member.sessionID)
+      await transitionExecutionStatus(teamName, memberName, "cancelling")
+      await Bun.sleep(120)
+      const next = await get(teamName)
+      const current = next?.members.find((m) => m.name === memberName)
+      if (!current) break
+      if (TERMINAL_EXECUTION_STATES.has(current.execution_status ?? "idle")) break
+      if (current.status !== "active") break
+    }
     return true
   }
 
@@ -608,16 +774,19 @@ export namespace Team {
     let count = 0
     for (const member of team.members) {
       if (member.status !== "active") continue
+      if (TERMINAL_EXECUTION_STATES.has(member.execution_status ?? "idle")) continue
       log.info("cancelling member", { teamName, memberName: member.name, sessionID: member.sessionID })
-      await setMemberStatus(teamName, member.name, "interrupted", { guard: true })
+      await transitionMemberStatus(teamName, member.name, "interrupted", { force: true })
+      await transitionExecutionStatus(teamName, member.name, "cancel_requested")
       SessionPrompt.cancel(member.sessionID)
+      await transitionExecutionStatus(teamName, member.name, "cancelling")
       count++
     }
     return count
   }
 
   /**
-   * Mark teammates that were active when the server died as "interrupted"
+   * Mark teammates that were busy when the server died as interrupted/cancelled
    * and inject a notification into the lead session.
    * Called once during InstanceBootstrap.
    */
@@ -633,7 +802,9 @@ export namespace Team {
 
       const names: string[] = []
       for (const member of active) {
-        await setMemberStatus(team.name, member.name, "interrupted")
+        await transitionExecutionStatus(team.name, member.name, "cancelled", { force: true })
+        await transitionExecutionStatus(team.name, member.name, "idle", { force: true })
+        await transitionMemberStatus(team.name, member.name, "interrupted", { force: true })
         names.push(member.name)
         count++
       }

@@ -83,7 +83,18 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             name: string
             sessionID: string
             agent: string
-            status: "active" | "idle" | "shutdown"
+            status: "active" | "idle" | "interrupted" | "shutdown" | "error" | "ready" | "busy" | "shutdown_requested"
+            execution_status:
+              | "idle"
+              | "starting"
+              | "running"
+              | "cancel_requested"
+              | "cancelling"
+              | "cancelled"
+              | "completing"
+              | "completed"
+              | "failed"
+              | "timed_out"
             /** Model in "providerID/modelID" format */
             model?: string
             planApproval?: "none" | "pending" | "approved" | "rejected"
@@ -409,6 +420,19 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
                   const idx = e.members.findIndex((m: any) => m.name === memberName)
                   if (idx >= 0) {
                     setStore("team", sid, "members", idx, "status", status)
+                  }
+                }
+              }
+              break
+            }
+            case "team.member.execution": {
+              const { teamName, memberName, status } = raw.properties
+              for (const [sid, entry] of Object.entries(store.team)) {
+                const e = entry as any
+                if (e?.teamName === teamName && e?.members) {
+                  const idx = e.members.findIndex((m: any) => m.name === memberName)
+                  if (idx >= 0) {
+                    setStore("team", sid, "members", idx, "execution_status", status)
                   }
                 }
               }

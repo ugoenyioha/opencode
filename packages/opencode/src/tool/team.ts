@@ -3,16 +3,10 @@ import { Tool } from "./tool"
 import { Team, TeamTasks, WRITE_TOOLS, type TeamTask } from "../team"
 import { TeamMessaging } from "../team/messaging"
 import { Session } from "../session"
-import { SessionPrompt } from "../session/prompt"
 import { Agent } from "../agent/agent"
 import { Provider } from "../provider/provider"
-import { Identifier } from "../id/id"
-import { Instance } from "../project/instance"
-import { Log } from "../util/log"
 import { Bus } from "../bus"
 import { TeamEvent } from "../team/events"
-
-const log = Log.create({ service: "tool.team" })
 
 /**
  * Create a new agent team. Only the lead session should call this.
@@ -120,7 +114,9 @@ export const TeamSpawnTool = Tool.define("team_spawn", {
     "Spawn a new teammate for the current team. Each teammate runs in its own session " +
     "with its own context window. Specify the agent type, a name, and a prompt describing " +
     "what this teammate should work on. You can optionally assign a different model to each " +
-    "teammate (e.g. use Gemini for research and Claude for implementation).",
+    "teammate (e.g. use Gemini for research and Claude for implementation). " +
+    "SUBAGENT RELAY: If subagents are used, they CANNOT communicate with the team directly; " +
+    "teammates are responsible for relaying any relevant findings.",
   parameters: z.object({
     name: z.string().describe("Unique name for this teammate, e.g. 'security-reviewer', 'frontend-impl'"),
     agent: z.string().optional().describe("Agent type to use (e.g. 'explore', 'general'). Defaults to 'general'."),
@@ -221,173 +217,22 @@ export const TeamSpawnTool = Tool.define("team_spawn", {
       }
     }
 
-    const modelLabel = `${model.providerID}/${model.modelID}`
-
-    // Build permission rules for the child session
-    const permissionRules: Array<{ permission: string; pattern: string; action: "deny" | "allow" }> = [
-      // Deny lead-only tools — teammates cannot create teams, spawn, shutdown, or cleanup
-      { permission: "team_create", pattern: "*", action: "deny" },
-      { permission: "team_spawn", pattern: "*", action: "deny" },
-      { permission: "team_shutdown", pattern: "*", action: "deny" },
-      { permission: "team_cleanup", pattern: "*", action: "deny" },
-      { permission: "team_approve_plan", pattern: "*", action: "deny" },
-      // Allow todowrite/todoread — per-session todo isolation means no cross-contamination.
-      // The sidebar reads sync.data.todo[member.sessionID] to display each teammate's progress.
-    ]
-
-    // Plan approval: deny write tools until the lead approves.
-    // Uses a tagged pattern so only these rules are removed on approval.
-    if (params.require_plan_approval) {
-      permissionRules.push(
-        ...WRITE_TOOLS.map((tool) => ({ permission: tool, pattern: "*:plan-approval", action: "deny" as const })),
-      )
-    }
-
-    // Create a child session for the teammate.
-    // Uses createNext directly to set the teammate flag, which is intentionally
-    // excluded from the public Session.create schema (HTTP API surface).
-    const session = await Session.createNext({
-      parentID: ctx.sessionID,
-      teammate: true,
-      directory: Instance.directory,
-      title: `${params.name} (@${agentName} teammate, ${modelLabel})${params.require_plan_approval ? " [plan mode]" : ""}`,
-      permission: permissionRules,
-    })
-
-    // Register as team member
-    await Team.addMember(teamName, {
+    const spawned = await Team.spawnMember({
+      teamName,
       name: params.name,
-      sessionID: session.id,
-      agent: agentName,
-      status: "active",
-      prompt: params.prompt,
-      model: modelLabel,
-      planApproval: params.require_plan_approval ? "pending" : "none",
-    })
-
-    // Auto-claim a task if requested
-    if (params.claim_task) {
-      await TeamTasks.claim(teamName, params.claim_task, params.name).catch(() => {})
-    }
-
-    // Build the teammate's system context
-    const planModeInstructions = params.require_plan_approval
-      ? [
-          "",
-          "IMPORTANT: You are in PLAN MODE (read-only). You can read files, search, and explore,",
-          "but you CANNOT write, edit, or run bash commands until the lead approves your plan.",
-          "",
-          "Your workflow:",
-          "1. Research and explore the codebase to understand the problem",
-          "2. Formulate a detailed implementation plan",
-          "3. Send your plan to the lead using team_message (to: 'lead')",
-          "4. Wait for the lead to approve your plan (you'll receive a message when approved)",
-          "5. Once approved, your write permissions will be unlocked and you can implement",
-          "",
-        ]
-      : []
-
-    const skillContext = agent.skills?.length
-      ? [
-          "",
-          `Preloaded skills: ${agent.skills.join(", ")}`,
-          "These skills are already loaded into your context — you do not need to invoke the skill tool for them.",
-          "",
-        ]
-      : []
-
-    const teamContext = [
-      `You are "${params.name}", a teammate in team "${teamName}".`,
-      `Your agent type is "${agentName}", using model ${modelLabel}.`,
-      "",
-      "Team tools available to you:",
-      "- team_message: send a message to the lead or another teammate",
-      "- team_broadcast: send a message to all teammates",
-      "- team_tasks: view/add/complete tasks on the shared task list",
-      "- team_claim: claim a pending task from the shared task list",
-      "",
-      "You do NOT have access to team_create, team_spawn, team_shutdown, or team_cleanup.",
-      "Only the team lead can manage the team structure.",
-      ...skillContext,
-      ...planModeInstructions,
-      "When you finish a task, mark it done with team_tasks and send a summary to the lead with team_message.",
-      "You can message any teammate by name — not just the lead. Coordinate directly with peers when useful.",
-      "",
-      "SUBAGENT RELAY: If you use the task tool to spawn subagents, they CANNOT communicate with the team.",
-      "You are responsible for relaying any relevant findings from subagents via team_message or team_broadcast.",
-      "",
-      "IMPORTANT: Your plain text output is NOT visible to the team lead or other teammates.",
-      "You MUST use team_message or team_broadcast to communicate. Just typing a response is not enough.",
-      "",
-      "Your instructions:",
-      params.prompt,
-    ].join("\n")
-
-    const msgId = Identifier.ascending("message")
-    await Session.updateMessage({
-      id: msgId,
-      sessionID: session.id,
-      role: "user",
-      agent: agentName,
+      parentSessionID: ctx.sessionID,
+      agent,
       model,
-      time: { created: Date.now() },
+      prompt: params.prompt,
+      claimTask: params.claim_task,
+      planApproval: !!params.require_plan_approval,
     })
-    await Session.updatePart({
-      id: Identifier.ascending("part"),
-      messageID: msgId,
-      sessionID: session.id,
-      type: "text",
-      text: teamContext,
-    })
-
-    // Fire off the teammate's prompt loop in the background (non-blocking).
-    // The lead stays interactive and receives messages via auto-wake.
-    log.info("spawning teammate", { teamName, name: params.name, sessionID: session.id })
-    const notifyLead = async (status: "finished" | "errored", error?: string) => {
-      try {
-        // Only transition to idle if the member isn't already shutdown.
-        // A shutdown request sets status to "shutdown" before the loop finishes —
-        // overwriting it with "idle" would break auto-cleanup.
-        const team = await Team.get(teamName)
-        const member = team?.members.find((m) => m.name === params.name)
-        if (member?.status === "shutdown") return
-
-        await Team.setMemberStatus(teamName, params.name, "idle")
-        // Send an idle notification to the lead — this injects a message
-        // into the lead's session and triggers auto-wake if idle.
-        await TeamMessaging.send({
-          teamName,
-          from: params.name,
-          to: "lead",
-          text:
-            status === "finished"
-              ? `I have finished my current work and am now idle. Review my session (${session.id}) for detailed results. You can use team_shutdown to shut me down if no more work is needed.`
-              : `I encountered an error and stopped: ${error ?? "unknown error"}. Review my session (${session.id}). You can use team_shutdown to shut me down, or send me a message to retry.`,
-        })
-      } catch (notifyErr: unknown) {
-        log.warn("failed to notify lead of teammate completion", {
-          teamName,
-          name: params.name,
-          error: notifyErr instanceof Error ? notifyErr.message : String(notifyErr),
-        })
-      }
-    }
-
-    SessionPrompt.loop({ sessionID: session.id })
-      .then(() => {
-        log.info("teammate loop finished", { teamName, name: params.name })
-        notifyLead("finished")
-      })
-      .catch((err) => {
-        log.warn("teammate loop error", { teamName, name: params.name, error: err.message })
-        notifyLead("errored", err.message)
-      })
 
     return {
       title: `Spawned teammate: ${params.name}`,
       output: [
-        `Teammate "${params.name}" spawned with agent "${agentName}" using model ${modelLabel}.`,
-        `Session ID: ${session.id}`,
+        `Teammate "${params.name}" spawned with agent "${agentName}" using model ${spawned.label}.`,
+        `Session ID: ${spawned.sessionID}`,
         params.claim_task ? `Auto-claimed task: ${params.claim_task}` : "",
         params.require_plan_approval
           ? "Plan approval REQUIRED: teammate is in read-only mode until you approve their plan with team_approve_plan."
@@ -401,8 +246,8 @@ export const TeamSpawnTool = Tool.define("team_spawn", {
       metadata: {
         teamName,
         memberName: params.name,
-        sessionID: session.id,
-        model: modelLabel,
+        sessionID: spawned.sessionID,
+        model: spawned.label,
         planApproval: params.require_plan_approval,
       },
     }
@@ -752,7 +597,7 @@ export const TeamShutdownTool = Tool.define("team_shutdown", {
       memberName: params.name,
     })
 
-    // Mark as shutdown — the teammate's loop will finish naturally after processing
+    // Mark as shutdown — teammate loop will finish naturally after processing.
     await Team.setMemberStatus(teamInfo.team.name, params.name, "shutdown")
 
     return {

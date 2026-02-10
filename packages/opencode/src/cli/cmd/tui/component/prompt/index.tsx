@@ -79,8 +79,7 @@ export function Prompt(props: PromptProps) {
     if (!team || team.role !== "lead") return 0
     return team.members.filter((m) => {
       if (m.status === "shutdown") return false
-      const s = sync.data.session_status?.[m.sessionID]
-      return s?.type === "busy"
+      return ["starting", "running", "cancel_requested", "cancelling", "completing"].includes(m.execution_status)
     }).length
   })
   const history = usePromptHistory()
@@ -234,8 +233,9 @@ export function Prompt(props: PromptProps) {
             const team = sync.data.team?.[props.sessionID]
             if (team?.members) {
               for (const m of team.members) {
-                const s = sync.data.session_status?.[m.sessionID]
-                if (s?.type === "busy") {
+                if (
+                  ["starting", "running", "cancel_requested", "cancelling", "completing"].includes(m.execution_status)
+                ) {
                   sdk.client.session.abort({ sessionID: m.sessionID }).catch(() => {})
                 }
               }
