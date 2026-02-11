@@ -361,7 +361,58 @@ export namespace Team {
       const member = team.members.find((m) => m.sessionID === sessionID)
       if (member) return { team, role: "member", memberName: member.name }
     }
+
+    // Fallback: lead rebind. If the caller is a non-teammate root session and
+    // there's a team whose original lead session no longer exists, rebind the
+    // lead to this session. This handles the case where the user starts a new
+    // session after the original lead session was deleted, or the sidecar creates
+    // a new session for a resumed invocation.
+    // Conditions: exactly one team (unambiguous), original lead session is gone,
+    // caller is a root non-teammate session.
+    if (teams.length === 1) {
+      try {
+        const { Session } = await import("../session")
+        const session = await Session.get(sessionID)
+        if (session && !session.parentID && !session.teammate) {
+          const team = teams[0]
+          const leadExists = await Session.get(team.leadSessionID).catch(() => undefined)
+          if (!leadExists) {
+            log.info("rebinding lead — original lead session is gone", {
+              teamName: team.name,
+              oldLead: team.leadSessionID,
+              newLead: sessionID,
+            })
+            await rebindLead(team.name, sessionID, "findBySession: original lead session gone")
+            return { team: { ...team, leadSessionID: sessionID }, role: "lead" }
+          }
+        }
+      } catch {
+        // Session module may not be loaded — safe to ignore
+      }
+    }
+
     return undefined
+  }
+
+  /**
+   * Rebind a team's lead session to a new session ID.
+   * Used when the original lead session is no longer available (e.g. after
+   * a restart where the user starts a new session instead of continuing the old one).
+   */
+  export async function rebindLead(teamName: string, newSessionID: string, reason?: string): Promise<void> {
+    try {
+      await Storage.update<TeamInfo>(configKey(teamName), (draft) => {
+        log.info("rebinding lead session", {
+          teamName,
+          oldSessionID: draft.leadSessionID,
+          newSessionID,
+          reason: reason ?? "unspecified",
+        })
+        draft.leadSessionID = newSessionID
+      })
+    } catch {
+      // Team not found — ignore
+    }
   }
 
   /**

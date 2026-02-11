@@ -536,6 +536,118 @@ describe("Edge case: findBySession with overlapping membership", () => {
   })
 })
 
+// ---------- Lead Rebind Guards ----------
+
+describe("Edge case: lead rebind guards", () => {
+  test("no rebind when multiple teams exist — avoids ambiguous leadership claim", async () => {
+    await using tmp = await tmpdir({ git: true })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const leadA = await Session.create({})
+        const leadB = await Session.create({})
+        const outsider = await Session.create({})
+
+        await Team.create({ name: "multi-a", leadSessionID: leadA.id })
+        await Team.create({ name: "multi-b", leadSessionID: leadB.id })
+
+        // outsider is a root session not associated with any team.
+        // With 2 teams in the project, findBySession must NOT rebind.
+        const result = await Team.findBySession(outsider.id)
+        expect(result).toBeUndefined()
+
+        // Clean up
+        await Team.cleanup("multi-a")
+        await Team.cleanup("multi-b")
+      },
+    })
+  })
+
+  test("no rebind when original lead session still exists", async () => {
+    await using tmp = await tmpdir({ git: true })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const lead = await Session.create({})
+        const outsider = await Session.create({})
+
+        await Team.create({ name: "guard-team", leadSessionID: lead.id })
+
+        // Even with 1 team, findBySession should NOT rebind because
+        // the original lead session still exists on disk.
+        const result = await Team.findBySession(outsider.id)
+        expect(result).toBeUndefined()
+
+        // Original lead still works
+        const leadResult = await Team.findBySession(lead.id)
+        expect(leadResult).toBeDefined()
+        expect(leadResult!.role).toBe("lead")
+
+        await Team.cleanup("guard-team")
+      },
+    })
+  })
+
+  test("rebind succeeds when original lead session is deleted", async () => {
+    await using tmp = await tmpdir({ git: true })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const lead = await Session.create({})
+        const replacement = await Session.create({})
+
+        await Team.create({ name: "rebind-team", leadSessionID: lead.id })
+
+        // Delete the original lead session
+        await Session.remove(lead.id)
+
+        // Now findBySession should rebind to the replacement
+        const result = await Team.findBySession(replacement.id)
+        expect(result).toBeDefined()
+        expect(result!.role).toBe("lead")
+        expect(result!.team.leadSessionID).toBe(replacement.id)
+
+        // Verify Storage was updated
+        const team = await Team.get("rebind-team")
+        expect(team!.leadSessionID).toBe(replacement.id)
+
+        await Team.cleanup("rebind-team")
+      },
+    })
+  })
+
+  test("no rebind for teammate sessions — only root sessions can claim leadership", async () => {
+    await using tmp = await tmpdir({ git: true })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const lead = await Session.create({})
+        // Simulate a teammate session (has parentID)
+        const child = await Session.create({ parentID: lead.id })
+
+        await Team.create({ name: "child-team", leadSessionID: lead.id })
+
+        // Delete the original lead session
+        await Session.remove(lead.id)
+
+        // Child session should NOT be able to claim leadership
+        const result = await Team.findBySession(child.id)
+        expect(result).toBeUndefined()
+
+        // Clean up manually since we can't use cleanup (no lead)
+        const { Storage } = await import("../../src/storage/storage")
+        const { Instance: Inst } = await import("../../src/project/instance")
+        await Storage.remove(["team", Inst.project.id, "child-team"]).catch(() => {})
+        await Storage.remove(["team_tasks", Inst.project.id, "child-team"]).catch(() => {})
+      },
+    })
+  })
+})
+
 // ---------- Member Re-addition ----------
 
 describe("Edge case: re-adding a member with same name", () => {
