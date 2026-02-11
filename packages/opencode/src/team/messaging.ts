@@ -242,11 +242,18 @@ export namespace TeamMessaging {
     try {
       const status = SessionStatus.get(sessionID)
       if (status.type !== "idle") return
+      const info = await Team.findBySession(sessionID)
+      // Never auto-wake the lead. The lead session is driven by the human —
+      // messages are already injected into the session and will be visible
+      // on the next human-initiated prompt. Auto-waking the lead causes it
+      // to resume without the human's intent, especially after escape/cancel
+      // where teammate cancellation notifications would immediately restart
+      // the lead's loop.
+      if (info?.role === "lead") return
       // Don't wake a teammate that's fully shut down.
       // We DO wake for shutdown_requested — the teammate needs to process
       // the shutdown message and wrap up. The .then() handler below
       // transitions shutdown_requested → shutdown when the loop ends.
-      const info = await Team.findBySession(sessionID)
       if (info && info.role === "member") {
         const member = info.team.members.find((m) => m.name === info.memberName)
         if (member?.status === "shutdown") return
