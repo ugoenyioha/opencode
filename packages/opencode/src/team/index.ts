@@ -572,6 +572,7 @@ export namespace Team {
       "- team_broadcast: send a message to all teammates",
       "- team_tasks: view/add/complete tasks on the shared task list",
       "- team_claim: claim a pending task from the shared task list",
+      "- team_status: get a snapshot of the full team state (members, tasks, unread messages)",
       "",
       "You do NOT have access to team_create, team_spawn, team_shutdown, or team_cleanup.",
       "Only the team lead can manage the team structure.",

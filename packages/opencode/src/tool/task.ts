@@ -23,6 +23,7 @@ const TEAM_TOOLS = [
   "team_approve_plan",
   "team_shutdown",
   "team_cleanup",
+  "team_status",
 ] as const
 
 const parameters = z.object({

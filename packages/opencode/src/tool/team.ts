@@ -2,6 +2,7 @@ import z from "zod"
 import { Tool } from "./tool"
 import { Team, TeamTasks, WRITE_TOOLS, type TeamTask } from "../team"
 import { TeamMessaging } from "../team/messaging"
+import { Inbox } from "../team/inbox"
 import { Session } from "../session"
 import { Agent } from "../agent/agent"
 import { Provider } from "../provider/provider"
@@ -92,8 +93,10 @@ export const TeamCreateTool = Tool.define("team_create", {
         "- Use team_spawn to add teammates",
         "- Use team_tasks to manage the shared task list",
         "- Use team_message to communicate with teammates",
+        "- Use team_status to get a comprehensive snapshot (members, tasks, unread messages) in one call",
         "",
         "Lifecycle:",
+        "- Use team_status to check progress — it shows member states, task completion, and unread messages",
         "- When teammates finish, use team_shutdown to shut them down",
         "- Once all teammates are shut down, use team_cleanup to remove team resources",
         "- If all teammates shut down on their own (idle→shutdown), cleanup happens automatically",
@@ -691,6 +694,121 @@ export const TeamCleanupTool = Tool.define("team_cleanup", {
         output: `Failed to clean up team: ${msg}`,
         metadata: {},
       }
+    }
+  },
+})
+
+/**
+ * Get a comprehensive team status snapshot — members, tasks, and unread messages.
+ * Designed to replace the pattern of calling team_tasks + checking each member individually.
+ */
+export const TeamStatusTool = Tool.define("team_status", {
+  description:
+    "Get a comprehensive snapshot of the team's current state: all members (status, model, execution state), " +
+    "task summary (counts by status, in-progress assignments), and unread messages in your inbox. " +
+    "Use this instead of manually polling team_tasks and checking each member.",
+  parameters: z.object({}),
+  async execute(_params, ctx): Promise<{ title: string; output: string; metadata: Record<string, any> }> {
+    const teamInfo = await Team.findBySession(ctx.sessionID)
+    if (!teamInfo) {
+      return { title: "Error", output: "You are not part of any team.", metadata: {} }
+    }
+    const teamName = teamInfo.team.name
+    const team = await Team.get(teamName)
+    if (!team) {
+      return { title: "Error", output: `Team "${teamName}" not found.`, metadata: {} }
+    }
+
+    const lines: string[] = []
+
+    // --- Members ---
+    lines.push(`## Team: ${teamName}`)
+    lines.push(`Members: ${team.members.length}`)
+    lines.push("")
+    for (const m of team.members) {
+      const exec = m.execution_status && m.execution_status !== "idle" ? ` [${m.execution_status}]` : ""
+      const model = m.model ? ` (${m.model})` : ""
+      const plan = m.planApproval && m.planApproval !== "none" ? ` plan:${m.planApproval}` : ""
+      lines.push(`- ${m.name}: ${m.status}${exec}${model}${plan}`)
+    }
+
+    // --- Tasks ---
+    const tasks = await TeamTasks.list(teamName)
+    if (tasks.length > 0) {
+      const counts: Record<string, number> = {}
+      for (const t of tasks) {
+        counts[t.status] = (counts[t.status] ?? 0) + 1
+      }
+      lines.push("")
+      lines.push(`## Tasks (${tasks.length})`)
+      lines.push(
+        Object.entries(counts)
+          .map(([s, n]) => `${s}: ${n}`)
+          .join(", "),
+      )
+
+      const active = tasks.filter((t) => t.status === "in_progress")
+      if (active.length > 0) {
+        lines.push("")
+        lines.push("In progress:")
+        for (const t of active) {
+          lines.push(`- [${t.id}] ${t.content} → ${t.assignee ?? "unassigned"}`)
+        }
+      }
+
+      const pending = tasks.filter((t) => t.status === "pending")
+      if (pending.length > 0) {
+        lines.push("")
+        lines.push("Pending:")
+        for (const t of pending) {
+          lines.push(`- [${t.id}] ${t.content} (${t.priority})`)
+        }
+      }
+    } else {
+      lines.push("")
+      lines.push("## Tasks: none")
+    }
+
+    // --- Unread messages for the caller ---
+    const callerName = teamInfo.role === "lead" ? "lead" : teamInfo.memberName!
+    const unread = await Inbox.unread(teamName, callerName).catch(() => [] as any[])
+    if (unread.length > 0) {
+      lines.push("")
+      lines.push(`## Unread messages: ${unread.length}`)
+      // Show up to 10 most recent, newest first
+      const recent = unread.slice(-10).reverse()
+      for (const msg of recent) {
+        const preview = msg.text.length > 120 ? msg.text.slice(0, 120) + "..." : msg.text
+        lines.push(`- [${msg.from}]: ${preview}`)
+      }
+      if (unread.length > 10) lines.push(`  ... and ${unread.length - 10} more`)
+    } else {
+      lines.push("")
+      lines.push("## Unread messages: 0")
+    }
+
+    // --- Summary line for quick parsing ---
+    const shutdown = team.members.filter((m) => m.status === "shutdown").length
+    const active = team.members.filter((m) => m.status !== "shutdown").length
+    const completed = tasks.filter((t) => t.status === "completed").length
+
+    lines.push("")
+    lines.push(
+      `Summary: ${active} active, ${shutdown} shutdown, ${completed}/${tasks.length} tasks completed, ${unread.length} unread`,
+    )
+
+    return {
+      title: `Team status: ${teamName}`,
+      output: lines.join("\n"),
+      metadata: {
+        teamName,
+        members: team.members.length,
+        active,
+        shutdown,
+        tasksTotal: tasks.length,
+        tasksCompleted: completed,
+        unread: unread.length,
+      },
     }
   },
 })

@@ -39,6 +39,7 @@ import {
   TeamApprovePlanTool,
   TeamShutdownTool,
   TeamCleanupTool,
+  TeamStatusTool,
 } from "./team"
 
 export namespace ToolRegistry {
@@ -153,6 +154,7 @@ export namespace ToolRegistry {
             TeamApprovePlanTool,
             TeamShutdownTool,
             TeamCleanupTool,
+            TeamStatusTool,
           ]
         : []),
       ...custom,
