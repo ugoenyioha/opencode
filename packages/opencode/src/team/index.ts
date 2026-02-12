@@ -734,8 +734,36 @@ export namespace Team {
    * (e.g. restoring lead session permissions).
    */
   export async function cleanup(teamName: string): Promise<void> {
-    const team = await get(teamName)
+    let team = await get(teamName)
     if (!team) throw new Error(`Team "${teamName}" not found`)
+
+    // Wait briefly for shutdown_requested members to transition to shutdown.
+    // The auto-wake .then() handler does this transition when the loop ends,
+    // but there's a race window between the lead calling cleanup and the
+    // async transition completing.
+    const pending = team.members.filter((m) => m.status === "shutdown_requested")
+    if (pending.length > 0) {
+      for (let attempt = 0; attempt < 5; attempt++) {
+        await Bun.sleep(200)
+        team = await get(teamName)
+        if (!team) throw new Error(`Team "${teamName}" not found`)
+        if (team.members.every((m) => m.status === "shutdown")) break
+      }
+      // Force-transition any still-pending members — their loop likely already
+      // ended but the async .then() handler lost the race.
+      for (const member of team.members) {
+        if (member.status === "shutdown_requested") {
+          log.info("force-transitioning shutdown_requested member during cleanup", {
+            teamName,
+            memberName: member.name,
+          })
+          await transitionMemberStatus(teamName, member.name, "shutdown", { force: true })
+        }
+      }
+      // Re-read after force transitions
+      team = await get(teamName)
+      if (!team) throw new Error(`Team "${teamName}" not found`)
+    }
 
     const alive = team.members.filter((m) => m.status !== "shutdown")
     if (alive.length > 0) {

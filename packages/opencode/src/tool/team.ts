@@ -586,6 +586,13 @@ export const TeamShutdownTool = Tool.define("team_shutdown", {
         metadata: {},
       }
     }
+    if (member.status === "shutdown_requested") {
+      return {
+        title: "Shutdown already requested",
+        output: `Teammate "${params.name}" is already shutting down (status: shutdown_requested). The transition to shutdown will complete when their current prompt loop ends. You can proceed with team_cleanup — it will wait briefly for pending shutdowns.`,
+        metadata: {},
+      }
+    }
 
     const reason = params.reason ?? "The lead has requested you shut down."
 
