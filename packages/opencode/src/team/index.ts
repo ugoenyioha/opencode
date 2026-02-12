@@ -263,6 +263,24 @@ export namespace Team {
     }
     if (!changed) return false
     await Bus.publish(TeamEvent.MemberStatusChanged, { teamName, memberName, status })
+
+    // When a member shuts down, auto-complete any in_progress tasks assigned
+    // to them. LLMs frequently forget to call team_tasks complete before
+    // shutting down, leaving the task board stale.
+    if (status === "shutdown") {
+      try {
+        const tasks = await TeamTasks.list(teamName)
+        for (const task of tasks) {
+          if (task.status === "in_progress" && task.assignee === memberName) {
+            await TeamTasks.complete(teamName, task.id)
+            log.info("auto-completed task on member shutdown", { teamName, memberName, taskId: task.id })
+          }
+        }
+      } catch {
+        // Task auto-completion is best-effort — don't fail the transition
+      }
+    }
+
     return true
   }
 

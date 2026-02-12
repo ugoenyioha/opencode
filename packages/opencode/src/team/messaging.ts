@@ -150,9 +150,12 @@ export namespace TeamMessaging {
     const read = await Inbox.markRead(teamName, agentName)
     if (read.length === 0) return 0
 
-    // Group by sender for batched receipts
+    // Group by sender for batched receipts.
+    // Skip messages that are themselves receipts — sending a receipt for a
+    // receipt creates an infinite feedback loop in multi-agent scenarios.
     const bySender = new Map<string, number>()
     for (const msg of read) {
+      if (msg.text.startsWith("[receipt]")) continue
       bySender.set(msg.from, (bySender.get(msg.from) ?? 0) + 1)
     }
 
