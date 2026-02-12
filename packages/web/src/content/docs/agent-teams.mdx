@@ -15,13 +15,13 @@ Agent teams are an **experimental** feature. Enable them with the `OPENCODE_EXPE
 
 ## When to use teams vs subagents
 
-| | Subagents | Agent Teams |
-|---|-----------|-------------|
-| **Parallelism** | Sequential (one at a time) | Parallel (multiple simultaneous) |
-| **Context** | Shares parent context | Independent context windows |
-| **Communication** | Returns result to parent | Bidirectional messaging |
-| **Coordination** | Parent manages | Shared task list + messaging |
-| **Best for** | Focused single tasks | Complex multi-part work |
+|                   | Subagents                  | Agent Teams                      |
+| ----------------- | -------------------------- | -------------------------------- |
+| **Parallelism**   | Sequential (one at a time) | Parallel (multiple simultaneous) |
+| **Context**       | Shares parent context      | Independent context windows      |
+| **Communication** | Returns result to parent   | Bidirectional messaging          |
+| **Coordination**  | Parent manages             | Shared task list + messaging     |
+| **Best for**      | Focused single tasks       | Complex multi-part work          |
 
 Use teams when you need multiple agents working simultaneously on different parts of a problem. Use subagents for focused, sequential subtasks.
 
@@ -73,6 +73,7 @@ Lead Agent (your session)
 ```
 
 **Key concepts:**
+
 - The **lead** is your current session. It creates the team and coordinates work.
 - **Teammates** are spawned as independent sessions, each with their own agent, model, and context.
 - A **shared task list** tracks work items with statuses, priorities, and dependencies.
@@ -130,6 +131,7 @@ Teams share a task list that all members can access. Tasks support:
 3. A teammate claims a task with `team_claim(task_id: "1")`
 4. When done, they complete it with `team_tasks(action: "complete", task_id: "1")`
 5. Dependent tasks are automatically unblocked
+6. The lead checks progress with `team_status` instead of manual polling
 
 ---
 
@@ -178,35 +180,68 @@ This adds a review step before teammates make changes.
 
 ### Lead-only tools
 
-| Tool | Description |
-|------|-------------|
-| `team_create` | Create a new team. Parameters: `name`, `tasks[]`, `delegate` |
-| `team_spawn` | Spawn a teammate. Parameters: `name`, `agent`, `model`, `prompt`, `claim_task`, `require_plan_approval` |
-| `team_approve_plan` | Approve/reject a teammate's plan. Parameters: `name`, `approved`, `feedback` |
-| `team_shutdown` | Request a teammate to shut down. Parameters: `name`, `reason` |
-| `team_cleanup` | Remove team resources. All members must be shut down first. |
+| Tool                | Description                                                                                             |
+| ------------------- | ------------------------------------------------------------------------------------------------------- |
+| `team_create`       | Create a new team. Parameters: `name`, `tasks[]`, `delegate`                                            |
+| `team_spawn`        | Spawn a teammate. Parameters: `name`, `agent`, `model`, `prompt`, `claim_task`, `require_plan_approval` |
+| `team_approve_plan` | Approve/reject a teammate's plan. Parameters: `name`, `approved`, `feedback`                            |
+| `team_shutdown`     | Request a teammate to shut down. Parameters: `name`, `reason`                                           |
+| `team_cleanup`      | Remove team resources. All members must be shut down first.                                             |
 
 ### Available to all team members
 
-| Tool | Description |
-|------|-------------|
-| `team_message` | Send a message to a specific teammate or "lead" |
-| `team_broadcast` | Send a message to all teammates |
-| `team_tasks` | View/update the shared task list (actions: list, add, complete, update) |
-| `team_claim` | Atomically claim a pending task |
+| Tool             | Description                                                             |
+| ---------------- | ----------------------------------------------------------------------- |
+| `team_message`   | Send a message to a specific teammate or "lead"                         |
+| `team_broadcast` | Send a message to all teammates                                         |
+| `team_tasks`     | View/update the shared task list (actions: list, add, complete, update) |
+| `team_claim`     | Atomically claim a pending task                                         |
+| `team_status`    | Get a full snapshot of members, tasks, and unread messages              |
+
+---
+
+## Team events
+
+OpenCode emits team bus events that plugins can subscribe to.
+
+- `team.teammate.idle`
+  - `teamName`: team identifier
+  - `memberName`: teammate that became idle
+  - `reason`: `completed` or `cancelled`
+- `team.task.completed`
+  - `teamName`: team identifier
+  - `task`: completed task payload
+
+### Plugin example
+
+```js title=".opencode/plugins/team-task-notify.js"
+export const TeamTaskNotifyPlugin = async ({ $ }) => {
+  return {
+    event: async ({ event }) => {
+      if (event.type === "team.task.completed") {
+        const task = event.properties.task?.content || "Task completed"
+        await $`osascript -e 'display notification "${task}" with title "opencode team"'`
+      }
+    },
+  }
+}
+```
+
+This sends a local macOS notification whenever a teammate completes a task.
 
 ---
 
 ## TUI keybinds
 
-| Keybind | Action |
-|---------|--------|
-| `<leader>w` | Open team status dialog |
-| `<leader>j` | Navigate to next teammate session |
+| Keybind     | Action                                |
+| ----------- | ------------------------------------- |
+| `<leader>w` | Open team status dialog               |
+| `<leader>j` | Navigate to next teammate session     |
 | `<leader>k` | Navigate to previous teammate session |
-| `<leader>d` | Toggle delegate mode |
+| `<leader>d` | Toggle delegate mode                  |
 
 The team dialog (`<leader>w`) shows:
+
 - All teammates with their status (active, idle, shutdown)
 - The shared task list with statuses and assignments
 - Press `Enter` on a teammate to jump to their session
@@ -216,13 +251,13 @@ The team dialog (`<leader>w`) shows:
 
 ## API reference
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/team` | List all teams |
-| `GET` | `/team/:name` | Get team by name |
-| `GET` | `/team/:name/tasks` | Get task list for a team |
-| `GET` | `/team/by-session/:sessionID` | Find team info by session |
-| `POST` | `/team/:name/delegate` | Toggle delegate mode |
+| Method | Path                          | Description               |
+| ------ | ----------------------------- | ------------------------- |
+| `GET`  | `/team`                       | List all teams            |
+| `GET`  | `/team/:name`                 | Get team by name          |
+| `GET`  | `/team/:name/tasks`           | Get task list for a team  |
+| `GET`  | `/team/by-session/:sessionID` | Find team info by session |
+| `POST` | `/team/:name/delegate`        | Toggle delegate mode      |
 
 ---
 
@@ -232,7 +267,7 @@ The team dialog (`<leader>w`) shows:
 - **Use plan approval for risky changes.** Require plan approval for teammates modifying critical code.
 - **Prefer direct messages over broadcasts.** Broadcasts are expensive — each one sends N separate messages.
 - **Let teammates coordinate directly.** Teammates can message each other by name, reducing the lead's overhead.
-- **Monitor via the team dialog.** Use `<leader>w` to check team status without interrupting agents.
+- **Check progress with `team_status`.** Use `team_status` (and `<leader>w` in TUI) instead of manual polling.
 - **Shut down gracefully.** Use `team_shutdown` for each teammate before `team_cleanup`.
 
 ---
