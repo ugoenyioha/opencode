@@ -25,8 +25,7 @@ import { Auth } from "@/auth"
 
 export namespace LLM {
   const log = Log.create({ service: "llm" })
-
-  export const OUTPUT_TOKEN_MAX = Flag.OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX || 32_000
+  export const OUTPUT_TOKEN_MAX = ProviderTransform.OUTPUT_TOKEN_MAX
 
   export type StreamInput = {
     user: MessageV2.User
@@ -39,8 +38,7 @@ export namespace LLM {
     small?: boolean
     tools: Record<string, Tool>
     retries?: number
-    sessionPermission?: PermissionNext.Ruleset
-    teammate?: boolean
+    toolChoice?: "auto" | "required" | "none"
   }
 
   export type StreamOutput = StreamTextResult<ToolSet, unknown>
@@ -69,23 +67,9 @@ export namespace LLM {
     const system = []
     system.push(
       [
-        // Teammate sessions always get the full provider prompt for their model,
-        // plus any agent-specific prompt (additive, matching Claude Code behavior).
-        // For non-teammates: agent prompt replaces provider prompt when present.
-        // For Codex non-teammates: provider prompt is sent via options.instructions instead.
-        ...(input.teammate
-          ? [
-              // Provider prompt for the teammate's model; fall back to instructions if empty
-              ...(SystemPrompt.provider(input.model).length
-                ? SystemPrompt.provider(input.model)
-                : [SystemPrompt.instructions()]),
-              ...(input.agent.prompt ? [input.agent.prompt] : []),
-            ]
-          : input.agent.prompt
-            ? [input.agent.prompt]
-            : isCodex
-              ? []
-              : SystemPrompt.provider(input.model)),
+        // use agent prompt otherwise provider prompt
+        // For Codex sessions, skip SystemPrompt.provider() since it's sent via options.instructions
+        ...(input.agent.prompt ? [input.agent.prompt] : isCodex ? [] : SystemPrompt.provider(input.model)),
         // any custom prompt passed into this call
         ...input.system,
         // any custom prompt from last user message
@@ -128,9 +112,6 @@ export namespace LLM {
       mergeDeep(variant),
     )
     if (isCodex) {
-      // The Codex/Responses API requires the instructions field.
-      // For teammates the provider prompt is also in the system messages
-      // (additive prompting), but instructions must still be present.
       options.instructions = SystemPrompt.instructions()
     }
 
@@ -168,14 +149,7 @@ export namespace LLM {
     )
 
     const maxOutputTokens =
-      isCodex || provider.id.includes("github-copilot")
-        ? undefined
-        : ProviderTransform.maxOutputTokens(
-            input.model.api.npm,
-            params.options,
-            input.model.limit.output,
-            OUTPUT_TOKEN_MAX,
-          )
+      isCodex || provider.id.includes("github-copilot") ? undefined : ProviderTransform.maxOutputTokens(input.model)
 
     const tools = await resolveTools(input)
 
@@ -232,6 +206,7 @@ export namespace LLM {
       providerOptions: ProviderTransform.providerOptions(input.model, params.options),
       activeTools: Object.keys(tools).filter((x) => x !== "invalid"),
       tools,
+      toolChoice: input.toolChoice,
       maxOutputTokens,
       abortSignal: input.abort,
       headers: {
@@ -284,11 +259,8 @@ export namespace LLM {
     })
   }
 
-  async function resolveTools(input: Pick<StreamInput, "tools" | "agent" | "user" | "sessionPermission">) {
-    const ruleset = input.sessionPermission
-      ? PermissionNext.merge(input.agent.permission, input.sessionPermission)
-      : input.agent.permission
-    const disabled = PermissionNext.disabled(Object.keys(input.tools), ruleset)
+  async function resolveTools(input: Pick<StreamInput, "tools" | "agent" | "user">) {
+    const disabled = PermissionNext.disabled(Object.keys(input.tools), input.agent.permission)
     for (const tool of Object.keys(input.tools)) {
       if (input.user.tools?.[tool] === false || disabled.has(tool)) {
         delete input.tools[tool]

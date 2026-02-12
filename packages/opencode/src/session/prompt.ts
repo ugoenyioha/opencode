@@ -50,11 +50,18 @@ import { Truncate } from "@/tool/truncation"
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
 
+const STRUCTURED_OUTPUT_DESCRIPTION = `Use this tool to return your final response in the requested structured format.
+
+IMPORTANT:
+- You MUST call this tool exactly once at the end of your response
+- The input must be valid JSON matching the required schema
+- Complete all necessary research and tool calls BEFORE calling this tool
+- This tool provides your final answer - no further actions are taken after calling it`
+
+const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested structured output. You MUST use the StructuredOutput tool to provide your final response. Do NOT respond with plain text - you MUST call the StructuredOutput tool with your answer formatted according to the schema.`
+
 export namespace SessionPrompt {
   const log = Log.create({ service: "session.prompt" })
-  export const OUTPUT_TOKEN_MAX = Flag.OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX || 32_000
-
-  export type LoopResult = { reason: "completed"; message: MessageV2.WithParts } | { reason: "cancelled" }
 
   const state = Instance.state(
     () => {
@@ -63,7 +70,7 @@ export namespace SessionPrompt {
         {
           abort: AbortController
           callbacks: {
-            resolve(input: LoopResult): void
+            resolve(input: MessageV2.WithParts): void
             reject(reason?: any): void
           }[]
         }
@@ -99,6 +106,7 @@ export namespace SessionPrompt {
       .describe(
         "@deprecated tools and permissions have been merged, you can set permissions on the session itself now",
       ),
+    format: MessageV2.Format.optional(),
     system: z.string().optional(),
     variant: z.string().optional(),
     parts: z.array(
@@ -148,7 +156,7 @@ export namespace SessionPrompt {
   })
   export type PromptInput = z.infer<typeof PromptInput>
 
-  const promptFn = fn(PromptInput, async (input): Promise<MessageV2.WithParts | LoopResult> => {
+  export const prompt = fn(PromptInput, async (input) => {
     const session = await Session.get(input.sessionID)
     await SessionRevert.cleanup(session)
 
@@ -178,16 +186,6 @@ export namespace SessionPrompt {
 
     return loop({ sessionID: input.sessionID })
   })
-
-  export type PromptNoReplyInput = PromptInput & { noReply: true }
-  export type PromptReplyInput = PromptInput & { noReply?: false | undefined }
-
-  export function prompt(input: PromptNoReplyInput): Promise<MessageV2.WithParts>
-  export function prompt(input: PromptReplyInput): Promise<LoopResult>
-  export function prompt(input: PromptInput): Promise<MessageV2.WithParts | LoopResult>
-  export function prompt(input: PromptInput): Promise<MessageV2.WithParts | LoopResult> {
-    return promptFn(input)
-  }
 
   export async function resolvePromptParts(template: string): Promise<PromptInput["parts"]> {
     const parts: PromptInput["parts"] = [
@@ -266,10 +264,6 @@ export namespace SessionPrompt {
       SessionStatus.set(sessionID, { type: "idle" })
       return
     }
-    for (const callback of match.callbacks) {
-      callback.resolve({ reason: "cancelled" })
-    }
-    match.callbacks.length = 0
     match.abort.abort()
     delete s[sessionID]
     SessionStatus.set(sessionID, { type: "idle" })
@@ -280,18 +274,23 @@ export namespace SessionPrompt {
     sessionID: Identifier.schema("session"),
     resume_existing: z.boolean().optional(),
   })
-  export const loop = fn(LoopInput, async (input): Promise<LoopResult> => {
+  export const loop = fn(LoopInput, async (input) => {
     const { sessionID, resume_existing } = input
 
     const abort = resume_existing ? resume(sessionID) : start(sessionID)
     if (!abort) {
-      return new Promise<LoopResult>((resolve, reject) => {
+      return new Promise<MessageV2.WithParts>((resolve, reject) => {
         const callbacks = state()[sessionID].callbacks
         callbacks.push({ resolve, reject })
       })
     }
 
     using _ = defer(() => cancel(sessionID))
+
+    // Structured output state
+    // Note: On session resumption, state is reset but outputFormat is preserved
+    // on the user message and will be retrieved from lastUser below
+    let structuredOutput: unknown | undefined
 
     let step = 0
     const session = await Session.get(sessionID)
@@ -337,7 +336,18 @@ export namespace SessionPrompt {
           history: msgs,
         })
 
-      const model = await Provider.getModel(lastUser.model.providerID, lastUser.model.modelID)
+      const model = await Provider.getModel(lastUser.model.providerID, lastUser.model.modelID).catch((e) => {
+        if (Provider.ModelNotFoundError.isInstance(e)) {
+          const hint = e.data.suggestions?.length ? ` Did you mean: ${e.data.suggestions.join(", ")}?` : ""
+          Bus.publish(Session.Event.Error, {
+            sessionID,
+            error: new NamedError.Unknown({
+              message: `Model not found: ${e.data.providerID}/${e.data.modelID}.${hint}`,
+            }).toObject(),
+          })
+        }
+        throw e
+      })
       const task = tasks.pop()
 
       // pending subtask
@@ -595,6 +605,16 @@ export namespace SessionPrompt {
         messages: msgs,
       })
 
+      // Inject StructuredOutput tool if JSON schema mode enabled
+      if (lastUser.format?.type === "json_schema") {
+        tools["StructuredOutput"] = createStructuredOutputTool({
+          schema: lastUser.format.schema,
+          onSuccess(output) {
+            structuredOutput = output
+          },
+        })
+      }
+
       if (step === 1) {
         SessionSummary.summarize({
           sessionID: sessionID,
@@ -625,12 +645,19 @@ export namespace SessionPrompt {
 
       await Plugin.trigger("experimental.chat.messages.transform", {}, { messages: sessionMessages })
 
+      // Build system prompt, adding structured output instruction if needed
+      const system = [...(await SystemPrompt.environment(model)), ...(await InstructionPrompt.system())]
+      const format = lastUser.format ?? { type: "text" }
+      if (format.type === "json_schema") {
+        system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
+      }
+
       const result = await processor.process({
         user: lastUser,
         agent,
         abort,
         sessionID,
-        system: [...(await SystemPrompt.environment(model)), ...(await InstructionPrompt.system())],
+        system,
         messages: [
           ...MessageV2.toModelMessages(sessionMessages, model),
           ...(isLastStep
@@ -644,9 +671,33 @@ export namespace SessionPrompt {
         ],
         tools,
         model,
-        sessionPermission: session.permission,
-        teammate: session.teammate,
+        toolChoice: format.type === "json_schema" ? "required" : undefined,
       })
+
+      // If structured output was captured, save it and exit immediately
+      // This takes priority because the StructuredOutput tool was called successfully
+      if (structuredOutput !== undefined) {
+        processor.message.structured = structuredOutput
+        processor.message.finish = processor.message.finish ?? "stop"
+        await Session.updateMessage(processor.message)
+        break
+      }
+
+      // Check if model finished (finish reason is not "tool-calls" or "unknown")
+      const modelFinished = processor.message.finish && !["tool-calls", "unknown"].includes(processor.message.finish)
+
+      if (modelFinished && !processor.message.error) {
+        if (format.type === "json_schema") {
+          // Model stopped without calling StructuredOutput tool
+          processor.message.error = new MessageV2.StructuredOutputError({
+            message: "Model did not produce structured output",
+            retries: 0,
+          }).toObject()
+          await Session.updateMessage(processor.message)
+          break
+        }
+      }
+
       if (result === "stop") break
       if (result === "compact") {
         await SessionCompaction.create({
@@ -658,32 +709,14 @@ export namespace SessionPrompt {
       }
       continue
     }
-    if (abort.aborted) return { reason: "cancelled" }
-
-    // Mark inbox messages as read after the LLM has processed them.
-    // This covers both spawnMember() and autoWake() callers since both
-    // go through SessionPrompt.loop().
-    if (session.teammate) {
-      const { Team } = await import("../team")
-      const { TeamMessaging } = await import("../team/messaging")
-      const match = await Team.findBySession(sessionID)
-      if (match) {
-        const agent = match.role === "lead" ? "lead" : match.memberName!
-        await TeamMessaging.markRead(match.team.name, agent).catch((err: unknown) => {
-          log.warn("failed to mark inbox read", { sessionID, error: err instanceof Error ? err.message : String(err) })
-        })
-      }
-    }
-
     SessionCompaction.prune({ sessionID })
     for await (const item of MessageV2.stream(sessionID)) {
       if (item.info.role === "user") continue
       const queued = state()[sessionID]?.callbacks ?? []
       for (const q of queued) {
-        q.resolve({ reason: "completed", message: item })
+        q.resolve(item)
       }
-      if (state()[sessionID]) state()[sessionID].callbacks.length = 0
-      return { reason: "completed", message: item }
+      return item
     }
     throw new Error("Impossible")
   })
@@ -695,7 +728,8 @@ export namespace SessionPrompt {
     return Provider.defaultModel()
   }
 
-  async function resolveTools(input: {
+  /** @internal Exported for testing */
+  export async function resolveTools(input: {
     agent: Agent.Info
     model: Provider.Model
     session: Session.Info
@@ -875,18 +909,45 @@ export namespace SessionPrompt {
     return tools
   }
 
+  /** @internal Exported for testing */
+  export function createStructuredOutputTool(input: {
+    schema: Record<string, any>
+    onSuccess: (output: unknown) => void
+  }): AITool {
+    // Remove $schema property if present (not needed for tool input)
+    const { $schema, ...toolSchema } = input.schema
+
+    return tool({
+      id: "StructuredOutput" as any,
+      description: STRUCTURED_OUTPUT_DESCRIPTION,
+      inputSchema: jsonSchema(toolSchema as any),
+      async execute(args) {
+        // AI SDK validates args against inputSchema before calling execute()
+        input.onSuccess(args)
+        return {
+          output: "Structured output captured successfully.",
+          title: "Structured Output",
+          metadata: { valid: true },
+        }
+      },
+      toModelOutput(result) {
+        return {
+          type: "text",
+          value: result.output,
+        }
+      },
+    })
+  }
+
   async function createUserMessage(input: PromptInput) {
     const agent = await Agent.get(input.agent ?? (await Agent.defaultAgent()))
 
     const model = input.model ?? agent.model ?? (await lastModel(input.sessionID))
-    const variant =
-      input.variant ??
-      (agent.variant &&
-      agent.model &&
-      model.providerID === agent.model.providerID &&
-      model.modelID === agent.model.modelID
-        ? agent.variant
-        : undefined)
+    const full =
+      !input.variant && agent.variant
+        ? await Provider.getModel(model.providerID, model.modelID).catch(() => undefined)
+        : undefined
+    const variant = input.variant ?? (agent.variant && full?.variants?.[agent.variant] ? agent.variant : undefined)
 
     const info: MessageV2.Info = {
       id: input.messageID ?? Identifier.ascending("message"),
@@ -899,6 +960,7 @@ export namespace SessionPrompt {
       agent: agent.name,
       model,
       system: input.system,
+      format: input.format,
       variant,
     }
     using _ = defer(() => InstructionPrompt.clear(info.id))
@@ -1051,9 +1113,9 @@ export namespace SessionPrompt {
                       }
                     }
                   }
-                  offset = Math.max(start - 1, 0)
+                  offset = Math.max(start, 1)
                   if (end) {
-                    limit = end - offset
+                    limit = end - (offset - 1)
                   }
                 }
                 const args = { filePath: filepath, offset, limit }
@@ -1804,27 +1866,23 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       { parts },
     )
 
-    const result = await prompt({
+    const result = (await prompt({
       sessionID: input.sessionID,
       messageID: input.messageID,
       model: userModel,
       agent: userAgent,
       parts,
       variant: input.variant,
-    })
-
-    if (result.reason === "cancelled") {
-      throw new MessageV2.AbortedError({ message: "Command execution was cancelled" })
-    }
+    })) as MessageV2.WithParts
 
     Bus.publish(Command.Event.Executed, {
       name: input.command,
       sessionID: input.sessionID,
       arguments: input.arguments,
-      messageID: result.message.info.id,
+      messageID: result.info.id,
     })
 
-    return result.message
+    return result
   }
 
   async function ensureTitle(input: {
