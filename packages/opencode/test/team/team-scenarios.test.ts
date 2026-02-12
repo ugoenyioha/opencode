@@ -1059,6 +1059,7 @@ describe("Scenario: Full lifecycle with bus event verification", () => {
           Bus.subscribe(TeamEvent.MemberStatusChanged, (p) => events.push({ type: "status_changed", payload: p })),
           Bus.subscribe(TeamEvent.TaskUpdated, (p) => events.push({ type: "task_updated", payload: p })),
           Bus.subscribe(TeamEvent.TaskClaimed, (p) => events.push({ type: "task_claimed", payload: p })),
+          Bus.subscribe(TeamEvent.TaskCompleted, (p) => events.push({ type: "task_completed", payload: p })),
           Bus.subscribe(TeamEvent.Message, (p) => events.push({ type: "message", payload: p })),
           Bus.subscribe(TeamEvent.Broadcast, (p) => events.push({ type: "broadcast", payload: p })),
           Bus.subscribe(TeamEvent.Cleaned, (p) => events.push({ type: "cleaned", payload: p })),
@@ -1085,6 +1086,9 @@ describe("Scenario: Full lifecycle with bus event verification", () => {
         // 3. Claim → task_claimed
         await TeamTasks.claim("event-lifecycle", "et1", "w1")
 
+        // 3b. Complete → task_completed
+        await TeamTasks.complete("event-lifecycle", "et1")
+
         // 4. Message → message
         await TeamMessaging.send({ teamName: "event-lifecycle", from: "w1", to: "lead", text: "hello" })
 
@@ -1108,6 +1112,7 @@ describe("Scenario: Full lifecycle with bus event verification", () => {
         expect(types).toContain("spawned")
         expect(types).toContain("task_updated")
         expect(types).toContain("task_claimed")
+        expect(types).toContain("task_completed")
         expect(types).toContain("message")
         expect(types).toContain("broadcast")
         expect(types).toContain("status_changed")

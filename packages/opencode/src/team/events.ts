@@ -55,6 +55,8 @@ export const TeamTaskSchema = z.object({
 })
 export type TeamTask = z.infer<typeof TeamTaskSchema>
 
+const TeammateIdleReason = z.enum(["completed", "cancelled"])
+
 export namespace TeamEvent {
   export const Created = BusEvent.define(
     "team.created",
@@ -122,6 +124,23 @@ export namespace TeamEvent {
       teamName: z.string(),
       taskId: z.string(),
       memberName: z.string(),
+    }),
+  )
+
+  export const TeammateIdle = BusEvent.define(
+    "team.teammate.idle",
+    z.object({
+      teamName: z.string(),
+      memberName: z.string(),
+      reason: TeammateIdleReason,
+    }),
+  )
+
+  export const TaskCompleted = BusEvent.define(
+    "team.task.completed",
+    z.object({
+      teamName: z.string(),
+      task: TeamTaskSchema,
     }),
   )
 

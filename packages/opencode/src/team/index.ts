@@ -636,6 +636,11 @@ export namespace Team {
           await transitionMemberStatus(input.teamName, input.name, "shutdown")
         } else {
           await transitionMemberStatus(input.teamName, input.name, "ready")
+          await Bus.publish(TeamEvent.TeammateIdle, {
+            teamName: input.teamName,
+            memberName: input.name,
+            reason: result.reason,
+          })
         }
         await notifyLead(input.teamName, input.name, session.id, result.reason)
       })
@@ -1024,6 +1029,7 @@ export namespace TeamTasks {
    */
   export async function complete(teamName: string, taskId: string): Promise<void> {
     let tasks: TeamTask[] = []
+    let completed: TeamTask | undefined
     try {
       tasks = await Storage.update<TeamTask[]>(tasksKey(teamName), (draft) => {
         const task = draft.find((t) => t.id === taskId)
@@ -1033,11 +1039,14 @@ export namespace TeamTasks {
         // so reassignment (draft = resolved) wouldn't propagate
         draft.length = 0
         draft.push(...resolved)
+        completed = draft.find((t) => t.id === taskId)
       })
     } catch {
       return
     }
     await Bus.publish(TeamEvent.TaskUpdated, { teamName, tasks })
+    if (!completed) return
+    await Bus.publish(TeamEvent.TaskCompleted, { teamName, task: completed })
   }
 
   function resolveDependencies(tasks: TeamTask[]): TeamTask[] {
