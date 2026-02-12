@@ -397,9 +397,7 @@ describe("Team e2e: full lifecycle", () => {
         const result = await SessionPrompt.loop({ sessionID: childSession.id })
 
         // Verify the loop completed — result should be an assistant message
-        expect(result.reason).toBe("completed")
-        if (result.reason === "cancelled") throw new Error("expected completed result")
-        expect(result.message.info.role).toBe("assistant")
+        expect(result.info.role).toBe("assistant")
 
         // Verify the response text was captured
         const childMsgs = await Session.messages({ sessionID: childSession.id })

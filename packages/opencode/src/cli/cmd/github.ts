@@ -907,10 +907,7 @@ export const GithubRunCommand = cmd({
           ],
         })
 
-        if (result.reason === "cancelled") {
-          throw new Error("Agent response was cancelled")
-        }
-        const msg = result.message
+        const msg = result
 
         // result should always be assistant just satisfying type checker
         if (msg.info.role === "assistant" && msg.info.error) {
@@ -940,10 +937,7 @@ export const GithubRunCommand = cmd({
           ],
         })
 
-        if (summaryResult.reason === "cancelled") {
-          throw new Error("Summary request was cancelled")
-        }
-        const summary = summaryResult.message
+        const summary = summaryResult
 
         if (summary.info.role === "assistant" && summary.info.error) {
           console.error("Summary agent error:", summary.info.error)

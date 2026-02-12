@@ -177,25 +177,7 @@ export const TaskTool = Tool.define("task", async (ctx) => {
         parts: promptParts,
       })
 
-      if (result.reason === "cancelled") {
-        return {
-          title: params.description,
-          metadata: {
-            sessionId: session.id,
-            model,
-            cancelled: true,
-          },
-          output: [
-            `task_id: ${session.id} (for resuming to continue this task if needed)`,
-            "",
-            "<task_result>",
-            "Task was cancelled before completion.",
-            "</task_result>",
-          ].join("\n"),
-        }
-      }
-
-      const text = result.message.parts.findLast((x: MessageV2.Part) => x.type === "text")?.text ?? ""
+      const text = result.parts.findLast((x: MessageV2.Part) => x.type === "text")?.text ?? ""
 
       const output = [
         `task_id: ${session.id} (for resuming to continue this task if needed)`,

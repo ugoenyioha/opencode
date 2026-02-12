@@ -37,7 +37,7 @@ describe("session.summarize", () => {
 
         // Schema validation passes - if provider is found it returns 200,
         // if provider not found (test env with cached instance) it returns 400 with ProviderModelNotFoundError
-        const body = await response.json() as { name?: string }
+        const body = (await response.json()) as { name?: string }
         if (response.status === 400) {
           // Acceptable in full test suite where provider cache may not have our key
           expect(body.name).toBe("ProviderModelNotFoundError")
@@ -68,7 +68,7 @@ describe("session.summarize", () => {
           }),
         })
 
-        const body = await response.json() as { name?: string }
+        const body = (await response.json()) as { name?: string }
         if (response.status === 400) {
           expect(body.name).toBe("ProviderModelNotFoundError")
         } else {
@@ -119,7 +119,6 @@ describe("session.summarize", () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             auto: false,
-
           }),
         })
 
@@ -158,7 +157,7 @@ describe("session.compaction.create", () => {
     })
   })
 
-  test("stores compaction part with instructions", async () => {
+  test("stores compaction part when auto is false", async () => {
     await Instance.provide({
       directory: projectRoot,
       init: async () => {
@@ -172,7 +171,6 @@ describe("session.compaction.create", () => {
           agent: "code",
           model: { providerID: "anthropic", modelID: "claude-sonnet-4-20250514" },
           auto: false,
-          instructions: "focus on the authentication changes",
         })
 
         const msgs = await Session.messages({ sessionID: session.id })
@@ -182,13 +180,12 @@ describe("session.compaction.create", () => {
         expect(compactionPart!.type).toBe("compaction")
         if (compactionPart!.type === "compaction") {
           expect(compactionPart!.auto).toBe(false)
-          expect(compactionPart!.instructions).toBe("focus on the authentication changes")
         }
       },
     })
   })
 
-  test("stores compaction part with boundaryMessageID", async () => {
+  test("stores compaction part without boundaryMessageID", async () => {
     await Instance.provide({
       directory: projectRoot,
       init: async () => {
@@ -202,7 +199,6 @@ describe("session.compaction.create", () => {
           agent: "code",
           model: { providerID: "anthropic", modelID: "claude-sonnet-4-20250514" },
           auto: false,
-          boundaryMessageID: "msg_boundary123",
         })
 
         const msgs = await Session.messages({ sessionID: session.id })
@@ -212,7 +208,6 @@ describe("session.compaction.create", () => {
         expect(compactionPart!.type).toBe("compaction")
         if (compactionPart!.type === "compaction") {
           expect(compactionPart!.auto).toBe(false)
-          expect(compactionPart!.boundaryMessageID).toBe("msg_boundary123")
         }
       },
     })
@@ -241,7 +236,7 @@ describe("session.summarize with boundaryMessageID", () => {
           }),
         })
 
-        const body = await response.json() as { name?: string }
+        const body = (await response.json()) as { name?: string }
         if (response.status === 400) {
           expect(body.name).toBe("ProviderModelNotFoundError")
         } else {
@@ -299,28 +294,101 @@ describe("filterCompacted with boundaryMessageID", () => {
         // Full compaction (no boundary) should keep only msg5 + msg6
         const messages: MessageV2.WithParts[] = [
           {
-            info: { id: "01", sessionID: "s1", role: "user" as const, time: { created: 1 }, agent: "code", model: { providerID: "a", modelID: "m" } },
-            parts: [{ id: "p01", messageID: "01", sessionID: "s1", type: "text" as const, text: "hello" }] as MessageV2.Part[],
+            info: {
+              id: "01",
+              sessionID: "s1",
+              role: "user" as const,
+              time: { created: 1 },
+              agent: "code",
+              model: { providerID: "a", modelID: "m" },
+            },
+            parts: [
+              { id: "p01", messageID: "01", sessionID: "s1", type: "text" as const, text: "hello" },
+            ] as MessageV2.Part[],
           },
           {
-            info: { id: "02", sessionID: "s1", role: "assistant" as const, time: { created: 2 }, parentID: "01", modelID: "m", providerID: "a", agent: "code", path: { cwd: "/", root: "/" }, cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, finish: "stop" } as MessageV2.Assistant,
-            parts: [{ id: "p02", messageID: "02", sessionID: "s1", type: "text" as const, text: "hi" }] as MessageV2.Part[],
+            info: {
+              id: "02",
+              sessionID: "s1",
+              role: "assistant" as const,
+              time: { created: 2 },
+              parentID: "01",
+              modelID: "m",
+              providerID: "a",
+              agent: "code",
+              path: { cwd: "/", root: "/" },
+              cost: 0,
+              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+              finish: "stop",
+            } as MessageV2.Assistant,
+            parts: [
+              { id: "p02", messageID: "02", sessionID: "s1", type: "text" as const, text: "hi" },
+            ] as MessageV2.Part[],
           },
           {
-            info: { id: "03", sessionID: "s1", role: "user" as const, time: { created: 3 }, agent: "code", model: { providerID: "a", modelID: "m" } },
-            parts: [{ id: "p03", messageID: "03", sessionID: "s1", type: "text" as const, text: "do stuff" }] as MessageV2.Part[],
+            info: {
+              id: "03",
+              sessionID: "s1",
+              role: "user" as const,
+              time: { created: 3 },
+              agent: "code",
+              model: { providerID: "a", modelID: "m" },
+            },
+            parts: [
+              { id: "p03", messageID: "03", sessionID: "s1", type: "text" as const, text: "do stuff" },
+            ] as MessageV2.Part[],
           },
           {
-            info: { id: "04", sessionID: "s1", role: "assistant" as const, time: { created: 4 }, parentID: "03", modelID: "m", providerID: "a", agent: "code", path: { cwd: "/", root: "/" }, cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, finish: "stop" } as MessageV2.Assistant,
-            parts: [{ id: "p04", messageID: "04", sessionID: "s1", type: "text" as const, text: "did stuff" }] as MessageV2.Part[],
+            info: {
+              id: "04",
+              sessionID: "s1",
+              role: "assistant" as const,
+              time: { created: 4 },
+              parentID: "03",
+              modelID: "m",
+              providerID: "a",
+              agent: "code",
+              path: { cwd: "/", root: "/" },
+              cost: 0,
+              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+              finish: "stop",
+            } as MessageV2.Assistant,
+            parts: [
+              { id: "p04", messageID: "04", sessionID: "s1", type: "text" as const, text: "did stuff" },
+            ] as MessageV2.Part[],
           },
           {
-            info: { id: "05", sessionID: "s1", role: "user" as const, time: { created: 5 }, agent: "code", model: { providerID: "a", modelID: "m" } },
-            parts: [{ id: "p05", messageID: "05", sessionID: "s1", type: "compaction" as const, auto: false }] as MessageV2.Part[],
+            info: {
+              id: "05",
+              sessionID: "s1",
+              role: "user" as const,
+              time: { created: 5 },
+              agent: "code",
+              model: { providerID: "a", modelID: "m" },
+            },
+            parts: [
+              { id: "p05", messageID: "05", sessionID: "s1", type: "compaction" as const, auto: false },
+            ] as MessageV2.Part[],
           },
           {
-            info: { id: "06", sessionID: "s1", role: "assistant" as const, time: { created: 6 }, parentID: "05", modelID: "m", providerID: "a", agent: "compaction", path: { cwd: "/", root: "/" }, cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, summary: true, finish: "stop" } as MessageV2.Assistant,
-            parts: [{ id: "p06", messageID: "06", sessionID: "s1", type: "text" as const, text: "summary" }] as MessageV2.Part[],
+            info: {
+              id: "06",
+              sessionID: "s1",
+              role: "assistant" as const,
+              time: { created: 6 },
+              parentID: "05",
+              modelID: "m",
+              providerID: "a",
+              agent: "compaction",
+              path: { cwd: "/", root: "/" },
+              cost: 0,
+              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+              summary: true,
+              finish: "stop",
+            } as MessageV2.Assistant,
+            parts: [
+              { id: "p06", messageID: "06", sessionID: "s1", type: "text" as const, text: "summary" },
+            ] as MessageV2.Part[],
           },
         ]
 
@@ -345,28 +413,108 @@ describe("filterCompacted with boundaryMessageID", () => {
         // Partial compaction: should keep msg3, msg4, msg5, msg6 (drop msg1, msg2)
         const messages: MessageV2.WithParts[] = [
           {
-            info: { id: "01", sessionID: "s1", role: "user" as const, time: { created: 1 }, agent: "code", model: { providerID: "a", modelID: "m" } },
-            parts: [{ id: "p01", messageID: "01", sessionID: "s1", type: "text" as const, text: "hello" }] as MessageV2.Part[],
+            info: {
+              id: "01",
+              sessionID: "s1",
+              role: "user" as const,
+              time: { created: 1 },
+              agent: "code",
+              model: { providerID: "a", modelID: "m" },
+            },
+            parts: [
+              { id: "p01", messageID: "01", sessionID: "s1", type: "text" as const, text: "hello" },
+            ] as MessageV2.Part[],
           },
           {
-            info: { id: "02", sessionID: "s1", role: "assistant" as const, time: { created: 2 }, parentID: "01", modelID: "m", providerID: "a", agent: "code", path: { cwd: "/", root: "/" }, cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, finish: "stop" } as MessageV2.Assistant,
-            parts: [{ id: "p02", messageID: "02", sessionID: "s1", type: "text" as const, text: "hi" }] as MessageV2.Part[],
+            info: {
+              id: "02",
+              sessionID: "s1",
+              role: "assistant" as const,
+              time: { created: 2 },
+              parentID: "01",
+              modelID: "m",
+              providerID: "a",
+              agent: "code",
+              path: { cwd: "/", root: "/" },
+              cost: 0,
+              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+              finish: "stop",
+            } as MessageV2.Assistant,
+            parts: [
+              { id: "p02", messageID: "02", sessionID: "s1", type: "text" as const, text: "hi" },
+            ] as MessageV2.Part[],
           },
           {
-            info: { id: "03", sessionID: "s1", role: "user" as const, time: { created: 3 }, agent: "code", model: { providerID: "a", modelID: "m" } },
-            parts: [{ id: "p03", messageID: "03", sessionID: "s1", type: "text" as const, text: "do stuff" }] as MessageV2.Part[],
+            info: {
+              id: "03",
+              sessionID: "s1",
+              role: "user" as const,
+              time: { created: 3 },
+              agent: "code",
+              model: { providerID: "a", modelID: "m" },
+            },
+            parts: [
+              { id: "p03", messageID: "03", sessionID: "s1", type: "text" as const, text: "do stuff" },
+            ] as MessageV2.Part[],
           },
           {
-            info: { id: "04", sessionID: "s1", role: "assistant" as const, time: { created: 4 }, parentID: "03", modelID: "m", providerID: "a", agent: "code", path: { cwd: "/", root: "/" }, cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, finish: "stop" } as MessageV2.Assistant,
-            parts: [{ id: "p04", messageID: "04", sessionID: "s1", type: "text" as const, text: "did stuff" }] as MessageV2.Part[],
+            info: {
+              id: "04",
+              sessionID: "s1",
+              role: "assistant" as const,
+              time: { created: 4 },
+              parentID: "03",
+              modelID: "m",
+              providerID: "a",
+              agent: "code",
+              path: { cwd: "/", root: "/" },
+              cost: 0,
+              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+              finish: "stop",
+            } as MessageV2.Assistant,
+            parts: [
+              { id: "p04", messageID: "04", sessionID: "s1", type: "text" as const, text: "did stuff" },
+            ] as MessageV2.Part[],
           },
           {
-            info: { id: "05", sessionID: "s1", role: "user" as const, time: { created: 5 }, agent: "code", model: { providerID: "a", modelID: "m" } },
-            parts: [{ id: "p05", messageID: "05", sessionID: "s1", type: "compaction" as const, auto: false, boundaryMessageID: "03" }] as MessageV2.Part[],
+            info: {
+              id: "05",
+              sessionID: "s1",
+              role: "user" as const,
+              time: { created: 5 },
+              agent: "code",
+              model: { providerID: "a", modelID: "m" },
+            },
+            parts: [
+              {
+                id: "p05",
+                messageID: "05",
+                sessionID: "s1",
+                type: "compaction" as const,
+                auto: false,
+                boundaryMessageID: "03",
+              },
+            ] as MessageV2.Part[],
           },
           {
-            info: { id: "06", sessionID: "s1", role: "assistant" as const, time: { created: 6 }, parentID: "05", modelID: "m", providerID: "a", agent: "compaction", path: { cwd: "/", root: "/" }, cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, summary: true, finish: "stop" } as MessageV2.Assistant,
-            parts: [{ id: "p06", messageID: "06", sessionID: "s1", type: "text" as const, text: "summary of old stuff" }] as MessageV2.Part[],
+            info: {
+              id: "06",
+              sessionID: "s1",
+              role: "assistant" as const,
+              time: { created: 6 },
+              parentID: "05",
+              modelID: "m",
+              providerID: "a",
+              agent: "compaction",
+              path: { cwd: "/", root: "/" },
+              cost: 0,
+              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+              summary: true,
+              finish: "stop",
+            } as MessageV2.Assistant,
+            parts: [
+              { id: "p06", messageID: "06", sessionID: "s1", type: "text" as const, text: "summary of old stuff" },
+            ] as MessageV2.Part[],
           },
         ]
 
@@ -390,12 +538,36 @@ describe("filterCompacted with boundaryMessageID", () => {
       fn: async () => {
         const messages: MessageV2.WithParts[] = [
           {
-            info: { id: "01", sessionID: "s1", role: "user" as const, time: { created: 1 }, agent: "code", model: { providerID: "a", modelID: "m" } },
-            parts: [{ id: "p01", messageID: "01", sessionID: "s1", type: "text" as const, text: "hello" }] as MessageV2.Part[],
+            info: {
+              id: "01",
+              sessionID: "s1",
+              role: "user" as const,
+              time: { created: 1 },
+              agent: "code",
+              model: { providerID: "a", modelID: "m" },
+            },
+            parts: [
+              { id: "p01", messageID: "01", sessionID: "s1", type: "text" as const, text: "hello" },
+            ] as MessageV2.Part[],
           },
           {
-            info: { id: "02", sessionID: "s1", role: "assistant" as const, time: { created: 2 }, parentID: "01", modelID: "m", providerID: "a", agent: "code", path: { cwd: "/", root: "/" }, cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, finish: "stop" } as MessageV2.Assistant,
-            parts: [{ id: "p02", messageID: "02", sessionID: "s1", type: "text" as const, text: "hi" }] as MessageV2.Part[],
+            info: {
+              id: "02",
+              sessionID: "s1",
+              role: "assistant" as const,
+              time: { created: 2 },
+              parentID: "01",
+              modelID: "m",
+              providerID: "a",
+              agent: "code",
+              path: { cwd: "/", root: "/" },
+              cost: 0,
+              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+              finish: "stop",
+            } as MessageV2.Assistant,
+            parts: [
+              { id: "p02", messageID: "02", sessionID: "s1", type: "text" as const, text: "hi" },
+            ] as MessageV2.Part[],
           },
         ]
 

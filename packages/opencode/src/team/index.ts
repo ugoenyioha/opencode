@@ -620,29 +620,32 @@ export namespace Team {
         return SessionPrompt.loop({ sessionID: session.id })
       })
       .then(async (result) => {
-        log.info("teammate loop ended", { teamName: input.teamName, name: input.name, reason: result.reason })
-        if (result.reason === "completed") {
+        const team = await get(input.teamName)
+        const member = team?.members.find((m) => m.name === input.name)
+        const reason = member?.status === "shutdown_requested" ? "cancelled" : "completed"
+        log.info("teammate loop ended", { teamName: input.teamName, name: input.name, reason })
+        if (reason === "completed") {
           await transitionExecutionStatus(input.teamName, input.name, "completing")
           await transitionExecutionStatus(input.teamName, input.name, "completed")
         }
-        if (result.reason === "cancelled") {
+        if (reason === "cancelled") {
           await transitionExecutionStatus(input.teamName, input.name, "cancelling")
           await transitionExecutionStatus(input.teamName, input.name, "cancelled")
         }
         await transitionExecutionStatus(input.teamName, input.name, "idle")
-        const team = await get(input.teamName)
-        const member = team?.members.find((m) => m.name === input.name)
-        if (member?.status === "shutdown_requested") {
+        const refreshed = await get(input.teamName)
+        const next = refreshed?.members.find((m) => m.name === input.name)
+        if (next?.status === "shutdown_requested") {
           await transitionMemberStatus(input.teamName, input.name, "shutdown")
         } else {
           await transitionMemberStatus(input.teamName, input.name, "ready")
           await Bus.publish(TeamEvent.TeammateIdle, {
             teamName: input.teamName,
             memberName: input.name,
-            reason: result.reason,
+            reason,
           })
         }
-        await notifyLead(input.teamName, input.name, session.id, result.reason)
+        await notifyLead(input.teamName, input.name, session.id, reason)
       })
       .catch(async (err) => {
         log.warn("teammate loop error", { teamName: input.teamName, name: input.name, error: err.message })
