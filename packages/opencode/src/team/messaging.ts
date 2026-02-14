@@ -66,7 +66,7 @@ export namespace TeamMessaging {
 
     // Auto-wake: if the recipient session is idle, start its prompt loop
     // so the LLM processes the injected message.
-    autoWake(targetSessionID, input.from)
+    autoWake(targetSessionID, input.from, input.text)
   }
 
   /**
@@ -136,7 +136,7 @@ export namespace TeamMessaging {
 
     // Auto-wake all idle recipient sessions
     for (const target of targets) {
-      autoWake(target.sessionID, input.from)
+      autoWake(target.sessionID, input.from, input.text)
     }
   }
 
@@ -197,7 +197,7 @@ export namespace TeamMessaging {
           })
         })
 
-        autoWake(senderSessionID, agentName)
+        autoWake(senderSessionID, agentName, `[receipt] ${text}`)
       }
       log.info("delivery receipts sent", { teamName, from: agentName, senders: [...bySender.keys()] })
     }
@@ -241,18 +241,22 @@ export namespace TeamMessaging {
    * If the session is idle (no active prompt loop), starts a new loop
    * so the LLM picks up and processes the injected message.
    */
-  async function autoWake(sessionID: string, from: string) {
+  async function autoWake(sessionID: string, from: string, text: string) {
     try {
       const status = SessionStatus.get(sessionID)
       if (status.type !== "idle") return
       const info = await Team.findBySession(sessionID)
-      // Never auto-wake the lead. The lead session is driven by the human —
-      // messages are already injected into the session and will be visible
-      // on the next human-initiated prompt. Auto-waking the lead causes it
-      // to resume without the human's intent, especially after escape/cancel
-      // where teammate cancellation notifications would immediately restart
-      // the lead's loop.
-      if (info?.role === "lead") return
+      // Lead auto-wake policy:
+      // - Wake for substantive teammate updates so orchestration can continue
+      //   without manual nudges.
+      // - Do NOT wake on receipts/noise.
+      // - Do NOT wake on interruption notices triggered by lead cancellation,
+      //   which would immediately restart the lead after an intentional escape.
+      if (info?.role === "lead") {
+        if (text.startsWith("[receipt]")) return
+        if (text.includes("I was interrupted by the lead and am now idle.")) return
+        if (text.includes("I was interrupted while working.")) return
+      }
       // Don't wake a teammate that's fully shut down.
       // We DO wake for shutdown_requested — the teammate needs to process
       // the shutdown message and wrap up. The .then() handler below
