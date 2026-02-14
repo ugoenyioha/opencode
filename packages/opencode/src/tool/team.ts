@@ -559,17 +559,7 @@ export const TeamShutdownTool = Tool.define("team_shutdown", {
     reason: z.string().optional().describe("Reason for the shutdown request"),
   }),
   async execute(params, ctx): Promise<{ title: string; output: string; metadata: Record<string, any> }> {
-    let teamInfo = await Team.findBySession(ctx.sessionID)
-    // If findBySession doesn't recognize us as lead, try to reclaim by rebinding.
-    // This handles session rebind after restart (new session ID for same operator).
-    if ((!teamInfo || teamInfo.role !== "lead") && !teamInfo?.memberName) {
-      const teams = await Team.list()
-      if (teams.length === 1) {
-        const team = teams[0]
-        await Team.rebindLead(team.name, ctx.sessionID, "team_shutdown: single team, caller unassociated")
-        teamInfo = { team: { ...team, leadSessionID: ctx.sessionID }, role: "lead" }
-      }
-    }
+    const teamInfo = await Team.findBySession(ctx.sessionID)
     if (!teamInfo || teamInfo.role !== "lead") {
       return { title: "Error", output: "Only the team lead can shut down teammates.", metadata: {} }
     }
@@ -654,18 +644,7 @@ export const TeamCleanupTool = Tool.define("team_cleanup", {
     name: z.string().describe("Team name to clean up"),
   }),
   async execute(params, ctx) {
-    let teamInfo = await Team.findBySession(ctx.sessionID)
-    // If findBySession doesn't recognize us as lead, try to reclaim.
-    // This handles the case where the user is in a new session after a restart
-    // but the original lead session still exists on disk.
-    if (!teamInfo || teamInfo.role !== "lead" || teamInfo.team.name !== params.name) {
-      const team = await Team.get(params.name)
-      if (team && team.members.every((m) => m.status === "shutdown")) {
-        // All members are terminal — safe to let any session in the project clean up
-        await Team.rebindLead(params.name, ctx.sessionID, "team_cleanup: all members terminal")
-        teamInfo = { team: { ...team, leadSessionID: ctx.sessionID }, role: "lead" }
-      }
-    }
+    const teamInfo = await Team.findBySession(ctx.sessionID)
     if (!teamInfo || teamInfo.role !== "lead" || teamInfo.team.name !== params.name) {
       return {
         title: "Error",

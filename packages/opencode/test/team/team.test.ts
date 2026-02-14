@@ -2,6 +2,7 @@ import { describe, expect, test, beforeEach } from "bun:test"
 import path from "path"
 import { Instance } from "../../src/project/instance"
 import { Team, TeamTasks } from "../../src/team"
+import { Session } from "../../src/session"
 import { Env } from "../../src/env"
 import { Log } from "../../src/util/log"
 import {
@@ -703,6 +704,156 @@ describe("Team tool definitions", () => {
 
         await Team.setMemberStatus("shutdown-guard-team", "worker-x", "shutdown")
         await Team.cleanup("shutdown-guard-team")
+      },
+    })
+  })
+
+  test("TeamShutdownTool does not allow unassociated root session to reclaim lead while original lead exists", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      init: async () => {
+        Env.set("ANTHROPIC_API_KEY", "test-key")
+      },
+      fn: async () => {
+        const lead = await Session.create({})
+        const outsider = await Session.create({})
+        const worker = await Session.create({ parentID: lead.id })
+
+        await Team.create({ name: "shutdown-reclaim-guard", leadSessionID: lead.id })
+        await Team.addMember("shutdown-reclaim-guard", {
+          name: "worker-x",
+          sessionID: worker.id,
+          agent: "general",
+          status: "ready",
+        })
+
+        const tool = await TeamShutdownTool.init()
+        const result = await tool.execute({ name: "worker-x" }, {
+          sessionID: outsider.id,
+          messageID: "msg_1",
+          agent: "general",
+          abort: new AbortController().signal,
+          messages: [],
+          metadata: () => {},
+          ask: async () => {},
+        } as any)
+
+        expect(result.title).toBe("Error")
+        expect(result.output).toContain("Only the team lead")
+
+        await Team.setMemberStatus("shutdown-reclaim-guard", "worker-x", "shutdown")
+        await Team.cleanup("shutdown-reclaim-guard")
+      },
+    })
+  })
+
+  test("TeamCleanupTool does not allow unassociated root session to cleanup even when members are shutdown", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      init: async () => {
+        Env.set("ANTHROPIC_API_KEY", "test-key")
+      },
+      fn: async () => {
+        const lead = await Session.create({})
+        const outsider = await Session.create({})
+        const worker = await Session.create({ parentID: lead.id })
+
+        await Team.create({ name: "cleanup-reclaim-guard", leadSessionID: lead.id })
+        await Team.addMember("cleanup-reclaim-guard", {
+          name: "worker-x",
+          sessionID: worker.id,
+          agent: "general",
+          status: "shutdown",
+        })
+
+        const tool = await TeamCleanupTool.init()
+        const result = await tool.execute({ name: "cleanup-reclaim-guard" }, {
+          sessionID: outsider.id,
+          messageID: "msg_1",
+          agent: "general",
+          abort: new AbortController().signal,
+          messages: [],
+          metadata: () => {},
+          ask: async () => {},
+        } as any)
+
+        expect(result.title).toBe("Error")
+        expect(result.output).toContain("Only the lead")
+
+        await Team.cleanup("cleanup-reclaim-guard")
+      },
+    })
+  })
+
+  test("TeamShutdownTool allows legitimate lead rebind when original lead session is deleted", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      init: async () => {
+        Env.set("ANTHROPIC_API_KEY", "test-key")
+      },
+      fn: async () => {
+        const lead = await Session.create({})
+        const replacement = await Session.create({})
+        const worker = await Session.create({ parentID: lead.id })
+
+        await Team.create({ name: "shutdown-rebind-allowed", leadSessionID: lead.id })
+        await Team.addMember("shutdown-rebind-allowed", {
+          name: "worker-x",
+          sessionID: worker.id,
+          agent: "general",
+          status: "shutdown",
+        })
+
+        await Session.remove(lead.id)
+
+        const tool = await TeamShutdownTool.init()
+        const result = await tool.execute({ name: "worker-x" }, {
+          sessionID: replacement.id,
+          messageID: "msg_1",
+          agent: "general",
+          abort: new AbortController().signal,
+          messages: [],
+          metadata: () => {},
+          ask: async () => {},
+        } as any)
+
+        expect(result.title).toBe("Already shutdown")
+
+        const team = await Team.get("shutdown-rebind-allowed")
+        expect(team?.leadSessionID).toBe(replacement.id)
+
+        await Team.cleanup("shutdown-rebind-allowed")
+      },
+    })
+  })
+
+  test("TeamCleanupTool allows legitimate lead rebind when original lead session is deleted", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      init: async () => {
+        Env.set("ANTHROPIC_API_KEY", "test-key")
+      },
+      fn: async () => {
+        const lead = await Session.create({})
+        const replacement = await Session.create({})
+
+        await Team.create({ name: "cleanup-rebind-allowed", leadSessionID: lead.id })
+        await Session.remove(lead.id)
+
+        const tool = await TeamCleanupTool.init()
+        const result = await tool.execute({ name: "cleanup-rebind-allowed" }, {
+          sessionID: replacement.id,
+          messageID: "msg_1",
+          agent: "general",
+          abort: new AbortController().signal,
+          messages: [],
+          metadata: () => {},
+          ask: async () => {},
+        } as any)
+
+        expect(result.title).toContain("Team cleaned up")
+        const team = await Team.get("cleanup-rebind-allowed")
+        expect(team).toBeUndefined()
       },
     })
   })
