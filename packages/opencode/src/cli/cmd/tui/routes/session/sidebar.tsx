@@ -141,7 +141,15 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
           flexShrink={0}
           overflow="hidden"
         >
-          <scrollbox flexGrow={1}>
+          <scrollbox
+            flexGrow={1}
+            verticalScrollbarOptions={{
+              trackOptions: {
+                backgroundColor: theme.background,
+                foregroundColor: theme.borderActive,
+              },
+            }}
+          >
             <box flexShrink={0} gap={1} paddingRight={1}>
               <box paddingRight={1}>
                 <text fg={theme.text}>
