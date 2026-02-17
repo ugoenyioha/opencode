@@ -25,9 +25,16 @@ import { createSimpleContext } from "./helper"
 import type { Snapshot } from "@/snapshot"
 import { useExit } from "./exit"
 import { useArgs } from "./args"
-import { batch, onMount } from "solid-js"
+import { batch, onCleanup, onMount } from "solid-js"
 import { Log } from "@/util/log"
 import type { Path } from "@opencode-ai/sdk"
+import {
+  applyTeamSnapshot,
+  applyTeammateIdle,
+  mergeCompletedTask,
+  shouldHydrateTeamEntry,
+  shouldScheduleTeamRefresh,
+} from "./sync-team"
 
 export const { use: useSync, provider: SyncProvider } = createSimpleContext({
   name: "Sync",
@@ -140,6 +147,68 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
     })
 
     const sdk = useSDK()
+    const teamRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
+    const teamRefreshInFlight = new Set<string>()
+    const recentSyncedSessions: string[] = []
+
+    function markRecentSession(sessionID: string) {
+      const idx = recentSyncedSessions.indexOf(sessionID)
+      if (idx >= 0) recentSyncedSessions.splice(idx, 1)
+      recentSyncedSessions.push(sessionID)
+      if (recentSyncedSessions.length > 8) recentSyncedSessions.shift()
+    }
+
+    async function refreshSessionTodo(sessionID: string) {
+      const todo = await sdk.client.session.todo({ sessionID }).catch(() => undefined)
+      if (!todo) return
+      setStore("todo", sessionID, reconcile(todo.data ?? []))
+    }
+
+    async function refreshTeamByName(teamName: string) {
+      if (teamRefreshInFlight.has(teamName)) return
+      teamRefreshInFlight.add(teamName)
+      try {
+        const entries = Object.entries(store.team).filter(([_, entry]) => (entry as any)?.teamName === teamName)
+        if (entries.length === 0) return
+
+        const snapshots = await Promise.all(
+          entries.map(async ([sid]) => {
+            const data = await sdk
+              .fetch(`${sdk.url}/team/by-session/${sid}`)
+              .then((r) => (r.ok ? r.json() : null))
+              .catch(() => null)
+            return data ? { sid, data } : null
+          }),
+        )
+
+        let mergedTeam: any = store.team
+        const todoSessions = new Set<string>()
+        let found = false
+        for (const snap of snapshots) {
+          if (!snap) continue
+          found = true
+          const merged = applyTeamSnapshot(mergedTeam, snap.sid, snap.data as any)
+          mergedTeam = merged.team
+          for (const sid of merged.todoSessionIDs) todoSessions.add(sid)
+        }
+        if (!found) return
+
+        setStore("team", reconcile(mergedTeam))
+        await Promise.all([...todoSessions].map((sid) => refreshSessionTodo(sid)))
+      } finally {
+        teamRefreshInFlight.delete(teamName)
+      }
+    }
+
+    function scheduleTeamRefresh(teamName: string, delay = 350) {
+      const existing = teamRefreshTimers.get(teamName)
+      if (existing) clearTimeout(existing)
+      const timer = setTimeout(() => {
+        teamRefreshTimers.delete(teamName)
+        void refreshTeamByName(teamName)
+      }, delay)
+      teamRefreshTimers.set(teamName, timer)
+    }
 
     sdk.event.listen((e) => {
       const event = e.details
@@ -462,6 +531,35 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
               }
               break
             }
+            case "team.task.completed": {
+              const { teamName, task } = raw.properties
+              for (const [sid, entry] of Object.entries(store.team)) {
+                const e = entry as any
+                if (e?.teamName !== teamName || !e?.tasks) continue
+                setStore("team", sid, "tasks", mergeCompletedTask(e.tasks, task))
+              }
+              break
+            }
+            case "team.teammate.idle": {
+              const { teamName, memberName } = raw.properties
+              for (const [sid, entry] of Object.entries(store.team)) {
+                const e = entry as any
+                if (e?.teamName !== teamName || !e?.members) continue
+                setStore("team", sid, "members", applyTeammateIdle(e.members, memberName))
+              }
+              break
+            }
+            case "team.plan.approval": {
+              const { teamName, memberName, approved } = raw.properties
+              for (const [sid, entry] of Object.entries(store.team)) {
+                const e = entry as any
+                if (e?.teamName !== teamName || !e?.members) continue
+                const idx = e.members.findIndex((m: any) => m.name === memberName)
+                if (idx < 0) continue
+                setStore("team", sid, "members", idx, "planApproval", approved ? "approved" : "rejected")
+              }
+              break
+            }
             case "team.cleaned": {
               const { teamName } = raw.properties
               setStore(
@@ -476,6 +574,16 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
               )
               break
             }
+          }
+
+          const teamName =
+            typeof raw.properties?.teamName === "string"
+              ? raw.properties.teamName
+              : typeof raw.properties?.team?.name === "string"
+                ? raw.properties.team.name
+                : undefined
+          if (teamName && shouldScheduleTeamRefresh(raw.type)) {
+            scheduleTeamRefresh(teamName)
           }
           break
         }
@@ -568,6 +676,25 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
 
     onMount(() => {
       bootstrap()
+
+      const interval = setInterval(() => {
+        const names = new Set(
+          Object.values(store.team)
+            .map((entry: any) => entry?.teamName)
+            .filter((name: string | undefined): name is string => !!name),
+        )
+        for (const name of names) scheduleTeamRefresh(name, 0)
+
+        for (const sessionID of recentSyncedSessions) {
+          void refreshSessionTodo(sessionID)
+        }
+      }, 5000)
+
+      onCleanup(() => {
+        clearInterval(interval)
+        for (const timer of teamRefreshTimers.values()) clearTimeout(timer)
+        teamRefreshTimers.clear()
+      })
     })
 
     const fullSyncedSessions = new Set<string>()
@@ -618,11 +745,15 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             }),
           )
           fullSyncedSessions.add(sessionID)
+          markRecentSession(sessionID)
 
           // Fetch team context for this session (non-blocking).
           // Must use sdk.fetch (RPC to worker) since bare fetch can't reach
           // the internal server in direct-RPC mode.
-          if (!store.team[sessionID]) {
+          const teamEntry = store.team[sessionID] as any
+          const shouldHydrateTeam = shouldHydrateTeamEntry(teamEntry)
+
+          if (shouldHydrateTeam) {
             sdk
               .fetch(`${sdk.url}/team/by-session/${sessionID}`)
               .then((r) => r.json())
