@@ -107,21 +107,19 @@ export const TeamRoutes = lazy(() =>
         const team = await Team.get(name)
         if (!team) return c.json({ error: "Team not found" }, 404)
 
-        await Session.update(team.leadSessionID, (draft) => {
-          if (enabled) {
-            const existing = draft.permission ?? []
-            draft.permission = [
-              ...existing,
-              // Filter prevents duplicate deny rules from repeated enable toggles
-              ...WRITE_TOOLS.filter((tool) => !existing.some((r) => r.permission === tool && r.action === "deny")).map(
-                (tool) => ({ permission: tool, pattern: "*", action: "deny" as const }),
+        const info = await Session.get(team.leadSessionID)
+        await Session.setPermission({
+          sessionID: team.leadSessionID,
+          permission: enabled
+            ? [
+                ...(info.permission ?? []),
+                ...WRITE_TOOLS.filter(
+                  (tool) => !(info.permission ?? []).some((r) => r.permission === tool && r.action === "deny"),
+                ).map((tool) => ({ permission: tool, pattern: "*", action: "deny" as const })),
+              ]
+            : (info.permission ?? []).filter(
+                (rule) => !((WRITE_TOOLS as readonly string[]).includes(rule.permission) && rule.action === "deny"),
               ),
-            ]
-          } else {
-            draft.permission = (draft.permission ?? []).filter(
-              (rule) => !((WRITE_TOOLS as readonly string[]).includes(rule.permission) && rule.action === "deny"),
-            )
-          }
         })
 
         await Team.setDelegate(name, enabled)

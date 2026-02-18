@@ -55,13 +55,13 @@ describe("delegate mode cleanup restores permissions", () => {
           await Team.create({ name, leadSessionID: lead.id, delegate: true })
 
           // Manually inject delegate deny rules (same as TeamCreateTool does)
-          await Session.update(lead.id, (draft) => {
-            const rules = WRITE_TOOLS.map((tool) => ({
+          await Session.setPermission({
+            sessionID: lead.id,
+            permission: WRITE_TOOLS.map((tool) => ({
               permission: tool,
               pattern: "*",
               action: "deny" as const,
-            }))
-            draft.permission = [...(draft.permission ?? []), ...rules]
+            })),
           })
 
           // Verify deny rules are present
@@ -100,19 +100,24 @@ describe("delegate mode cleanup restores permissions", () => {
           const name = uniqueName("delegate-preserve")
 
           // Add a custom allow rule before team creation
-          await Session.update(lead.id, (draft) => {
-            draft.permission = [{ permission: "read", pattern: "/safe/*", action: "allow" as const }]
+          await Session.setPermission({
+            sessionID: lead.id,
+            permission: [{ permission: "read", pattern: "/safe/*", action: "allow" as const }],
           })
 
           // Create delegate team + inject deny rules
           await Team.create({ name, leadSessionID: lead.id, delegate: true })
-          await Session.update(lead.id, (draft) => {
-            const rules = WRITE_TOOLS.map((tool) => ({
-              permission: tool,
-              pattern: "*",
-              action: "deny" as const,
-            }))
-            draft.permission = [...(draft.permission ?? []), ...rules]
+          const during = await Session.get(lead.id)
+          await Session.setPermission({
+            sessionID: lead.id,
+            permission: [
+              ...(during.permission ?? []),
+              ...WRITE_TOOLS.map((tool) => ({
+                permission: tool,
+                pattern: "*",
+                action: "deny" as const,
+              })),
+            ],
           })
 
           // Cleanup — Bus.publish awaits all subscribers,
@@ -148,8 +153,9 @@ describe("delegate mode cleanup restores permissions", () => {
         const name = uniqueName("no-delegate")
 
         // Add an existing deny rule unrelated to delegate
-        await Session.update(lead.id, (draft) => {
-          draft.permission = [{ permission: "bash", pattern: "rm -rf *", action: "deny" as const }]
+        await Session.setPermission({
+          sessionID: lead.id,
+          permission: [{ permission: "bash", pattern: "rm -rf *", action: "deny" as const }],
         })
 
         // Create team WITHOUT delegate mode

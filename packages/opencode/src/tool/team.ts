@@ -73,13 +73,15 @@ export const TeamCreateTool = Tool.define("team_create", {
 
     // Delegate mode: restrict the lead to coordination-only tools
     if (params.delegate) {
-      await Session.update(ctx.sessionID, (draft) => {
-        const delegateDenyRules = WRITE_TOOLS.map((tool) => ({
-          permission: tool,
-          pattern: "*",
-          action: "deny" as const,
-        }))
-        draft.permission = [...(draft.permission ?? []), ...delegateDenyRules]
+      const info = await Session.get(ctx.sessionID)
+      const delegateDenyRules = WRITE_TOOLS.map((tool) => ({
+        permission: tool,
+        pattern: "*",
+        action: "deny" as const,
+      }))
+      await Session.setPermission({
+        sessionID: ctx.sessionID,
+        permission: [...(info.permission ?? []), ...delegateDenyRules],
       })
     }
 
@@ -486,10 +488,10 @@ export const TeamApprovePlanTool = Tool.define("team_approve_plan", {
 
     if (params.approved) {
       // Remove only plan-approval deny rules (tagged with "*:plan-approval" pattern)
-      await Session.update(member.sessionID, (draft) => {
-        if (draft.permission) {
-          draft.permission = draft.permission.filter((rule) => rule.pattern !== "*:plan-approval")
-        }
+      const info = await Session.get(member.sessionID)
+      await Session.setPermission({
+        sessionID: member.sessionID,
+        permission: (info.permission ?? []).filter((rule) => rule.pattern !== "*:plan-approval"),
       })
 
       // Update member state

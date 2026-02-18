@@ -139,10 +139,12 @@ export namespace Team {
 
       try {
         const { Session } = await import("../session")
-        await Session.update(event.properties.leadSessionID, (draft) => {
-          draft.permission = (draft.permission ?? []).filter(
+        const info = await Session.get(event.properties.leadSessionID)
+        await Session.setPermission({
+          sessionID: event.properties.leadSessionID,
+          permission: (info.permission ?? []).filter(
             (rule) => !((WRITE_TOOLS as readonly string[]).includes(rule.permission) && rule.action === "deny"),
-          )
+          ),
         })
         log.info("restored lead session permissions", {
           teamName: event.properties.teamName,
@@ -678,10 +680,10 @@ export namespace Team {
     if (!member) throw new Error(`Teammate "${input.memberName}" not found`)
 
     if (input.approved) {
-      await Session.update(member.sessionID, (draft) => {
-        if (draft.permission) {
-          draft.permission = draft.permission.filter((rule) => rule.pattern !== "*:plan-approval")
-        }
+      const info = await Session.get(member.sessionID)
+      await Session.setPermission({
+        sessionID: member.sessionID,
+        permission: (info.permission ?? []).filter((rule) => rule.pattern !== "*:plan-approval"),
       })
       await setMemberPlanApproval(input.teamName, input.memberName, "approved")
       await TeamMessaging.send({
