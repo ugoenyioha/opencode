@@ -60,9 +60,11 @@ If JWT env is configured, Bearer tokens are verified as JWTs:
 - `OPENCODE_COMPAT_JWT_JWKS_URL` for `RS256`
 - `OPENCODE_COMPAT_JWT_HS256_SECRET` for `HS256`
 - Optional claim checks: `OPENCODE_COMPAT_JWT_ISSUER`, `OPENCODE_COMPAT_JWT_AUDIENCE`
+- Optional clock skew override: `OPENCODE_COMPAT_JWT_CLOCK_SKEW_SECONDS` (default `30`)
 - RS256 JWTs must include a `kid` that matches an RSA key in the JWKS document.
 
 When JWT auth is enabled, invalid Bearer tokens fail closed with `401` even if `x-api-key` is also present.
+JWKS fetch uses a `5s` timeout and short failure caching to reduce repeated upstream calls during outages.
 
 Compat auth is keyed by `OPENCODE_TOOL_ENDPOINT_API_KEY`.
 Optional fallback to `OPENCODE_SERVER_PASSWORD` is disabled by default and requires `OPENCODE_COMPAT_ALLOW_SERVER_PASSWORD=true`.
