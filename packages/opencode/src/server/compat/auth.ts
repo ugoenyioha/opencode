@@ -15,12 +15,6 @@ function bearer(input: string | undefined) {
   return token
 }
 
-function apiKey(input: string | undefined) {
-  const token = input?.trim()
-  if (!token) return
-  return token
-}
-
 function parseBase64urlJSON(input: string) {
   try {
     const normalized = input.replace(/-/g, "+").replace(/_/g, "/")
@@ -628,9 +622,15 @@ async function verifyBearerToken(token: string) {
 }
 
 function authorized(token: string) {
-  const candidates = [Env.get("OPENCODE_TOOL_ENDPOINT_API_KEY")]
-  if (Env.get("OPENCODE_COMPAT_ALLOW_SERVER_PASSWORD") === "true") {
-    candidates.push(Env.get("OPENCODE_SERVER_PASSWORD"))
+  const env = (key: string) => {
+    const raw = process.env[key]
+    if (raw !== undefined) return raw
+    return Env.get(key)
+  }
+
+  const candidates = [env("OPENCODE_TOOL_ENDPOINT_API_KEY")]
+  if (env("OPENCODE_COMPAT_ALLOW_SERVER_PASSWORD") === "true") {
+    candidates.push(env("OPENCODE_SERVER_PASSWORD"))
   }
   const values = candidates.filter((value): value is string => !!value)
   const input = createHash("sha256").update(token, "utf8").digest()
@@ -652,9 +652,6 @@ export async function requireOpenAIBearer(req: Request) {
     if (authorized(bearerToken)) return bearerToken
     return openAIError("unauthorized", "Unauthorized")
   }
-
-  const apiKeyToken = apiKey(req.headers.get("x-api-key") ?? undefined)
-  if (apiKeyToken && authorized(apiKeyToken)) return apiKeyToken
 
   return openAIError("unauthorized", "Unauthorized")
 }

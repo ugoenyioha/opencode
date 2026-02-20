@@ -1,13 +1,11 @@
 import { BusEvent } from "@/bus/bus-event"
 import { Bus } from "@/bus"
 import { Log } from "../util/log"
-import { timingSafeEqual } from "crypto"
 import { describeRoute, generateSpecs, validator, resolver, openAPIRouteHandler } from "hono-openapi"
 import { Hono } from "hono"
 import { cors } from "hono/cors"
 import { streamSSE } from "hono/streaming"
 import { proxy } from "hono/proxy"
-import { basicAuth } from "hono/basic-auth"
 import z from "zod"
 import { Provider } from "../provider/provider"
 import { NamedError } from "@opencode-ai/util/error"
@@ -48,6 +46,7 @@ import { MDNS } from "./mdns"
 import { Plugin } from "@/plugin"
 import { ToolRoutes, isSensitiveTool } from "./routes/tool"
 import { CompatRoutes } from "./compat"
+import { authorizeRequest, type RouteAuthRule } from "./auth-policy"
 
 // @ts-ignore This global is needed to prevent ai-sdk from logging warnings to stdout https://github.com/vercel/ai/blob/2dc67e0ef538307f21368db32d5a12345d98831b/packages/ai/src/logger/log-warnings.ts#L85
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -59,18 +58,6 @@ export namespace Server {
   let _corsWhitelist: string[] = []
 
   const PLUGIN_ROUTE_MISS_HEADER = "x-opencode-plugin-route"
-
-  /**
-   * Match a request path against a route pattern.
-   * Supports :param segments and * wildcards.
-   * Examples: "/a2a/:agent/tasks" matches "/a2a/neo-sidecar/tasks"
-   */
-  function pathMatches(requestPath: string, pattern: string): boolean {
-    const reqParts = requestPath.split("/")
-    const patParts = pattern.split("/")
-    if (reqParts.length !== patParts.length) return false
-    return patParts.every((pat, i) => pat.startsWith(":") || pat === "*" || pat === reqParts[i])
-  }
 
   function allowExternalRoutes(config: Config.Info) {
     const value = Env.get("OPENCODE_ALLOW_EXTERNAL_ROUTES")
@@ -96,11 +83,13 @@ export namespace Server {
 
     const routesWithSource = await Plugin.collectRoutesWithSource(allowExternalRoutes(config))
 
-    // Only internal plugins can declare auth: [] (public routes).
-    // External plugins must not be able to punch auth holes.
-    const publicRoutes = routesWithSource
-      .filter((r) => r.source === "internal" && Array.isArray(r.route.auth) && r.route.auth.length === 0)
-      .map((r) => ({ method: r.route.method.toUpperCase(), path: r.route.path }))
+    const authRoutes = routesWithSource
+      .filter((r) => r.source === "internal" || !(Array.isArray(r.route.auth) && r.route.auth.length === 0))
+      .map((r) => ({
+        method: (r.route.method === "*" ? "ALL" : r.route.method).toUpperCase(),
+        path: r.route.path,
+        auth: r.route.auth,
+      }))
 
     for (const { route } of routesWithSource) {
       app.on((route.method === "*" ? "ALL" : route.method) as any, route.path, async (c) => {
@@ -108,7 +97,7 @@ export namespace Server {
       })
     }
 
-    return { app, publicRoutes }
+    return { app, authRoutes }
   })
 
   export function url(): URL {
@@ -141,54 +130,12 @@ export namespace Server {
         .use(async (c, next) => {
           // Allow CORS preflight requests to succeed without auth.
           if (c.req.method === "OPTIONS") return next()
-
-          // Routes that declare auth: [] are public (e.g. A2A discovery endpoints)
-          // Must match both method and path to prevent method-based bypass
-          let publicRoutes: { method: string; path: string }[] = []
+          let routeRules: RouteAuthRule[] = []
           try {
-            publicRoutes = (await pluginRoutes()).publicRoutes
+            routeRules = (await pluginRoutes()).authRoutes
           } catch {}
-          const method = c.req.method.toUpperCase()
-          if (publicRoutes.some((r) => (r.method === method || r.method === "ALL") && pathMatches(c.req.path, r.path)))
-            return next()
-
-          // Two mutually exclusive auth methods — either one passes the request.
-          // 1. OPENCODE_SERVER_PASSWORD — HTTP Basic Auth
-          // 2. OPENCODE_TOOL_ENDPOINT_API_KEY — X-API-Key header
-          const password = Flag.OPENCODE_SERVER_PASSWORD
-          const apiKey = process.env["OPENCODE_TOOL_ENDPOINT_API_KEY"]
-
-          // No auth configured — pass through
-          if (!password && !apiKey) return next()
-
-          // Try API key first (stateless, cheaper to check)
-          // Use constant-time comparison to prevent timing attacks
-          if (apiKey) {
-            const header = c.req.header("x-api-key") ?? ""
-            const a = Buffer.from(header, "utf8")
-            const b = Buffer.from(apiKey, "utf8")
-            if (a.length === b.length) {
-              if (timingSafeEqual(a, b)) return next()
-            }
-          }
-
-          // Try basic auth
-          if (password) {
-            const username = Flag.OPENCODE_SERVER_USERNAME ?? "opencode"
-            // basicAuth throws HTTPException on failure — catch it so we can
-            // fall through to the final 401 if both methods are configured
-            try {
-              let passed = false
-              await basicAuth({ username, password })(c, async () => {
-                passed = true
-              })
-              if (passed) return next()
-            } catch {
-              // Basic auth failed — continue to rejection below
-            }
-          }
-
-          // Neither method passed — reject
+          const ok = authorizeRequest(c.req.method, c.req.path, c.req.raw.headers, routeRules)
+          if (ok) return next()
           return c.json({ error: "Unauthorized" }, 401)
         })
         .use(async (c, next) => {

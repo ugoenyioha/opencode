@@ -82,7 +82,7 @@ describe("compat core routes", () => {
     })
   })
 
-  test("openai requires bearer or x-api-key auth", async () => {
+  test("openai requires bearer auth", async () => {
     await using tmp = await project({
       server: {
         compat: {
@@ -385,6 +385,61 @@ describe("compat core routes", () => {
           Env.set("OPENCODE_COMPAT_OAUTH_AUDIENCE", "aud-introspection")
           Env.set("OPENCODE_COMPAT_OAUTH_REQUIRED_SCOPE", "compat.read compat.admin")
           Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
+          const app = Server.App()
+          const response = await app.request("/v1/models", {
+            headers: {
+              authorization: "Bearer opaque-token",
+              "x-opencode-directory": tmp.path,
+            },
+          })
+          expect(response.status).toBe(200)
+        },
+      })
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())))
+    }
+  })
+
+  test("openai allows bearer-only auth when global api-key gate is set", async () => {
+    await using tmp = await project({
+      server: {
+        compat: {
+          openai: {
+            enabled: true,
+          },
+        },
+      },
+    })
+    await Instance.disposeAll()
+    const server = createServer((req, res) => {
+      if (req.url !== "/introspect") {
+        res.statusCode = 404
+        res.end()
+        return
+      }
+      res.setHeader("content-type", "application/json")
+      res.end(
+        JSON.stringify({
+          active: true,
+          aud: "aud-introspection",
+          exp: Math.floor(Date.now() / 1000) + 120,
+        }),
+      )
+    })
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()))
+    try {
+      const address = server.address()
+      if (!address || typeof address === "string") throw new Error("failed to start introspection server")
+      const introspectionUrl = `http://127.0.0.1:${address.port}/introspect`
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
+          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL", introspectionUrl)
+          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_ID", "client-id")
+          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_SECRET", "client-secret")
+          Env.set("OPENCODE_COMPAT_OAUTH_AUDIENCE", "aud-introspection")
+
           const app = Server.App()
           const response = await app.request("/v1/models", {
             headers: {
@@ -955,7 +1010,7 @@ describe("compat core routes", () => {
     })
   })
 
-  test("openai model list accepts x-api-key header", async () => {
+  test("openai model list rejects x-api-key-only auth", async () => {
     await using tmp = await project({
       server: {
         compat: {
@@ -977,11 +1032,16 @@ describe("compat core routes", () => {
             "x-opencode-directory": tmp.path,
           },
         })
-        expect(response.status).toBe(200)
-        const body = (await response.json()) as any
-        expect(body.object).toBe("list")
-      },
-    })
+          expect(response.status).toBe(401)
+          expect(await response.json()).toEqual({
+            error: {
+              type: "authentication_error",
+              message: "Unauthorized",
+              code: "invalid_api_key",
+            },
+          })
+        },
+      })
   })
 
   test("openai model list works without pre-created instance context", async () => {

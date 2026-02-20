@@ -53,9 +53,10 @@ Auth header:
 Authorization: Bearer <token>
 ```
 
-OpenAI-compatible routes also accept `x-api-key: <token>` as an alternative input and validate it against `OPENCODE_TOOL_ENDPOINT_API_KEY`.
+OpenAI-compatible routes are Bearer-only. `x-api-key` is not accepted on these routes.
 
-If OIDC, JWT, or OAuth introspection env is configured, Bearer tokens are validated before API-key fallback.
+If OIDC, JWT, or OAuth introspection env is configured, Bearer tokens are validated with those strategies.
+If none are configured, Bearer tokens are validated against `OPENCODE_TOOL_ENDPOINT_API_KEY`.
 
 Bearer routing:
 
@@ -96,10 +97,10 @@ Outbound auth URL policy:
 - OIDC discovery `issuer` must match the configured issuer value.
 - For non-loopback issuers, discovered `jwks_uri` must use the same host as the configured issuer.
 
-When OIDC/JWT/introspection auth is enabled, invalid Bearer tokens fail closed with `401` even if `x-api-key` is also present.
+When OIDC/JWT/introspection auth is enabled, invalid Bearer tokens fail closed with `401`.
 Discovery/JWKS/introspection fetches use short timeouts and short failure caching to reduce repeated upstream calls during outages.
 
-Compat auth is keyed by `OPENCODE_TOOL_ENDPOINT_API_KEY`.
+OpenAI Bearer fallback (when no OIDC/JWT/introspection env is configured) is keyed by `OPENCODE_TOOL_ENDPOINT_API_KEY`.
 Optional fallback to `OPENCODE_SERVER_PASSWORD` is disabled by default and requires `OPENCODE_COMPAT_ALLOW_SERVER_PASSWORD=true`.
 
 Example:
