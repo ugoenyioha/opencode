@@ -59,6 +59,16 @@ export namespace Server {
 
   const PLUGIN_ROUTE_MISS_HEADER = "x-opencode-plugin-route"
 
+  function resolveRequestDirectory(c: { req: { query: (key: string) => string | undefined; header: (key: string) => string | undefined } }) {
+    const raw = c.req.query("directory") || c.req.header("x-opencode-directory")
+    if (!raw) return process.cwd()
+    try {
+      return decodeURIComponent(raw)
+    } catch {
+      return raw
+    }
+  }
+
   function allowExternalRoutes(config: Config.Info) {
     const value = Env.get("OPENCODE_ALLOW_EXTERNAL_ROUTES")
     if (value !== undefined) {
@@ -132,7 +142,23 @@ export namespace Server {
           if (c.req.method === "OPTIONS") return next()
           let routeRules: RouteAuthRule[] = []
           try {
-            routeRules = (await pluginRoutes()).authRoutes
+            const directory = resolveRequestDirectory(c)
+            routeRules = await Instance.provide({
+              directory,
+              init: InstanceBootstrap,
+              fn: async () => {
+                const rules = [...(await pluginRoutes()).authRoutes]
+                const endpoint = (await Config.get()).server?.toolEndpoint
+                if (endpoint?.enabled) {
+                  rules.unshift({
+                    method: "POST",
+                    path: "/tool/:toolName",
+                    auth: endpoint.auth ?? "api-key",
+                  })
+                }
+                return rules
+              },
+            })
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error)
             if (message.includes("No context found for instance")) {
@@ -142,7 +168,7 @@ export namespace Server {
               return c.json({ error: "Unauthorized" }, 401)
             }
           }
-          const ok = authorizeRequest(c.req.method, c.req.path, c.req.raw.headers, routeRules)
+          const ok = await authorizeRequest(c.req.method, c.req.path, c.req.raw.headers, routeRules)
           if (ok) return next()
           return c.json({ error: "Unauthorized" }, 401)
         })
@@ -700,18 +726,28 @@ export namespace Server {
             )
           }
         }
-        if (auth === "api-key" && !Flag.OPENCODE_TOOL_ENDPOINT_API_KEY) {
-          throw new Error(
-            "server.toolEndpoint.enabled with api-key auth requires OPENCODE_TOOL_ENDPOINT_API_KEY to be set",
-          )
-        }
-        if (auth === "plugin") {
-          const hasExternalHttpHook = await Plugin.hasExternal("http.request")
-          if (!hasExternalHttpHook) {
-            throw new Error(
-              "server.toolEndpoint.auth=plugin requires at least one configured external plugin with an http.request hook",
-            )
+        switch (auth) {
+          case "api-key": {
+            if (!Flag.OPENCODE_TOOL_ENDPOINT_API_KEY) {
+              throw new Error(
+                "server.toolEndpoint.enabled with api-key auth requires OPENCODE_TOOL_ENDPOINT_API_KEY to be set",
+              )
+            }
+            break
           }
+          case "plugin": {
+            const hasExternalHttpHook = await Plugin.hasExternal("http.request")
+            if (!hasExternalHttpHook) {
+              throw new Error(
+                "server.toolEndpoint.auth=plugin requires at least one configured external plugin with an http.request hook",
+              )
+            }
+            break
+          }
+          case "jwt":
+          case "oidc":
+          case "oauth2":
+            break
         }
       },
     })

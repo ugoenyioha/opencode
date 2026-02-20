@@ -1,6 +1,7 @@
 import type { AuthStrategy } from "@opencode-ai/plugin"
 import { Flag } from "@/flag/flag"
 import { timingSafeEqual } from "crypto"
+import { bearerFromHeaders, verifyBearerForStrategy } from "./compat/auth"
 
 export type RouteAuthRule = {
   method: string
@@ -70,11 +71,16 @@ function validBasicAuth(headers: Headers) {
   }
 }
 
-function strategyPasses(strategy: AuthStrategy, headers: Headers) {
+async function strategyPasses(strategy: AuthStrategy, headers: Headers) {
   if (strategy === "api-key") return validAPIKey(headers)
   // plugin auth is enforced by explicit plugin hooks (http.request).
   // Do not treat it as pre-authorized at the centralized middleware gate.
   if (strategy === "plugin") return false
+  if (strategy === "jwt" || strategy === "oidc" || strategy === "oauth2") {
+    const token = bearerFromHeaders(headers)
+    if (!token) return false
+    return verifyBearerForStrategy(strategy, token)
+  }
   return false
 }
 
@@ -87,9 +93,12 @@ function defaultGatePasses(headers: Headers) {
   return false
 }
 
-export function authorizeRequest(method: string, path: string, headers: Headers, routeRules: RouteAuthRule[]) {
+export async function authorizeRequest(method: string, path: string, headers: Headers, routeRules: RouteAuthRule[]) {
   const policy = resolvePolicy(method, path, routeRules)
   if (policy.mode === "defer" || policy.mode === "public") return true
   if (policy.mode === "global-default") return defaultGatePasses(headers)
-  return policy.anyOf.some((strategy) => strategyPasses(strategy, headers))
+  for (const strategy of policy.anyOf) {
+    if (await strategyPasses(strategy, headers)) return true
+  }
+  return false
 }

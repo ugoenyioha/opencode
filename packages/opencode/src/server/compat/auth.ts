@@ -15,6 +15,12 @@ function bearer(input: string | undefined) {
   return token
 }
 
+export type StrictBearerStrategy = "jwt" | "oidc" | "oauth2"
+
+export function bearerFromHeaders(headers: Headers) {
+  return bearer(headers.get("authorization") ?? undefined)
+}
+
 function parseBase64urlJSON(input: string) {
   try {
     const normalized = input.replace(/-/g, "+").replace(/_/g, "/")
@@ -573,6 +579,16 @@ async function verifyJWT(token: string) {
     return verifyRS256JWT(parsed, validatedJWKSURL.toString())
   }
   return false
+}
+
+export async function verifyBearerForStrategy(strategy: StrictBearerStrategy, token: string) {
+  try {
+    if (strategy === "jwt") return verifyJWT(token)
+    if (strategy === "oidc") return verifyOIDCJWT(token)
+    return verifyIntrospectionToken(token)
+  } catch {
+    return false
+  }
 }
 
 function bearerAuthEnabled() {
