@@ -55,7 +55,21 @@ Authorization: Bearer <token>
 
 OpenAI-compatible routes also accept `x-api-key: <token>` as an alternative input and validate it against `OPENCODE_TOOL_ENDPOINT_API_KEY`.
 
-If JWT env is configured, Bearer tokens are verified as JWTs:
+If OIDC, JWT, or OAuth introspection env is configured, Bearer tokens are validated before API-key fallback.
+
+Bearer routing:
+
+- JWT-shaped tokens (`header.payload.signature`) use OIDC/JWT verification first.
+- Opaque tokens use OAuth introspection when enabled.
+- If JWT/OIDC verification fails and introspection is enabled, OpenCode falls back to introspection by default (`OPENCODE_COMPAT_BEARER_FALLBACK_TO_INTROSPECTION=true`).
+
+OIDC verification env:
+
+- `OPENCODE_COMPAT_OIDC_ISSUER`
+- `OPENCODE_COMPAT_OIDC_AUDIENCE` (optional)
+- `OPENCODE_COMPAT_OIDC_ALGS` (optional, default `RS256`)
+
+JWT verification env:
 
 - `OPENCODE_COMPAT_JWT_JWKS_URL` for `RS256`
 - `OPENCODE_COMPAT_JWT_HS256_SECRET` for `HS256`
@@ -63,8 +77,27 @@ If JWT env is configured, Bearer tokens are verified as JWTs:
 - Optional clock skew override: `OPENCODE_COMPAT_JWT_CLOCK_SKEW_SECONDS` (default `30`)
 - RS256 JWTs must include a `kid` that matches an RSA key in the JWKS document.
 
-When JWT auth is enabled, invalid Bearer tokens fail closed with `401` even if `x-api-key` is also present.
-JWKS fetch uses a `5s` timeout and short failure caching to reduce repeated upstream calls during outages.
+OAuth introspection env:
+
+- `OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL`
+- `OPENCODE_COMPAT_OAUTH_CLIENT_ID`
+- `OPENCODE_COMPAT_OAUTH_CLIENT_SECRET`
+- `OPENCODE_COMPAT_OAUTH_INTROSPECTION_AUTH_METHOD` (optional: `client_secret_basic` default, `client_secret_post`, `bearer_client_credentials`)
+- `OPENCODE_COMPAT_OAUTH_INTROSPECTION_TOKEN_URL` (optional for `bearer_client_credentials`; defaults from introspection URL)
+- `OPENCODE_COMPAT_OAUTH_INTROSPECTION_BEARER_SCOPE` (optional for `bearer_client_credentials`, default `internal_oauth2_introspect`)
+- `OPENCODE_COMPAT_OAUTH_INTROSPECTION_TIMEOUT_MS` (optional, default `5000`)
+- `OPENCODE_COMPAT_OAUTH_ISSUER` (optional strict check)
+- `OPENCODE_COMPAT_OAUTH_AUDIENCE` (optional strict check)
+- `OPENCODE_COMPAT_OAUTH_REQUIRED_SCOPE` (optional any-of match)
+
+Outbound auth URL policy:
+
+- OIDC discovery/JWKS and introspection endpoints must use `https://`, or loopback `http://localhost|127.0.0.1|::1`.
+- OIDC discovery `issuer` must match the configured issuer value.
+- For non-loopback issuers, discovered `jwks_uri` must use the same host as the configured issuer.
+
+When OIDC/JWT/introspection auth is enabled, invalid Bearer tokens fail closed with `401` even if `x-api-key` is also present.
+Discovery/JWKS/introspection fetches use short timeouts and short failure caching to reduce repeated upstream calls during outages.
 
 Compat auth is keyed by `OPENCODE_TOOL_ENDPOINT_API_KEY`.
 Optional fallback to `OPENCODE_SERVER_PASSWORD` is disabled by default and requires `OPENCODE_COMPAT_ALLOW_SERVER_PASSWORD=true`.

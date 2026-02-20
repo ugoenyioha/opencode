@@ -266,6 +266,663 @@ describe("compat core routes", () => {
     })
   })
 
+  test("openai accepts valid OIDC JWT via discovery", async () => {
+    await using tmp = await project({
+      server: {
+        compat: {
+          openai: {
+            enabled: true,
+          },
+        },
+      },
+    })
+    await Instance.disposeAll()
+    const { privateKey, publicKey } = generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+      publicKeyEncoding: { format: "pem", type: "spki" },
+      privateKeyEncoding: { format: "pem", type: "pkcs8" },
+    })
+    const kid = "oidc-kid-1"
+    const jwk = createPublicKey(publicKey).export({ format: "jwk" }) as Record<string, unknown>
+    let issuer = ""
+    const server = createServer((req, res) => {
+      if (req.url === "/.well-known/openid-configuration") {
+        res.setHeader("content-type", "application/json")
+        res.end(JSON.stringify({ issuer, jwks_uri: `${issuer}/jwks` }))
+        return
+      }
+      if (req.url === "/jwks") {
+        res.setHeader("content-type", "application/json")
+        res.end(JSON.stringify({ keys: [{ ...jwk, use: "sig", alg: "RS256", kid }] }))
+        return
+      }
+      res.statusCode = 404
+      res.end()
+    })
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()))
+    try {
+      const address = server.address()
+      if (!address || typeof address === "string") throw new Error("failed to start oidc server")
+      issuer = `http://127.0.0.1:${address.port}`
+      const token = signRS256(
+        { exp: Math.floor(Date.now() / 1000) + 300, iss: issuer, aud: "aud-oidc" },
+        privateKey,
+        kid,
+      )
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          Env.set("OPENCODE_COMPAT_OIDC_ISSUER", issuer)
+          Env.set("OPENCODE_COMPAT_OIDC_AUDIENCE", "aud-oidc")
+          Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
+          const app = Server.App()
+          const response = await app.request("/v1/models", {
+            headers: {
+              authorization: `Bearer ${token}`,
+              "x-opencode-directory": tmp.path,
+            },
+          })
+          expect(response.status).toBe(200)
+        },
+      })
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())))
+    }
+  })
+
+  test("openai accepts opaque bearer via oauth introspection", async () => {
+    await using tmp = await project({
+      server: {
+        compat: {
+          openai: {
+            enabled: true,
+          },
+        },
+      },
+    })
+    await Instance.disposeAll()
+    const server = createServer((req, res) => {
+      if (req.url !== "/introspect") {
+        res.statusCode = 404
+        res.end()
+        return
+      }
+      let body = ""
+      req.on("data", (chunk) => {
+        body += chunk.toString("utf8")
+      })
+      req.on("end", () => {
+        const token = new URLSearchParams(body).get("token")
+        if (token !== "opaque-token") {
+          res.setHeader("content-type", "application/json")
+          res.end(JSON.stringify({ active: false }))
+          return
+        }
+        res.setHeader("content-type", "application/json")
+        res.end(
+          JSON.stringify({
+            active: true,
+            iss: "https://issuer.introspection",
+            aud: ["aud-introspection"],
+            scope: "profile compat.read",
+            exp: Math.floor(Date.now() / 1000) + 120,
+          }),
+        )
+      })
+    })
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()))
+    try {
+      const address = server.address()
+      if (!address || typeof address === "string") throw new Error("failed to start introspection server")
+      const introspectionUrl = `http://127.0.0.1:${address.port}/introspect`
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL", introspectionUrl)
+          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_ID", "client-id")
+          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_SECRET", "client-secret")
+          Env.set("OPENCODE_COMPAT_OAUTH_ISSUER", "https://issuer.introspection")
+          Env.set("OPENCODE_COMPAT_OAUTH_AUDIENCE", "aud-introspection")
+          Env.set("OPENCODE_COMPAT_OAUTH_REQUIRED_SCOPE", "compat.read compat.admin")
+          Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
+          const app = Server.App()
+          const response = await app.request("/v1/models", {
+            headers: {
+              authorization: "Bearer opaque-token",
+              "x-opencode-directory": tmp.path,
+            },
+          })
+          expect(response.status).toBe(200)
+        },
+      })
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())))
+    }
+  })
+
+  test("openai supports introspection with bearer client-credentials auth method", async () => {
+    await using tmp = await project({
+      server: {
+        compat: {
+          openai: {
+            enabled: true,
+          },
+        },
+      },
+    })
+    await Instance.disposeAll()
+
+    const server = createServer((req, res) => {
+      if (req.url === "/oauth2/token") {
+        res.setHeader("content-type", "application/json")
+        res.end(
+          JSON.stringify({
+            access_token: "introspection-bearer-token",
+            token_type: "Bearer",
+            expires_in: 120,
+          }),
+        )
+        return
+      }
+      if (req.url !== "/introspect") {
+        res.statusCode = 404
+        res.end()
+        return
+      }
+      const auth = req.headers["authorization"]
+      if (auth !== "Bearer introspection-bearer-token") {
+        res.statusCode = 401
+        res.setHeader("content-type", "application/json")
+        res.end(JSON.stringify({ active: false }))
+        return
+      }
+      res.setHeader("content-type", "application/json")
+      res.end(
+        JSON.stringify({
+          active: true,
+          iss: "https://issuer.introspection",
+          aud: ["aud-introspection"],
+          scope: "compat.read",
+          exp: Math.floor(Date.now() / 1000) + 120,
+        }),
+      )
+    })
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()))
+    try {
+      const address = server.address()
+      if (!address || typeof address === "string") throw new Error("failed to start introspection server")
+      const base = `http://127.0.0.1:${address.port}`
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL", `${base}/introspect`)
+          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_TOKEN_URL", `${base}/oauth2/token`)
+          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_AUTH_METHOD", "bearer_client_credentials")
+          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_ID", "client-id")
+          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_SECRET", "client-secret")
+          Env.set("OPENCODE_COMPAT_OAUTH_ISSUER", "https://issuer.introspection")
+          Env.set("OPENCODE_COMPAT_OAUTH_AUDIENCE", "aud-introspection")
+          Env.set("OPENCODE_COMPAT_OAUTH_REQUIRED_SCOPE", "compat.read")
+          Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
+          const app = Server.App()
+          const response = await app.request("/v1/models", {
+            headers: {
+              authorization: "Bearer opaque-token-bearer-auth",
+              "x-opencode-directory": tmp.path,
+            },
+          })
+          expect(response.status).toBe(200)
+        },
+      })
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())))
+    }
+  })
+
+  test("openai falls back from jwt verification failure to introspection when enabled", async () => {
+    await using tmp = await project({
+      server: {
+        compat: {
+          openai: {
+            enabled: true,
+          },
+        },
+      },
+    })
+    await Instance.disposeAll()
+    const { privateKey } = generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+      publicKeyEncoding: { format: "pem", type: "spki" },
+      privateKeyEncoding: { format: "pem", type: "pkcs8" },
+    })
+    const token = signRS256(
+      { exp: Math.floor(Date.now() / 1000) + 120, iss: "https://bad-issuer", aud: "bad-aud" },
+      privateKey,
+      "kid-missing",
+    )
+    const server = createServer((req, res) => {
+      if (req.url !== "/introspect") {
+        res.statusCode = 404
+        res.end()
+        return
+      }
+      res.setHeader("content-type", "application/json")
+      res.end(
+        JSON.stringify({
+          active: true,
+          iss: "https://fallback-issuer",
+          aud: "fallback-aud",
+          scope: "compat.read",
+          exp: Math.floor(Date.now() / 1000) + 120,
+        }),
+      )
+    })
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()))
+    try {
+      const address = server.address()
+      if (!address || typeof address === "string") throw new Error("failed to start introspection server")
+      const introspectionUrl = `http://127.0.0.1:${address.port}/introspect`
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          Env.set("OPENCODE_COMPAT_OIDC_ISSUER", "https://different-issuer")
+          Env.set("OPENCODE_COMPAT_OIDC_AUDIENCE", "different-aud")
+          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL", introspectionUrl)
+          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_ID", "client-id")
+          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_SECRET", "client-secret")
+          Env.set("OPENCODE_COMPAT_OAUTH_ISSUER", "https://fallback-issuer")
+          Env.set("OPENCODE_COMPAT_OAUTH_AUDIENCE", "fallback-aud")
+          Env.set("OPENCODE_COMPAT_OAUTH_REQUIRED_SCOPE", "compat.read")
+          Env.set("OPENCODE_COMPAT_BEARER_FALLBACK_TO_INTROSPECTION", "true")
+          Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
+
+          const app = Server.App()
+          const response = await app.request("/v1/models", {
+            headers: {
+              authorization: `Bearer ${token}`,
+              "x-opencode-directory": tmp.path,
+            },
+          })
+          expect(response.status).toBe(200)
+        },
+      })
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())))
+    }
+  })
+
+  test("openai introspection enforces strict audience and issuer checks", async () => {
+    await using tmp = await project({
+      server: {
+        compat: {
+          openai: {
+            enabled: true,
+          },
+        },
+      },
+    })
+    await Instance.disposeAll()
+    const server = createServer((req, res) => {
+      if (req.url !== "/introspect") {
+        res.statusCode = 404
+        res.end()
+        return
+      }
+      res.setHeader("content-type", "application/json")
+      res.end(
+        JSON.stringify({
+          active: true,
+          iss: "https://unexpected-issuer",
+          aud: "unexpected-aud",
+          scope: "compat.read",
+          exp: Math.floor(Date.now() / 1000) + 120,
+        }),
+      )
+    })
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()))
+    try {
+      const address = server.address()
+      if (!address || typeof address === "string") throw new Error("failed to start introspection server")
+      const introspectionUrl = `http://127.0.0.1:${address.port}/introspect`
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL", introspectionUrl)
+          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_ID", "client-id")
+          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_SECRET", "client-secret")
+          Env.set("OPENCODE_COMPAT_OAUTH_ISSUER", "https://expected-issuer")
+          Env.set("OPENCODE_COMPAT_OAUTH_AUDIENCE", "expected-aud")
+          Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
+
+          const app = Server.App()
+          const response = await app.request("/v1/models", {
+            headers: {
+              authorization: "Bearer opaque-token",
+              "x-opencode-directory": tmp.path,
+            },
+          })
+          expect(response.status).toBe(401)
+        },
+      })
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())))
+    }
+  })
+
+  test("openai returns deterministic 401 when introspection times out", async () => {
+    await using tmp = await project({
+      server: {
+        compat: {
+          openai: {
+            enabled: true,
+          },
+        },
+      },
+    })
+    await Instance.disposeAll()
+    const server = createServer((req, res) => {
+      if (req.url !== "/introspect") {
+        res.statusCode = 404
+        res.end()
+        return
+      }
+      req.on("data", () => {})
+      req.on("end", () => {
+        setTimeout(() => {
+          res.setHeader("content-type", "application/json")
+          res.end(JSON.stringify({ active: true }))
+        }, 200)
+      })
+    })
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()))
+    try {
+      const address = server.address()
+      if (!address || typeof address === "string") throw new Error("failed to start introspection server")
+      const introspectionUrl = `http://127.0.0.1:${address.port}/introspect`
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL", introspectionUrl)
+          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_ID", "client-id")
+          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_SECRET", "client-secret")
+          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_TIMEOUT_MS", "50")
+          Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
+
+          const app = Server.App()
+          const first = await app.request("/v1/models", {
+            headers: {
+              authorization: "Bearer opaque-timeout-token",
+              "x-opencode-directory": tmp.path,
+            },
+          })
+          expect(first.status).toBe(401)
+
+          const second = await app.request("/v1/models", {
+            headers: {
+              authorization: "Bearer opaque-timeout-token",
+              "x-opencode-directory": tmp.path,
+            },
+          })
+          expect(second.status).toBe(401)
+        },
+      })
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())))
+    }
+  })
+
+  test("openai uses negative cache for failed introspection responses", async () => {
+    await using tmp = await project({
+      server: {
+        compat: {
+          openai: {
+            enabled: true,
+          },
+        },
+      },
+    })
+    await Instance.disposeAll()
+    let hits = 0
+    const server = createServer((req, res) => {
+      if (req.url !== "/introspect") {
+        res.statusCode = 404
+        res.end()
+        return
+      }
+      hits += 1
+      res.statusCode = 500
+      res.setHeader("content-type", "application/json")
+      res.end(JSON.stringify({ error: "temporary failure" }))
+    })
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()))
+    try {
+      const address = server.address()
+      if (!address || typeof address === "string") throw new Error("failed to start introspection server")
+      const introspectionUrl = `http://127.0.0.1:${address.port}/introspect`
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL", introspectionUrl)
+          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_ID", "client-id")
+          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_SECRET", "client-secret")
+          Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
+
+          const app = Server.App()
+          const first = await app.request("/v1/models", {
+            headers: {
+              authorization: "Bearer opaque-cache-token",
+              "x-opencode-directory": tmp.path,
+            },
+          })
+          expect(first.status).toBe(401)
+
+          const second = await app.request("/v1/models", {
+            headers: {
+              authorization: "Bearer opaque-cache-token",
+              "x-opencode-directory": tmp.path,
+            },
+          })
+          expect(second.status).toBe(401)
+        },
+      })
+      expect(hits).toBe(1)
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())))
+    }
+  })
+
+  test("openai does not fallback to introspection when fallback flag is disabled", async () => {
+    await using tmp = await project({
+      server: {
+        compat: {
+          openai: {
+            enabled: true,
+          },
+        },
+      },
+    })
+    await Instance.disposeAll()
+    let hits = 0
+    const server = createServer((req, res) => {
+      if (req.url !== "/introspect") {
+        res.statusCode = 404
+        res.end()
+        return
+      }
+      hits += 1
+      res.setHeader("content-type", "application/json")
+      res.end(
+        JSON.stringify({
+          active: true,
+          iss: "https://fallback-disabled-issuer",
+          aud: "fallback-disabled-aud",
+          scope: "compat.read",
+          exp: Math.floor(Date.now() / 1000) + 120,
+        }),
+      )
+    })
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()))
+    try {
+      const address = server.address()
+      if (!address || typeof address === "string") throw new Error("failed to start introspection server")
+      const introspectionUrl = `http://127.0.0.1:${address.port}/introspect`
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          Env.set("OPENCODE_COMPAT_OIDC_ISSUER", "https://issuer-never-resolves.invalid")
+          Env.set("OPENCODE_COMPAT_OIDC_AUDIENCE", "aud-disabled")
+          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL", introspectionUrl)
+          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_ID", "client-id")
+          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_SECRET", "client-secret")
+          Env.set("OPENCODE_COMPAT_OAUTH_ISSUER", "https://fallback-disabled-issuer")
+          Env.set("OPENCODE_COMPAT_OAUTH_AUDIENCE", "fallback-disabled-aud")
+          Env.set("OPENCODE_COMPAT_OAUTH_REQUIRED_SCOPE", "compat.read")
+          Env.set("OPENCODE_COMPAT_BEARER_FALLBACK_TO_INTROSPECTION", "false")
+          Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
+
+          const app = Server.App()
+          const response = await app.request("/v1/models", {
+            headers: {
+              authorization: "Bearer eyJhbGciOiJSUzI1NiJ9.eyJpc3MiOiJiYWQifQ.c2ln",
+              "x-opencode-directory": tmp.path,
+            },
+          })
+          expect(response.status).toBe(401)
+        },
+      })
+      expect(hits).toBe(0)
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())))
+    }
+  })
+
+  test("openai returns 401 when oidc discovery endpoint is unreachable", async () => {
+    await using tmp = await project({
+      server: {
+        compat: {
+          openai: {
+            enabled: true,
+          },
+        },
+      },
+    })
+    await Instance.disposeAll()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        Env.set("OPENCODE_COMPAT_OIDC_ISSUER", "http://127.0.0.1:9")
+        Env.set("OPENCODE_COMPAT_OIDC_AUDIENCE", "aud")
+        Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
+
+        const app = Server.App()
+        const first = await app.request("/v1/models", {
+          headers: {
+            authorization: "Bearer eyJhbGciOiJSUzI1NiJ9.eyJpc3MiOiJodHRwOi8vMTI3LjAuMC4xOjkiLCJhdWQiOiJhdWQifQ.c2ln",
+            "x-opencode-directory": tmp.path,
+          },
+        })
+        expect(first.status).toBe(401)
+
+        const second = await app.request("/v1/models", {
+          headers: {
+            authorization: "Bearer eyJhbGciOiJSUzI1NiJ9.eyJpc3MiOiJodHRwOi8vMTI3LjAuMC4xOjkiLCJhdWQiOiJhdWQifQ.c2ln",
+            "x-opencode-directory": tmp.path,
+          },
+        })
+        expect(second.status).toBe(401)
+      },
+    })
+  })
+
+  test("openai rejects oidc discovery when discovery issuer mismatches configured issuer", async () => {
+    await using tmp = await project({
+      server: {
+        compat: {
+          openai: {
+            enabled: true,
+          },
+        },
+      },
+    })
+    await Instance.disposeAll()
+
+    let issuer = ""
+    const server = createServer((req, res) => {
+      if (req.url === "/.well-known/openid-configuration") {
+        res.setHeader("content-type", "application/json")
+        res.end(JSON.stringify({ issuer: `${issuer}/other`, jwks_uri: `${issuer}/jwks` }))
+        return
+      }
+      if (req.url === "/jwks") {
+        res.setHeader("content-type", "application/json")
+        res.end(JSON.stringify({ keys: [] }))
+        return
+      }
+      res.statusCode = 404
+      res.end()
+    })
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()))
+    try {
+      const address = server.address()
+      if (!address || typeof address === "string") throw new Error("failed to start oidc server")
+      issuer = `http://127.0.0.1:${address.port}`
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          Env.set("OPENCODE_COMPAT_OIDC_ISSUER", issuer)
+          Env.set("OPENCODE_COMPAT_OIDC_AUDIENCE", "aud")
+          Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
+
+          const app = Server.App()
+          const response = await app.request("/v1/models", {
+            headers: {
+              authorization: "Bearer eyJhbGciOiJSUzI1NiJ9.eyJpc3MiOiJiYWQifQ.c2ln",
+              "x-opencode-directory": tmp.path,
+            },
+          })
+          expect(response.status).toBe(401)
+        },
+      })
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())))
+    }
+  })
+
+  test("openai rejects non-https non-loopback introspection endpoint", async () => {
+    await using tmp = await project({
+      server: {
+        compat: {
+          openai: {
+            enabled: true,
+          },
+        },
+      },
+    })
+    await Instance.disposeAll()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL", "http://example.com/introspect")
+        Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_ID", "client-id")
+        Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_SECRET", "client-secret")
+        Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
+
+        const app = Server.App()
+        const response = await app.request("/v1/models", {
+          headers: {
+            authorization: "Bearer opaque-policy-token",
+            "x-opencode-directory": tmp.path,
+          },
+        })
+        expect(response.status).toBe(401)
+      },
+    })
+  })
+
   test("openai model list returns available model ids", async () => {
     await using tmp = await project({
       server: {

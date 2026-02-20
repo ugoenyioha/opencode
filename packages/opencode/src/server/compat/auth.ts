@@ -51,6 +51,20 @@ type JWTPayload = {
   aud?: string | string[]
 }
 
+type IntrospectionResponse = {
+  active?: boolean
+  exp?: number
+  nbf?: number
+  iss?: string
+  aud?: string | string[]
+  scope?: string | string[]
+}
+
+type OAuthTokenResponse = {
+  access_token?: string
+  expires_in?: number
+}
+
 type ParsedJWT = {
   header: JWTHeader
   payload: JWTPayload
@@ -70,6 +84,33 @@ function parseJWT(token: string): ParsedJWT | undefined {
     signingInput: `${encodedHeader}.${encodedPayload}`,
     signature: decodeBase64url(encodedSignature),
   }
+}
+
+function isLikelyJWT(token: string) {
+  const parts = token.split(".")
+  if (parts.length !== 3) return false
+  return parts.every((part) => /^[A-Za-z0-9_-]+$/.test(part))
+}
+
+function parseList(input: string | undefined) {
+  if (!input) return []
+  return input
+    .split(/[\s,]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+function parseAudience(input: unknown): string[] {
+  if (typeof input === "string") return [input]
+  if (!Array.isArray(input)) return []
+  return input.filter((value): value is string => typeof value === "string")
+}
+
+function hasRequiredAnyScope(required: string[], granted: string[]) {
+  if (!required.length) return true
+  if (!granted.length) return false
+  const grantedSet = new Set(granted)
+  return required.some((scope) => grantedSet.has(scope))
 }
 
 function claimChecks(payload: JWTPayload) {
@@ -95,6 +136,22 @@ function claimChecks(payload: JWTPayload) {
     }
   }
 
+  return true
+}
+
+function claimChecksWithExpected(payload: JWTPayload, expectedIssuer?: string, expectedAudience?: string) {
+  const now = Math.floor(Date.now() / 1000)
+  const skew = Number(Env.get("OPENCODE_COMPAT_JWT_CLOCK_SKEW_SECONDS")) || JWT_CLOCK_SKEW_SECONDS
+  const exp = payload.exp
+  if (typeof exp === "number" && now >= exp + skew) return false
+  const nbf = payload.nbf
+  if (typeof nbf === "number" && now < nbf - skew) return false
+
+  if (expectedIssuer && payload.iss !== expectedIssuer) return false
+  if (expectedAudience) {
+    const audiences = parseAudience(payload.aud)
+    if (!audiences.includes(expectedAudience)) return false
+  }
   return true
 }
 
@@ -136,7 +193,7 @@ async function loadJWKS(url: string) {
   }
 }
 
-async function verifyRS256JWT(parsed: ParsedJWT, jwksURL: string) {
+async function verifyRS256Signature(parsed: ParsedJWT, jwksURL: string) {
   if (parsed.header.alg !== "RS256") return false
   if (!parsed.header.kid) return false
 
@@ -149,9 +206,356 @@ async function verifyRS256JWT(parsed: ParsedJWT, jwksURL: string) {
     const verifier = createVerify("RSA-SHA256")
     verifier.update(parsed.signingInput)
     verifier.end()
-    if (!verifier.verify(publicKey, parsed.signature)) return false
-    return claimChecks(parsed.payload)
+    return verifier.verify(publicKey, parsed.signature)
   } catch {
+    return false
+  }
+}
+
+async function verifyRS256JWT(parsed: ParsedJWT, jwksURL: string) {
+  const signatureOk = await verifyRS256Signature(parsed, jwksURL)
+  if (!signatureOk) return false
+  return claimChecks(parsed.payload)
+}
+
+type OIDCDiscovery = {
+  issuer?: string
+  jwks_uri?: string
+}
+
+const oidcDiscoveryCache = new Map<string, { expiresAt: number; data?: OIDCDiscovery }>()
+const OIDC_DISCOVERY_TTL_MS = 60_000
+const INTROSPECTION_CACHE_MAX_ENTRIES = 2048
+
+function toURL(input: string) {
+  try {
+    return new URL(input)
+  } catch {
+    return
+  }
+}
+
+function isLoopbackHost(hostname: string) {
+  const normalized = hostname.trim().toLowerCase()
+  return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "::1"
+}
+
+function isAllowedAuthURL(url: URL) {
+  const scheme = url.protocol.toLowerCase()
+  if (scheme === "https:") return true
+  if (scheme === "http:" && isLoopbackHost(url.hostname)) return true
+  return false
+}
+
+function enforceAuthURLPolicy(input: string) {
+  const url = toURL(input)
+  if (!url) return
+  if (!isAllowedAuthURL(url)) return
+  return url
+}
+
+function normalizeIssuer(issuer: string) {
+  return issuer.endsWith("/") ? issuer.slice(0, -1) : issuer
+}
+
+function trimIssuerPath(input: string) {
+  const parsed = toURL(input)
+  if (!parsed) return input
+  parsed.pathname = parsed.pathname.replace(/\/$/, "")
+  parsed.search = ""
+  parsed.hash = ""
+  return parsed.toString().replace(/\/$/, "")
+}
+
+function introspectionCacheSet(key: string, value: { expiresAt: number; allowed: boolean }) {
+  introspectionCache.set(key, value)
+  if (introspectionCache.size <= INTROSPECTION_CACHE_MAX_ENTRIES) return
+
+  const now = Date.now()
+  for (const [cacheKey, entry] of introspectionCache) {
+    if (entry.expiresAt <= now) introspectionCache.delete(cacheKey)
+  }
+  if (introspectionCache.size <= INTROSPECTION_CACHE_MAX_ENTRIES) return
+
+  while (introspectionCache.size > INTROSPECTION_CACHE_MAX_ENTRIES) {
+    const oldest = introspectionCache.keys().next().value
+    if (!oldest) break
+    introspectionCache.delete(oldest)
+  }
+}
+
+async function loadOIDCDiscovery(issuer: string) {
+  const cached = oidcDiscoveryCache.get(issuer)
+  const now = Date.now()
+  if (cached && cached.expiresAt > now) return cached.data
+
+  const normalizedIssuer = normalizeIssuer(issuer)
+  const validatedIssuer = enforceAuthURLPolicy(normalizedIssuer)
+  if (!validatedIssuer) {
+    oidcDiscoveryCache.set(issuer, { expiresAt: now + JWKS_ERROR_TTL_MS })
+    return
+  }
+  const discoveryUrl = `${normalizedIssuer}/.well-known/openid-configuration`
+  try {
+    const response = await fetch(discoveryUrl, { signal: AbortSignal.timeout(JWKS_FETCH_TIMEOUT_MS) })
+    if (!response.ok) {
+      oidcDiscoveryCache.set(issuer, { expiresAt: now + JWKS_ERROR_TTL_MS })
+      return
+    }
+    const data = (await response.json()) as OIDCDiscovery
+    if (!data?.jwks_uri) {
+      oidcDiscoveryCache.set(issuer, { expiresAt: now + JWKS_ERROR_TTL_MS })
+      return
+    }
+    const discoveredIssuer = typeof data.issuer === "string" ? trimIssuerPath(data.issuer) : undefined
+    const expectedIssuer = trimIssuerPath(normalizedIssuer)
+    if (discoveredIssuer && discoveredIssuer !== expectedIssuer) {
+      oidcDiscoveryCache.set(issuer, { expiresAt: now + JWKS_ERROR_TTL_MS })
+      return
+    }
+    const jwksURL = enforceAuthURLPolicy(data.jwks_uri)
+    if (!jwksURL) {
+      oidcDiscoveryCache.set(issuer, { expiresAt: now + JWKS_ERROR_TTL_MS })
+      return
+    }
+    if (!isLoopbackHost(validatedIssuer.hostname) && jwksURL.hostname !== validatedIssuer.hostname) {
+      oidcDiscoveryCache.set(issuer, { expiresAt: now + JWKS_ERROR_TTL_MS })
+      return
+    }
+    const normalizedData: OIDCDiscovery = {
+      issuer: data.issuer,
+      jwks_uri: jwksURL.toString(),
+    }
+    oidcDiscoveryCache.set(issuer, { expiresAt: now + OIDC_DISCOVERY_TTL_MS, data: normalizedData })
+    return normalizedData
+  } catch {
+    oidcDiscoveryCache.set(issuer, { expiresAt: now + JWKS_ERROR_TTL_MS })
+    return
+  }
+}
+
+async function verifyOIDCJWT(token: string) {
+  const issuer = Env.get("OPENCODE_COMPAT_OIDC_ISSUER")
+  if (!issuer) return false
+
+  const parsed = parseJWT(token)
+  if (!parsed) return false
+  if (parsed.header.alg === "none") return false
+
+  const allowedAlgs = parseList(Env.get("OPENCODE_COMPAT_OIDC_ALGS"))
+  const acceptedAlgs = allowedAlgs.length ? allowedAlgs : ["RS256"]
+  const alg = parsed.header.alg ?? ""
+  if (!acceptedAlgs.includes(alg)) return false
+  if (alg !== "RS256") return false
+
+  const discovery = await loadOIDCDiscovery(issuer)
+  const jwksUrl = discovery?.jwks_uri
+  if (!jwksUrl) return false
+  const signatureOk = await verifyRS256Signature(parsed, jwksUrl)
+  if (!signatureOk) return false
+
+  const audience = Env.get("OPENCODE_COMPAT_OIDC_AUDIENCE")
+  return claimChecksWithExpected(parsed.payload, issuer, audience)
+}
+
+const introspectionCache = new Map<string, { expiresAt: number; allowed: boolean }>()
+const INTROSPECTION_SUCCESS_TTL_MS = 60_000
+const introspectionAuthTokenCache = new Map<string, { expiresAt: number; token: string }>()
+
+function introspectionConfigKey() {
+  return [
+    Env.get("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL") ?? "",
+    Env.get("OPENCODE_COMPAT_OAUTH_CLIENT_ID") ?? "",
+    Env.get("OPENCODE_COMPAT_OAUTH_REQUIRED_SCOPE") ?? "",
+    Env.get("OPENCODE_COMPAT_OAUTH_ISSUER") ?? "",
+    Env.get("OPENCODE_COMPAT_OAUTH_AUDIENCE") ?? "",
+    Env.get("OPENCODE_COMPAT_OAUTH_INTROSPECTION_AUTH_METHOD") ?? "",
+  ].join("|")
+}
+
+function introspectionAuthTokenCacheKey() {
+  return [
+    Env.get("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL") ?? "",
+    Env.get("OPENCODE_COMPAT_OAUTH_CLIENT_ID") ?? "",
+    Env.get("OPENCODE_COMPAT_OAUTH_INTROSPECTION_TOKEN_URL") ?? "",
+    Env.get("OPENCODE_COMPAT_OAUTH_INTROSPECTION_BEARER_SCOPE") ?? "",
+  ].join("|")
+}
+
+function introspectionCacheTokenKey(token: string) {
+  return createHash("sha256").update(`${introspectionConfigKey()}|${token}`, "utf8").digest("hex")
+}
+
+function introspectionEnabled() {
+  return (
+    !!Env.get("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL") &&
+    !!Env.get("OPENCODE_COMPAT_OAUTH_CLIENT_ID") &&
+    !!Env.get("OPENCODE_COMPAT_OAUTH_CLIENT_SECRET")
+  )
+}
+
+function resolveIntrospectionTokenURL(endpointURL: URL) {
+  const explicit = Env.get("OPENCODE_COMPAT_OAUTH_INTROSPECTION_TOKEN_URL")
+  if (explicit) {
+    const validated = enforceAuthURLPolicy(explicit)
+    if (!validated) return
+    return validated
+  }
+
+  const candidate = new URL(endpointURL.toString())
+  if (candidate.pathname.endsWith("/introspect")) {
+    candidate.pathname = candidate.pathname.replace(/\/introspect$/, "/token")
+  } else {
+    candidate.pathname = "/oauth2/token"
+  }
+  const validated = enforceAuthURLPolicy(candidate.toString())
+  if (!validated) return
+  return validated
+}
+
+async function loadIntrospectionBearerToken(
+  endpointURL: URL,
+  clientId: string,
+  clientSecret: string,
+  timeoutMs: number,
+) {
+  const cacheKey = introspectionAuthTokenCacheKey()
+  const cached = introspectionAuthTokenCache.get(cacheKey)
+  const now = Date.now()
+  if (cached && cached.expiresAt > now) return cached.token
+
+  const tokenURL = resolveIntrospectionTokenURL(endpointURL)
+  if (!tokenURL) return
+
+  const scope = Env.get("OPENCODE_COMPAT_OAUTH_INTROSPECTION_BEARER_SCOPE") ?? "internal_oauth2_introspect"
+  const tokenBody = new URLSearchParams({
+    grant_type: "client_credentials",
+    scope,
+  })
+  const credentials = Buffer.from(`${clientId}:${clientSecret}`, "utf8").toString("base64")
+  try {
+    const response = await fetch(tokenURL.toString(), {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        authorization: `Basic ${credentials}`,
+      },
+      body: tokenBody.toString(),
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+    if (!response.ok) return
+    const payload = (await response.json()) as OAuthTokenResponse
+    if (!payload?.access_token) return
+
+    const ttlMs = Math.max(1000, ((payload.expires_in ?? 60) - 5) * 1000)
+    introspectionAuthTokenCache.set(cacheKey, {
+      token: payload.access_token,
+      expiresAt: now + ttlMs,
+    })
+    return payload.access_token
+  } catch {
+    return
+  }
+}
+
+function scopeFromIntrospection(value: IntrospectionResponse["scope"]): string[] {
+  if (typeof value === "string") return parseList(value)
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is string => typeof item === "string")
+}
+
+function verifyIntrospectionClaims(payload: IntrospectionResponse) {
+  const now = Math.floor(Date.now() / 1000)
+  const skew = Number(Env.get("OPENCODE_COMPAT_JWT_CLOCK_SKEW_SECONDS")) || JWT_CLOCK_SKEW_SECONDS
+  if (typeof payload.exp === "number" && now >= payload.exp + skew) return false
+  if (typeof payload.nbf === "number" && now < payload.nbf - skew) return false
+
+  const expectedIssuer = Env.get("OPENCODE_COMPAT_OAUTH_ISSUER")
+  if (expectedIssuer) {
+    if (typeof payload.iss !== "string") return false
+    if (payload.iss !== expectedIssuer) return false
+  }
+
+  const expectedAudience = Env.get("OPENCODE_COMPAT_OAUTH_AUDIENCE")
+  if (expectedAudience) {
+    const audiences = parseAudience(payload.aud)
+    if (!audiences.length) return false
+    if (!audiences.includes(expectedAudience)) return false
+  }
+
+  const requiredScopes = parseList(Env.get("OPENCODE_COMPAT_OAUTH_REQUIRED_SCOPE"))
+  if (requiredScopes.length) {
+    const tokenScopes = scopeFromIntrospection(payload.scope)
+    if (!hasRequiredAnyScope(requiredScopes, tokenScopes)) return false
+  }
+
+  return true
+}
+
+async function verifyIntrospectionToken(token: string) {
+  if (!introspectionEnabled()) return false
+  const key = introspectionCacheTokenKey(token)
+  const now = Date.now()
+  const cached = introspectionCache.get(key)
+  if (cached && cached.expiresAt > now) return cached.allowed
+
+  const endpoint = Env.get("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL")!
+  const clientId = Env.get("OPENCODE_COMPAT_OAUTH_CLIENT_ID")!
+  const clientSecret = Env.get("OPENCODE_COMPAT_OAUTH_CLIENT_SECRET")!
+  const authMethod = Env.get("OPENCODE_COMPAT_OAUTH_INTROSPECTION_AUTH_METHOD") ?? "client_secret_basic"
+  const timeoutMs = Number(Env.get("OPENCODE_COMPAT_OAUTH_INTROSPECTION_TIMEOUT_MS")) || JWKS_FETCH_TIMEOUT_MS
+  const endpointUrl = enforceAuthURLPolicy(endpoint)
+  if (!endpointUrl) {
+    introspectionCacheSet(key, { expiresAt: now + JWKS_ERROR_TTL_MS, allowed: false })
+    return false
+  }
+
+  const body = new URLSearchParams({ token })
+  const headers: Record<string, string> = {
+    "content-type": "application/x-www-form-urlencoded",
+  }
+
+  if (authMethod === "client_secret_post") {
+    body.set("client_id", clientId)
+    body.set("client_secret", clientSecret)
+  } else if (authMethod === "bearer_client_credentials") {
+    const bearerToken = await loadIntrospectionBearerToken(endpointUrl, clientId, clientSecret, timeoutMs)
+    if (!bearerToken) {
+      introspectionCacheSet(key, { expiresAt: now + JWKS_ERROR_TTL_MS, allowed: false })
+      return false
+    }
+    headers.authorization = `Bearer ${bearerToken}`
+  } else {
+    const credentials = Buffer.from(`${clientId}:${clientSecret}`, "utf8").toString("base64")
+    headers.authorization = `Basic ${credentials}`
+  }
+
+  try {
+    const response = await fetch(endpointUrl.toString(), {
+      method: "POST",
+      headers,
+      body: body.toString(),
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+    if (!response.ok) {
+      introspectionCacheSet(key, { expiresAt: now + JWKS_ERROR_TTL_MS, allowed: false })
+      return false
+    }
+
+    const payload = (await response.json()) as IntrospectionResponse
+    const active = payload?.active === true
+    const allowed = active && verifyIntrospectionClaims(payload)
+    if (!allowed) {
+      introspectionCacheSet(key, { expiresAt: now + JWKS_ERROR_TTL_MS, allowed: false })
+      return false
+    }
+
+    const exp = typeof payload.exp === "number" ? payload.exp * 1000 : undefined
+    const successExpiry = exp ? Math.min(exp, now + INTROSPECTION_SUCCESS_TTL_MS) : now + INTROSPECTION_SUCCESS_TTL_MS
+    introspectionCacheSet(key, { expiresAt: successExpiry, allowed: true })
+    return true
+  } catch {
+    introspectionCacheSet(key, { expiresAt: now + JWKS_ERROR_TTL_MS, allowed: false })
     return false
   }
 }
@@ -175,6 +579,54 @@ async function verifyJWT(token: string) {
   return false
 }
 
+function bearerAuthEnabled() {
+  return (
+    !!Env.get("OPENCODE_COMPAT_JWT_JWKS_URL") ||
+    !!Env.get("OPENCODE_COMPAT_JWT_HS256_SECRET") ||
+    !!Env.get("OPENCODE_COMPAT_OIDC_ISSUER") ||
+    introspectionEnabled()
+  )
+}
+
+function allowJwtFallbackToIntrospection() {
+  const value = Env.get("OPENCODE_COMPAT_BEARER_FALLBACK_TO_INTROSPECTION")
+  if (value === undefined) return true
+  const normalized = value.trim().toLowerCase()
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on"
+}
+
+async function verifyBearerToken(token: string) {
+  const oidcEnabled = !!Env.get("OPENCODE_COMPAT_OIDC_ISSUER")
+  const jwtEnabled = !!Env.get("OPENCODE_COMPAT_JWT_JWKS_URL") || !!Env.get("OPENCODE_COMPAT_JWT_HS256_SECRET")
+  const introspectionOn = introspectionEnabled()
+
+  const likelyJWT = isLikelyJWT(token)
+  if (likelyJWT) {
+    if (oidcEnabled) {
+      if (await verifyOIDCJWT(token)) return true
+      if (introspectionOn && allowJwtFallbackToIntrospection()) return verifyIntrospectionToken(token)
+      return false
+    }
+    if (jwtEnabled) {
+      if (await verifyJWT(token)) return true
+      if (introspectionOn && allowJwtFallbackToIntrospection()) return verifyIntrospectionToken(token)
+      return false
+    }
+    if (introspectionOn) {
+      return verifyIntrospectionToken(token)
+    }
+    return authorized(token)
+  }
+
+  if (introspectionOn) {
+    return verifyIntrospectionToken(token)
+  }
+  if (oidcEnabled || jwtEnabled) {
+    return false
+  }
+  return authorized(token)
+}
+
 function authorized(token: string) {
   const candidates = [Env.get("OPENCODE_TOOL_ENDPOINT_API_KEY")]
   if (Env.get("OPENCODE_COMPAT_ALLOW_SERVER_PASSWORD") === "true") {
@@ -193,9 +645,8 @@ function authorized(token: string) {
 export async function requireOpenAIBearer(req: Request) {
   const bearerToken = bearer(req.headers.get("authorization") ?? undefined)
   if (bearerToken) {
-    const jwtEnabled = !!Env.get("OPENCODE_COMPAT_JWT_JWKS_URL") || !!Env.get("OPENCODE_COMPAT_JWT_HS256_SECRET")
-    if (jwtEnabled) {
-      if (await verifyJWT(bearerToken)) return bearerToken
+    if (bearerAuthEnabled()) {
+      if (await verifyBearerToken(bearerToken)) return bearerToken
       return openAIError("unauthorized", "Unauthorized")
     }
     if (authorized(bearerToken)) return bearerToken
