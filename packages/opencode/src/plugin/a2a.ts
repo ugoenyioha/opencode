@@ -81,8 +81,14 @@ function getTask(taskId: string): A2ATask | undefined {
 }
 
 function setTask(task: A2ATask): void {
-  task.updatedAt = Date.now()
   taskStore().set(task.id, task)
+}
+
+function transitionTask(task: A2ATask, state: TaskState, message?: string): A2ATask {
+  task.status = message ? { state, message } : { state }
+  task.updatedAt = Date.now()
+  setTask(task)
+  return task
 }
 
 function listTasks(agentId?: string): A2ATask[] {
@@ -95,6 +101,10 @@ function listTasks(agentId?: string): A2ATask[] {
 
 function isTerminalState(state: TaskState): boolean {
   return ["TASK_STATE_COMPLETED", "TASK_STATE_FAILED", "TASK_STATE_CANCELED", "TASK_STATE_REJECTED"].includes(state)
+}
+
+function sanitizeFailureMessage(fallback: string): string {
+  return fallback.slice(0, 160)
 }
 
 // ============================================================================
@@ -460,13 +470,155 @@ function artifactUpdate(task: A2ATask, artifact: A2AArtifact, append: boolean, l
   }
 }
 
+async function finalizeTaskFromSession(task: A2ATask, agentId: string, sessionID: string) {
+  if (isTerminalState(task.status.state)) return
+
+  const messages = await Session.messages({ sessionID })
+  const lastAssistant = messages.findLast((m) => m.info.role === "assistant")
+  if (lastAssistant) {
+    const textParts = lastAssistant.parts
+      .filter((p): p is MessageV2.TextPart => p.type === "text" && !p.synthetic)
+      .map((p) => p.text)
+      .join("\n")
+
+    if (textParts) {
+      const artifact: A2AArtifact = {
+        artifactId: generateUUID(),
+        name: `${agentId} output`,
+        parts: [{ text: textParts }],
+      }
+      task.artifacts.push(artifact)
+    }
+
+    task.history.push({
+      messageId: lastAssistant.info.id,
+      role: "ROLE_AGENT",
+      parts: [{ text: textParts || "Task completed." }],
+    })
+  }
+
+  transitionTask(task, "TASK_STATE_COMPLETED")
+}
+
+function subscribeTaskLifecycle(task: A2ATask, agentId: string, sessionID: string, onUpdate?: (task: A2ATask) => void) {
+  const unsubscribe = Bus.subscribe(SessionStatus.Event.Status, async (event) => {
+    try {
+      if (event.properties.sessionID !== sessionID) return
+      if (isTerminalState(task.status.state)) {
+        unsubscribe()
+        return
+      }
+      if (event.properties.status.type !== "idle") return
+
+      await finalizeTaskFromSession(task, agentId, sessionID)
+      onUpdate?.(task)
+      unsubscribe()
+    } catch (error) {
+      log.error("A2A session status handler failed", { taskId: task.id })
+      if (!isTerminalState(task.status.state)) {
+        transitionTask(task, "TASK_STATE_FAILED", sanitizeFailureMessage("Internal error processing request"))
+        onUpdate?.(task)
+      }
+      unsubscribe()
+    }
+  })
+
+  return unsubscribe
+}
+
+function taskEventStream(initialTask: A2ATask): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder()
+
+  return new ReadableStream({
+    async start(controller) {
+      let closed = false
+      let terminalEmitted = false
+      let pollTimer: ReturnType<typeof setInterval> | undefined
+
+      const send = (payload: unknown) => {
+        if (closed) return
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`))
+      }
+
+      const close = () => {
+        if (closed) return
+        closed = true
+        if (pollTimer) clearInterval(pollTimer)
+        controller.close()
+      }
+
+      const current = getTask(initialTask.id) ?? initialTask
+      send(taskResponse(current))
+
+      if (isTerminalState(current.status.state)) {
+        close()
+        return
+      }
+
+      if (!current.sessionId) {
+        close()
+        return
+      }
+
+      const emitTerminal = (latest: A2ATask, unsubscribe: () => void) => {
+        if (terminalEmitted) return
+        terminalEmitted = true
+        send(statusUpdate(latest))
+        for (const artifact of latest.artifacts) {
+          send(artifactUpdate(latest, artifact, false, true))
+        }
+        unsubscribe()
+        close()
+      }
+
+      const unsubscribe = Bus.subscribe(SessionStatus.Event.Status, async (event) => {
+        if (closed) return
+
+        const latest = getTask(initialTask.id)
+        if (!latest) {
+          unsubscribe()
+          close()
+          return
+        }
+
+        if (event.properties.sessionID !== latest.sessionId) return
+
+        if (isTerminalState(latest.status.state)) {
+          emitTerminal(latest, unsubscribe)
+          return
+        }
+
+        send(statusUpdate(latest))
+      })
+
+      const latest = getTask(initialTask.id)
+      if (latest && isTerminalState(latest.status.state) && !closed) {
+        emitTerminal(latest, unsubscribe)
+      }
+
+      pollTimer = setInterval(() => {
+        if (closed) return
+        const latestTask = getTask(initialTask.id)
+        if (!latestTask) {
+          unsubscribe()
+          close()
+          return
+        }
+        if (isTerminalState(latestTask.status.state)) {
+          emitTerminal(latestTask, unsubscribe)
+        }
+      }, 50)
+    },
+  })
+}
+
 // ============================================================================
 // Message Handler Logic
 // ============================================================================
 
 async function handleSendMessage(
   agentId: string,
-  agent: A2AAgent,
+  _agent: A2AAgent,
   req: SendMessageRequest,
   blocking: boolean,
 ): Promise<A2ATask> {
@@ -504,58 +656,10 @@ async function handleSendMessage(
   try {
     const session = await Session.create({})
     task.sessionId = session.id
-    task.status = { state: "TASK_STATE_WORKING", message: "Processing request..." }
-    setTask(task)
+    transitionTask(task, "TASK_STATE_WORKING", "Processing request...")
 
     // 5. Subscribe to session status updates
-    // Bus.subscribe callback receives { type, properties }
-    const unsubscribe = Bus.subscribe(SessionStatus.Event.Status, async (event) => {
-      try {
-        if (event.properties.sessionID !== session.id) return
-
-        if (event.properties.status.type === "idle") {
-          // Session completed
-          task.status = { state: "TASK_STATE_COMPLETED" }
-
-          // Get session messages to extract output
-          const messages = await Session.messages({ sessionID: session.id })
-          const lastAssistant = messages.findLast((m) => m.info.role === "assistant")
-          if (lastAssistant) {
-            const textParts = lastAssistant.parts
-              .filter((p): p is MessageV2.TextPart => p.type === "text" && !p.synthetic)
-              .map((p) => p.text)
-              .join("\n")
-
-            if (textParts) {
-              const artifact: A2AArtifact = {
-                artifactId: generateUUID(),
-                name: `${agentId} output`,
-                parts: [{ text: textParts }],
-              }
-              task.artifacts.push(artifact)
-            }
-
-            // Add agent response to history
-            task.history.push({
-              messageId: lastAssistant.info.id,
-              role: "ROLE_AGENT",
-              parts: [{ text: textParts || "Task completed." }],
-            })
-          }
-
-          setTask(task)
-          unsubscribe()
-        }
-      } catch (error: any) {
-        log.error("A2A session status handler failed", { error, taskId: task.id, sessionId: session.id })
-        task.status = {
-          state: "TASK_STATE_FAILED",
-          message: error.message || "Internal error processing session status",
-        }
-        setTask(task)
-        unsubscribe()
-      }
-    })
+    const unsubscribe = subscribeTaskLifecycle(task, agentId, session.id)
 
     // 6. Send prompt to session
     SessionPrompt.prompt({
@@ -563,9 +667,9 @@ async function handleSendMessage(
       agent: agentId,
       parts: [{ type: "text", text: prompt }],
     }).catch((error) => {
-      log.error("A2A session prompt failed", { error, taskId: task.id })
-      task.status = { state: "TASK_STATE_FAILED", message: error.message || "Session prompt failed" }
-      setTask(task)
+      log.error("A2A session prompt failed", { taskId: task.id })
+      if (isTerminalState(task.status.state)) return
+      transitionTask(task, "TASK_STATE_FAILED", sanitizeFailureMessage("Session prompt failed"))
       unsubscribe()
     })
 
@@ -575,18 +679,16 @@ async function handleSendMessage(
       const start = Date.now()
       while (!isTerminalState(task.status.state)) {
         if (Date.now() - start > timeout) {
-          task.status = { state: "TASK_STATE_FAILED", message: "Request timed out" }
-          setTask(task)
+          transitionTask(task, "TASK_STATE_FAILED", "Request timed out")
           unsubscribe()
           break
         }
         await new Promise((resolve) => setTimeout(resolve, 100))
       }
     }
-  } catch (error: any) {
-    log.error("A2A session creation failed", { error, taskId: task.id })
-    task.status = { state: "TASK_STATE_FAILED", message: error.message || "Failed to create session" }
-    setTask(task)
+  } catch (error) {
+    log.error("A2A session creation failed", { taskId: task.id })
+    transitionTask(task, "TASK_STATE_FAILED", sanitizeFailureMessage("Failed to create session"))
   }
 
   return task
@@ -609,8 +711,7 @@ async function handleCancelTask(taskId: string): Promise<A2ATask | undefined> {
     }
   }
 
-  task.status = { state: "TASK_STATE_CANCELED", message: "Task canceled by client" }
-  setTask(task)
+  transitionTask(task, "TASK_STATE_CANCELED", "Task canceled by client")
   return task
 }
 
@@ -646,6 +747,103 @@ export const A2APlugin: Plugin = async () => {
   // exclusive auth methods. Discovery routes opt out via `auth: []`.
   const protectedA2AAuthList = asArray(serverConfig.auth as AuthStrategy | AuthStrategy[] | undefined)
   const protectedA2AAuth = protectedA2AAuthList.length > 0 ? protectedA2AAuthList : undefined
+
+  const messageStreamHandler = async (req: Request, params: Record<string, string>) => {
+    // Validate A2A version
+    const versionErr = validateA2AVersion(req)
+    if (versionErr) return addA2AVersionHeader(versionErr)
+
+    const agentErr = agentHandler(params)
+    if (agentErr) return addA2AVersionHeader(agentErr)
+
+    const agentId = params.agent
+    const agent = byID.get(agentId)!
+
+    try {
+      const body = (await req.json()) as SendMessageRequest
+
+      // Create task (non-blocking)
+      const task = await handleSendMessage(agentId, agent, body, false)
+
+      const stream = taskEventStream(task)
+
+      return new Response(stream, {
+        status: 200,
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+          "A2A-Version": A2A_VERSION,
+        },
+      })
+    } catch (error: any) {
+      log.error("message:stream failed", { error, agentId })
+      return addA2AVersionHeader(a2aError(-32600, error.message || "Invalid request"))
+    }
+  }
+
+  const cancelTaskHandler = async (req: Request, params: Record<string, string>) => {
+    try {
+      const agentErr = agentHandler(params)
+      if (agentErr) return addA2AVersionHeader(agentErr)
+
+      const taskId = params.id
+      const task = getTask(taskId)
+
+      if (!task) {
+        return addA2AVersionHeader(json({ error: { code: "NotFound", message: `Task not found: ${taskId}` } }, 404))
+      }
+
+      // Verify task belongs to this agent
+      if (task.agentId !== params.agent) {
+        return addA2AVersionHeader(json({ error: { code: "NotFound", message: `Task not found: ${taskId}` } }, 404))
+      }
+
+      const canceledTask = await handleCancelTask(taskId)
+      return addA2AVersionHeader(json(taskResponse(canceledTask!)))
+    } catch (error: any) {
+      log.error("tasks/:id:cancel failed", { error, path: req.url })
+      return addA2AVersionHeader(
+        json({ error: { code: "InternalError", message: error.message || "Internal server error" } }, 500),
+      )
+    }
+  }
+
+  const subscribeTaskHandler = async (req: Request, params: Record<string, string>) => {
+    try {
+      const agentErr = agentHandler(params)
+      if (agentErr) return addA2AVersionHeader(agentErr)
+
+      const taskId = params.id
+      const task = getTask(taskId)
+
+      if (!task) {
+        return addA2AVersionHeader(json({ error: { code: "NotFound", message: `Task not found: ${taskId}` } }, 404))
+      }
+
+      // Verify task belongs to this agent
+      if (task.agentId !== params.agent) {
+        return addA2AVersionHeader(json({ error: { code: "NotFound", message: `Task not found: ${taskId}` } }, 404))
+      }
+
+      const stream = taskEventStream(task)
+
+      return new Response(stream, {
+        status: 200,
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+          "A2A-Version": A2A_VERSION,
+        },
+      })
+    } catch (error: any) {
+      log.error("tasks/:id:subscribe failed", { error, path: req.url })
+      return addA2AVersionHeader(
+        json({ error: { code: "InternalError", message: error.message || "Internal server error" } }, 500),
+      )
+    }
+  }
 
   const routes: RouteDefinition[] = [
     // Discovery: list all A2A agents (public — no auth required)
@@ -758,79 +956,15 @@ export const A2APlugin: Plugin = async () => {
       method: "POST",
       path: "/a2a/:agent/message:stream",
       auth: protectedA2AAuth,
-      handler: async (req, params) => {
-        // Validate A2A version
-        const versionErr = validateA2AVersion(req)
-        if (versionErr) return addA2AVersionHeader(versionErr)
+      handler: messageStreamHandler,
+    },
 
-        const agentErr = agentHandler(params)
-        if (agentErr) return addA2AVersionHeader(agentErr)
-
-        const agentId = params.agent
-        const agent = byID.get(agentId)!
-
-        try {
-          const body = (await req.json()) as SendMessageRequest
-
-          // Create task (non-blocking)
-          const task = await handleSendMessage(agentId, agent, body, false)
-
-          // Return SSE stream
-          const encoder = new TextEncoder()
-          const stream = new ReadableStream({
-            async start(controller) {
-              // Send initial task
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify(taskResponse(task))}\n\n`))
-
-              // Subscribe to session events to stream updates
-              if (task.sessionId) {
-                const unsubscribe = Bus.subscribe(SessionStatus.Event.Status, async (event) => {
-                  if (event.properties.sessionID !== task.sessionId) return
-
-                  const currentTask = getTask(task.id)
-                  if (!currentTask) {
-                    unsubscribe()
-                    controller.close()
-                    return
-                  }
-
-                  // Send status update
-                  controller.enqueue(encoder.encode(`data: ${JSON.stringify(statusUpdate(currentTask))}\n\n`))
-
-                  // If terminal state, send final artifacts and close
-                  if (isTerminalState(currentTask.status.state)) {
-                    for (const artifact of currentTask.artifacts) {
-                      controller.enqueue(
-                        encoder.encode(
-                          `data: ${JSON.stringify(artifactUpdate(currentTask, artifact, false, true))}\n\n`,
-                        ),
-                      )
-                    }
-                    unsubscribe()
-                    controller.close()
-                  }
-                })
-              } else {
-                // No session, close immediately
-                controller.close()
-              }
-            },
-          })
-
-          return new Response(stream, {
-            status: 200,
-            headers: {
-              "Content-Type": "text/event-stream",
-              "Cache-Control": "no-cache",
-              Connection: "keep-alive",
-              "A2A-Version": A2A_VERSION,
-            },
-          })
-        } catch (error: any) {
-          log.error("message:stream failed", { error, agentId })
-          return addA2AVersionHeader(a2aError(-32600, error.message || "Invalid request"))
-        }
-      },
+    // Compatibility alias for frameworks that do not support action suffix in path params
+    {
+      method: "POST",
+      path: "/a2a/:agent/message/stream",
+      auth: protectedA2AAuth,
+      handler: messageStreamHandler,
     },
 
     // Tasks: get task by ID for specific agent
@@ -901,32 +1035,15 @@ export const A2APlugin: Plugin = async () => {
       method: "POST",
       path: "/a2a/:agent/tasks/:id:cancel",
       auth: protectedA2AAuth,
-      handler: async (req, params) => {
-        try {
-          const agentErr = agentHandler(params)
-          if (agentErr) return addA2AVersionHeader(agentErr)
+      handler: cancelTaskHandler,
+    },
 
-          const taskId = params.id
-          const task = getTask(taskId)
-
-          if (!task) {
-            return addA2AVersionHeader(json({ error: { code: "NotFound", message: `Task not found: ${taskId}` } }, 404))
-          }
-
-          // Verify task belongs to this agent
-          if (task.agentId !== params.agent) {
-            return addA2AVersionHeader(json({ error: { code: "NotFound", message: `Task not found: ${taskId}` } }, 404))
-          }
-
-          const canceledTask = await handleCancelTask(taskId)
-          return addA2AVersionHeader(json(taskResponse(canceledTask!)))
-        } catch (error: any) {
-          log.error("tasks/:id:cancel failed", { error, path: req.url })
-          return addA2AVersionHeader(
-            json({ error: { code: "InternalError", message: error.message || "Internal server error" } }, 500),
-          )
-        }
-      },
+    // Compatibility alias for frameworks that do not support action suffix in path params
+    {
+      method: "POST",
+      path: "/a2a/:agent/tasks/:id/cancel",
+      auth: protectedA2AAuth,
+      handler: cancelTaskHandler,
     },
 
     // Tasks: subscribe to task events for specific agent
@@ -935,86 +1052,15 @@ export const A2APlugin: Plugin = async () => {
       method: "GET",
       path: "/a2a/:agent/tasks/:id:subscribe",
       auth: protectedA2AAuth,
-      handler: async (req, params) => {
-        try {
-          const agentErr = agentHandler(params)
-          if (agentErr) return addA2AVersionHeader(agentErr)
+      handler: subscribeTaskHandler,
+    },
 
-          const taskId = params.id
-          const task = getTask(taskId)
-
-          if (!task) {
-            return addA2AVersionHeader(json({ error: { code: "NotFound", message: `Task not found: ${taskId}` } }, 404))
-          }
-
-          // Verify task belongs to this agent
-          if (task.agentId !== params.agent) {
-            return addA2AVersionHeader(json({ error: { code: "NotFound", message: `Task not found: ${taskId}` } }, 404))
-          }
-
-          // Return SSE stream for this specific task
-          const encoder = new TextEncoder()
-          const stream = new ReadableStream({
-            async start(controller) {
-              // Send current task state
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify(taskResponse(task))}\n\n`))
-
-              // If already terminal, close immediately
-              if (isTerminalState(task.status.state)) {
-                controller.close()
-                return
-              }
-
-              // Subscribe to session events
-              if (task.sessionId) {
-                const unsubscribe = Bus.subscribe(SessionStatus.Event.Status, async (event) => {
-                  if (event.properties.sessionID !== task.sessionId) return
-
-                  const currentTask = getTask(taskId)
-                  if (!currentTask) {
-                    unsubscribe()
-                    controller.close()
-                    return
-                  }
-
-                  // Send status update
-                  controller.enqueue(encoder.encode(`data: ${JSON.stringify(statusUpdate(currentTask))}\n\n`))
-
-                  // If terminal state, send final artifacts and close
-                  if (isTerminalState(currentTask.status.state)) {
-                    for (const artifact of currentTask.artifacts) {
-                      controller.enqueue(
-                        encoder.encode(
-                          `data: ${JSON.stringify(artifactUpdate(currentTask, artifact, false, true))}\n\n`,
-                        ),
-                      )
-                    }
-                    unsubscribe()
-                    controller.close()
-                  }
-                })
-              } else {
-                controller.close()
-              }
-            },
-          })
-
-          return new Response(stream, {
-            status: 200,
-            headers: {
-              "Content-Type": "text/event-stream",
-              "Cache-Control": "no-cache",
-              Connection: "keep-alive",
-              "A2A-Version": A2A_VERSION,
-            },
-          })
-        } catch (error: any) {
-          log.error("tasks/:id:subscribe failed", { error, path: req.url })
-          return addA2AVersionHeader(
-            json({ error: { code: "InternalError", message: error.message || "Internal server error" } }, 500),
-          )
-        }
-      },
+    // Compatibility alias for frameworks that do not support action suffix in path params
+    {
+      method: "GET",
+      path: "/a2a/:agent/tasks/:id/subscribe",
+      auth: protectedA2AAuth,
+      handler: subscribeTaskHandler,
     },
   ]
 
