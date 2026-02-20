@@ -28,6 +28,7 @@ Override duration/warmup for local quick checks:
 
 - `OPENCODE_AUTH_BENCH_DURATION_MS`
 - `OPENCODE_AUTH_BENCH_WARMUP_MS`
+- `OPENCODE_AUTH_BENCH_C1_REL_DURATION_MS` (default `6000`): minimum measure window for `oauth2 warm/stale` at concurrency 1 to reduce local jitter in relative p95 gate.
 
 ## Commands
 

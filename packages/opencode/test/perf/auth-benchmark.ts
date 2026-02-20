@@ -222,6 +222,7 @@ function parseNumberEnv(name: string, fallback: number) {
 async function main() {
   const durationMs = parseNumberEnv("OPENCODE_AUTH_BENCH_DURATION_MS", AUTH_PERF_DEFAULTS.durationMs)
   const warmupMs = parseNumberEnv("OPENCODE_AUTH_BENCH_WARMUP_MS", AUTH_PERF_DEFAULTS.warmupMs)
+  const c1RelativeDurationMs = parseNumberEnv("OPENCODE_AUTH_BENCH_C1_REL_DURATION_MS", 6_000)
   const enforce = process.env.OPENCODE_AUTH_BENCH_ENFORCE === "1"
   const previousGlobalToolKey = process.env.OPENCODE_TOOL_ENDPOINT_API_KEY
   process.env.OPENCODE_TOOL_ENDPOINT_API_KEY = "perf-api-key"
@@ -440,6 +441,11 @@ async function main() {
             }
 
             for (const concurrency of AUTH_PERF_CONCURRENCY_LEVELS) {
+              const measuredDurationMs =
+                concurrency === 1 && (runtime.id === "oauth2_warm" || runtime.id === "oauth2_stale")
+                  ? Math.max(durationMs, c1RelativeDurationMs)
+                  : durationMs
+
               await runLoad({
                 durationMs: warmupMs,
                 concurrency,
@@ -448,7 +454,7 @@ async function main() {
               })
 
               const measured = await runLoad({
-                durationMs,
+                durationMs: measuredDurationMs,
                 concurrency,
                 expectedStatus: runtime.expectedStatus,
                 send: () => invokeToolStatus(app, tmp.path, sessionID, runtime.headersForRequest()),
@@ -554,6 +560,7 @@ async function main() {
     config: {
       warmup_ms: warmupMs,
       duration_ms: durationMs,
+      c1_relative_duration_ms: c1RelativeDurationMs,
       concurrency_levels: [...AUTH_PERF_CONCURRENCY_LEVELS],
       enforce,
     },
@@ -569,6 +576,7 @@ async function main() {
     `- Generated: ${payload.generated_at}`,
     `- Warmup: ${warmupMs} ms`,
     `- Measure: ${durationMs} ms`,
+    `- C1 warm/stale measure override: ${c1RelativeDurationMs} ms`,
     `- Enforce mode: ${enforce ? "on" : "off"}`,
     "",
     "| Scenario | Concurrency | p50 (ms) | p95 (ms) | p99 (ms) | Throughput (rps) | Error rate |",
