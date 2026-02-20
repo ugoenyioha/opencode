@@ -72,7 +72,9 @@ function validBasicAuth(headers: Headers) {
 
 function strategyPasses(strategy: AuthStrategy, headers: Headers) {
   if (strategy === "api-key") return validAPIKey(headers)
-  if (strategy === "plugin") return true
+  // plugin auth is enforced by explicit plugin hooks (http.request).
+  // Do not treat it as pre-authorized at the centralized middleware gate.
+  if (strategy === "plugin") return false
   return false
 }
 

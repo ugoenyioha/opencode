@@ -568,7 +568,9 @@ async function verifyJWT(token: string) {
   }
   if (parsed.header.alg === "RS256") {
     if (!jwksURL) return false
-    return verifyRS256JWT(parsed, jwksURL)
+    const validatedJWKSURL = enforceAuthURLPolicy(jwksURL)
+    if (!validatedJWKSURL) return false
+    return verifyRS256JWT(parsed, validatedJWKSURL.toString())
   }
   return false
 }

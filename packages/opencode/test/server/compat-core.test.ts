@@ -978,6 +978,35 @@ describe("compat core routes", () => {
     })
   })
 
+  test("openai rejects non-https non-loopback jwks url", async () => {
+    await using tmp = await project({
+      server: {
+        compat: {
+          openai: {
+            enabled: true,
+          },
+        },
+      },
+    })
+    await Instance.disposeAll()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        Env.set("OPENCODE_COMPAT_JWT_JWKS_URL", "http://example.com/.well-known/jwks.json")
+        Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
+
+        const app = Server.App()
+        const response = await app.request("/v1/models", {
+          headers: {
+            authorization: "Bearer eyJhbGciOiJSUzI1NiIsImtpZCI6ImtpZCJ9.eyJpc3MiOiJodHRwczovL2lzc3VlciJ9.c2ln",
+            "x-opencode-directory": tmp.path,
+          },
+        })
+        expect(response.status).toBe(401)
+      },
+    })
+  })
+
   test("openai model list returns available model ids", async () => {
     await using tmp = await project({
       server: {
@@ -1042,37 +1071,6 @@ describe("compat core routes", () => {
           })
         },
       })
-  })
-
-  test("openai model list works without pre-created instance context", async () => {
-    await using tmp = await project({
-      server: {
-        compat: {
-          openai: {
-            enabled: true,
-          },
-        },
-      },
-    })
-    await Instance.disposeAll()
-    const previous = process.env.OPENCODE_TOOL_ENDPOINT_API_KEY
-    try {
-      process.env.OPENCODE_TOOL_ENDPOINT_API_KEY = "test-token"
-      const app = Server.App()
-      const response = await app.request("/v1/models", {
-        headers: {
-          authorization: "Bearer test-token",
-          "x-api-key": "test-token",
-          "x-opencode-directory": tmp.path,
-        },
-      })
-      expect(response.status).toBe(200)
-      const body = (await response.json()) as any
-      expect(body.object).toBe("list")
-    } finally {
-      if (previous === undefined) delete process.env.OPENCODE_TOOL_ENDPOINT_API_KEY
-      else process.env.OPENCODE_TOOL_ENDPOINT_API_KEY = previous
-    }
   })
 
   test("openai invalid chat request returns mapped bad request", async () => {

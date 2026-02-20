@@ -32,6 +32,14 @@ export default async function PluginRoute() {
           return new Response("plugin-health", { status: 418 })
         },
       },
+      {
+        method: "GET",
+        path: "/hook/plugin-only",
+        auth: "plugin",
+        handler: async () => {
+          return new Response("plugin-only", { status: 200 })
+        },
+      },
     ],
   }
 }
@@ -131,6 +139,26 @@ describe("plugin http.route", () => {
         })().finally(() => process.chdir(cwd))
         expect(response.status).toBe(418)
         expect(await response.text()).toBe("plugin-health")
+      },
+    })
+  })
+
+  test("does not treat plugin auth strategy as pre-authorized", async () => {
+    await using tmp = await project(true)
+    await Instance.provide({
+      directory: tmp.path,
+      init: async () => {
+        Env.set("ANTHROPIC_API_KEY", "test-key")
+        Env.remove("OPENCODE_ALLOW_EXTERNAL_ROUTES")
+      },
+      fn: async () => {
+        const cwd = process.cwd()
+        process.chdir(tmp.path)
+        const response = await (async () => {
+          const app = Server.App()
+          return app.request("/hook/plugin-only")
+        })().finally(() => process.chdir(cwd))
+        expect(response.status).toBe(401)
       },
     })
   })
