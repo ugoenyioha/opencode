@@ -330,6 +330,396 @@ describe("compat core routes", () => {
     }
   })
 
+  test("openai multi-issuer oidc supports issuer A/B and does not cross-verify issuers", async () => {
+    await using tmp = await project({
+      server: {
+        compat: {
+          openai: {
+            enabled: true,
+          },
+        },
+      },
+    })
+    await Instance.disposeAll()
+
+    const keyA = generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+      publicKeyEncoding: { format: "pem", type: "spki" },
+      privateKeyEncoding: { format: "pem", type: "pkcs8" },
+    })
+    const keyB = generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+      publicKeyEncoding: { format: "pem", type: "spki" },
+      privateKeyEncoding: { format: "pem", type: "pkcs8" },
+    })
+
+    const kidA = "oidc-multi-kid-a"
+    const kidB = "oidc-multi-kid-b"
+    const jwkA = createPublicKey(keyA.publicKey).export({ format: "jwk" }) as Record<string, unknown>
+    const jwkB = createPublicKey(keyB.publicKey).export({ format: "jwk" }) as Record<string, unknown>
+
+    let issuerA = ""
+    let issuerB = ""
+    let discoveryHitsA = 0
+    let discoveryHitsB = 0
+    let jwksHitsA = 0
+    let jwksHitsB = 0
+
+    const serverA = createServer((req, res) => {
+      if (req.url === "/.well-known/openid-configuration") {
+        discoveryHitsA += 1
+        res.setHeader("content-type", "application/json")
+        res.end(JSON.stringify({ issuer: issuerA, jwks_uri: `${issuerA}/jwks` }))
+        return
+      }
+      if (req.url === "/jwks") {
+        jwksHitsA += 1
+        res.setHeader("content-type", "application/json")
+        res.end(JSON.stringify({ keys: [{ ...jwkA, use: "sig", alg: "RS256", kid: kidA }] }))
+        return
+      }
+      res.statusCode = 404
+      res.end()
+    })
+
+    const serverB = createServer((req, res) => {
+      if (req.url === "/.well-known/openid-configuration") {
+        discoveryHitsB += 1
+        res.setHeader("content-type", "application/json")
+        res.end(JSON.stringify({ issuer: issuerB, jwks_uri: `${issuerB}/jwks` }))
+        return
+      }
+      if (req.url === "/jwks") {
+        jwksHitsB += 1
+        res.setHeader("content-type", "application/json")
+        res.end(JSON.stringify({ keys: [{ ...jwkB, use: "sig", alg: "RS256", kid: kidB }] }))
+        return
+      }
+      res.statusCode = 404
+      res.end()
+    })
+
+    await new Promise<void>((resolve) => serverA.listen(0, "127.0.0.1", () => resolve()))
+    await new Promise<void>((resolve) => serverB.listen(0, "127.0.0.1", () => resolve()))
+
+    try {
+      const addrA = serverA.address()
+      const addrB = serverB.address()
+      if (!addrA || typeof addrA === "string") throw new Error("failed to start oidc server A")
+      if (!addrB || typeof addrB === "string") throw new Error("failed to start oidc server B")
+      issuerA = `http://127.0.0.1:${addrA.port}`
+      issuerB = `http://127.0.0.1:${addrB.port}`
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          Env.set(
+            "OPENCODE_COMPAT_OIDC_ISSUERS_JSON",
+            JSON.stringify([
+              { issuer: `${issuerA}/`, audience: "aud-a" },
+              { issuer: issuerB, audience: "aud-b" },
+            ]),
+          )
+          Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
+
+          const app = Server.App()
+
+          const tokenA = signRS256(
+            { exp: Math.floor(Date.now() / 1000) + 300, iss: issuerA, aud: "aud-a" },
+            keyA.privateKey,
+            kidA,
+          )
+          const tokenB = signRS256(
+            { exp: Math.floor(Date.now() / 1000) + 300, iss: `${issuerB}/`, aud: "aud-b" },
+            keyB.privateKey,
+            kidB,
+          )
+
+          const responseA = await app.request("/v1/models", {
+            headers: {
+              authorization: `Bearer ${tokenA}`,
+              "x-opencode-directory": tmp.path,
+            },
+          })
+          expect(responseA.status).toBe(200)
+
+          const responseB = await app.request("/v1/models", {
+            headers: {
+              authorization: `Bearer ${tokenB}`,
+              "x-opencode-directory": tmp.path,
+            },
+          })
+          expect(responseB.status).toBe(200)
+
+          const beforeDiscoveryB = discoveryHitsB
+          const beforeJwksB = jwksHitsB
+          const crossIssuerToken = signRS256(
+            { exp: Math.floor(Date.now() / 1000) + 300, iss: issuerA, aud: "aud-a" },
+            keyB.privateKey,
+            kidB,
+          )
+          const crossResponse = await app.request("/v1/models", {
+            headers: {
+              authorization: `Bearer ${crossIssuerToken}`,
+              "x-opencode-directory": tmp.path,
+            },
+          })
+          expect(crossResponse.status).toBe(401)
+          expect(discoveryHitsB).toBe(beforeDiscoveryB)
+          expect(jwksHitsB).toBe(beforeJwksB)
+
+          const beforeDiscoveryA = discoveryHitsA
+          const beforeJwksA = jwksHitsA
+          const unknownIssuerToken = signRS256(
+            { exp: Math.floor(Date.now() / 1000) + 300, iss: "http://127.0.0.1:65535", aud: "aud-a" },
+            keyA.privateKey,
+            kidA,
+          )
+          const unknownResponse = await app.request("/v1/models", {
+            headers: {
+              authorization: `Bearer ${unknownIssuerToken}`,
+              "x-opencode-directory": tmp.path,
+            },
+          })
+          expect(unknownResponse.status).toBe(401)
+          expect(discoveryHitsA).toBe(beforeDiscoveryA)
+          expect(jwksHitsA).toBe(beforeJwksA)
+        },
+      })
+    } finally {
+      await new Promise<void>((resolve, reject) => serverA.close((error) => (error ? reject(error) : resolve())))
+      await new Promise<void>((resolve, reject) => serverB.close((error) => (error ? reject(error) : resolve())))
+    }
+  })
+
+  test("openai multi-issuer oidc denies missing iss and does not fallback by default", async () => {
+    await using tmp = await project({
+      server: {
+        compat: {
+          openai: {
+            enabled: true,
+          },
+        },
+      },
+    })
+    await Instance.disposeAll()
+
+    const { privateKey, publicKey } = generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+      publicKeyEncoding: { format: "pem", type: "spki" },
+      privateKeyEncoding: { format: "pem", type: "pkcs8" },
+    })
+    const kid = "oidc-multi-missing-iss"
+    const jwk = createPublicKey(publicKey).export({ format: "jwk" }) as Record<string, unknown>
+    let issuer = ""
+    let introspectionHits = 0
+
+    const oidc = createServer((req, res) => {
+      if (req.url === "/.well-known/openid-configuration") {
+        res.setHeader("content-type", "application/json")
+        res.end(JSON.stringify({ issuer, jwks_uri: `${issuer}/jwks` }))
+        return
+      }
+      if (req.url === "/jwks") {
+        res.setHeader("content-type", "application/json")
+        res.end(JSON.stringify({ keys: [{ ...jwk, use: "sig", alg: "RS256", kid }] }))
+        return
+      }
+      res.statusCode = 404
+      res.end()
+    })
+
+    const introspection = createServer((req, res) => {
+      if (req.url !== "/introspect") {
+        res.statusCode = 404
+        res.end()
+        return
+      }
+      introspectionHits += 1
+      res.setHeader("content-type", "application/json")
+      res.end(
+        JSON.stringify({
+          active: true,
+          iss: "https://fallback-issuer",
+          aud: "fallback-aud",
+          scope: "compat.read",
+          exp: Math.floor(Date.now() / 1000) + 120,
+        }),
+      )
+    })
+
+    await new Promise<void>((resolve) => oidc.listen(0, "127.0.0.1", () => resolve()))
+    await new Promise<void>((resolve) => introspection.listen(0, "127.0.0.1", () => resolve()))
+    try {
+      const oidcAddr = oidc.address()
+      const introspectionAddr = introspection.address()
+      if (!oidcAddr || typeof oidcAddr === "string") throw new Error("failed to start oidc server")
+      if (!introspectionAddr || typeof introspectionAddr === "string") throw new Error("failed to start introspection server")
+      issuer = `http://127.0.0.1:${oidcAddr.port}`
+      const introspectionUrl = `http://127.0.0.1:${introspectionAddr.port}/introspect`
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          Env.set("OPENCODE_COMPAT_OIDC_ISSUERS_JSON", JSON.stringify([{ issuer, audience: "aud-a" }]))
+          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL", introspectionUrl)
+          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_ID", "client-id")
+          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_SECRET", "client-secret")
+          Env.set("OPENCODE_COMPAT_OAUTH_ISSUER", "https://fallback-issuer")
+          Env.set("OPENCODE_COMPAT_OAUTH_AUDIENCE", "fallback-aud")
+          Env.set("OPENCODE_COMPAT_OAUTH_REQUIRED_SCOPE", "compat.read")
+          Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
+
+          const app = Server.App()
+          const tokenMissingIss = signRS256({ exp: Math.floor(Date.now() / 1000) + 120, aud: "aud-a" }, privateKey, kid)
+          const response = await app.request("/v1/models", {
+            headers: {
+              authorization: `Bearer ${tokenMissingIss}`,
+              "x-opencode-directory": tmp.path,
+            },
+          })
+          expect(response.status).toBe(401)
+          expect(introspectionHits).toBe(0)
+        },
+      })
+    } finally {
+      await new Promise<void>((resolve, reject) => oidc.close((error) => (error ? reject(error) : resolve())))
+      await new Promise<void>((resolve, reject) => introspection.close((error) => (error ? reject(error) : resolve())))
+    }
+  })
+
+  test("openai multi-issuer oidc fallback opt-in works only after matched issuer attempt", async () => {
+    await using tmp = await project({
+      server: {
+        compat: {
+          openai: {
+            enabled: true,
+          },
+        },
+      },
+    })
+    await Instance.disposeAll()
+
+    const { privateKey, publicKey } = generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+      publicKeyEncoding: { format: "pem", type: "spki" },
+      privateKeyEncoding: { format: "pem", type: "pkcs8" },
+    })
+    const { privateKey: wrongPrivateKey } = generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+      publicKeyEncoding: { format: "pem", type: "spki" },
+      privateKeyEncoding: { format: "pem", type: "pkcs8" },
+    })
+
+    const kid = "oidc-multi-fallback"
+    const jwk = createPublicKey(publicKey).export({ format: "jwk" }) as Record<string, unknown>
+    let issuer = ""
+    let introspectionHits = 0
+
+    const oidc = createServer((req, res) => {
+      if (req.url === "/.well-known/openid-configuration") {
+        res.setHeader("content-type", "application/json")
+        res.end(JSON.stringify({ issuer, jwks_uri: `${issuer}/jwks` }))
+        return
+      }
+      if (req.url === "/jwks") {
+        res.setHeader("content-type", "application/json")
+        res.end(JSON.stringify({ keys: [{ ...jwk, use: "sig", alg: "RS256", kid }] }))
+        return
+      }
+      res.statusCode = 404
+      res.end()
+    })
+
+    const introspection = createServer((req, res) => {
+      if (req.url !== "/introspect") {
+        res.statusCode = 404
+        res.end()
+        return
+      }
+      introspectionHits += 1
+      res.setHeader("content-type", "application/json")
+      res.end(
+        JSON.stringify({
+          active: true,
+          iss: "https://fallback-issuer",
+          aud: "fallback-aud",
+          scope: "compat.read",
+          exp: Math.floor(Date.now() / 1000) + 120,
+        }),
+      )
+    })
+
+    await new Promise<void>((resolve) => oidc.listen(0, "127.0.0.1", () => resolve()))
+    await new Promise<void>((resolve) => introspection.listen(0, "127.0.0.1", () => resolve()))
+    try {
+      const oidcAddr = oidc.address()
+      const introspectionAddr = introspection.address()
+      if (!oidcAddr || typeof oidcAddr === "string") throw new Error("failed to start oidc server")
+      if (!introspectionAddr || typeof introspectionAddr === "string") throw new Error("failed to start introspection server")
+      issuer = `http://127.0.0.1:${oidcAddr.port}`
+      const introspectionUrl = `http://127.0.0.1:${introspectionAddr.port}/introspect`
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          Env.set("OPENCODE_COMPAT_OIDC_ISSUERS_JSON", JSON.stringify([{ issuer, audience: "aud-a" }]))
+          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL", introspectionUrl)
+          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_ID", "client-id")
+          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_SECRET", "client-secret")
+          Env.set("OPENCODE_COMPAT_OAUTH_ISSUER", "https://fallback-issuer")
+          Env.set("OPENCODE_COMPAT_OAUTH_AUDIENCE", "fallback-aud")
+          Env.set("OPENCODE_COMPAT_OAUTH_REQUIRED_SCOPE", "compat.read")
+          Env.set("OPENCODE_COMPAT_BEARER_FALLBACK_TO_INTROSPECTION", "true")
+          Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
+
+          const app = Server.App()
+
+          const matchedButInvalid = signRS256(
+            { exp: Math.floor(Date.now() / 1000) + 120, iss: issuer, aud: "aud-a" },
+            wrongPrivateKey,
+            kid,
+          )
+          const fallbackAllowed = await app.request("/v1/models", {
+            headers: {
+              authorization: `Bearer ${matchedButInvalid}`,
+              "x-opencode-directory": tmp.path,
+            },
+          })
+          expect(fallbackAllowed.status).toBe(200)
+          expect(introspectionHits).toBe(1)
+
+          const unknownIssuer = signRS256(
+            { exp: Math.floor(Date.now() / 1000) + 120, iss: "http://127.0.0.1:65534", aud: "aud-a" },
+            privateKey,
+            kid,
+          )
+          const unknownDenied = await app.request("/v1/models", {
+            headers: {
+              authorization: `Bearer ${unknownIssuer}`,
+              "x-opencode-directory": tmp.path,
+            },
+          })
+          expect(unknownDenied.status).toBe(401)
+          expect(introspectionHits).toBe(1)
+
+          const missingIss = signRS256({ exp: Math.floor(Date.now() / 1000) + 120, aud: "aud-a" }, privateKey, kid)
+          const missingDenied = await app.request("/v1/models", {
+            headers: {
+              authorization: `Bearer ${missingIss}`,
+              "x-opencode-directory": tmp.path,
+            },
+          })
+          expect(missingDenied.status).toBe(401)
+          expect(introspectionHits).toBe(1)
+        },
+      })
+    } finally {
+      await new Promise<void>((resolve, reject) => oidc.close((error) => (error ? reject(error) : resolve())))
+      await new Promise<void>((resolve, reject) => introspection.close((error) => (error ? reject(error) : resolve())))
+    }
+  })
+
   test("openai accepts opaque bearer via oauth introspection", async () => {
     await using tmp = await project({
       server: {

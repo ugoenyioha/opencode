@@ -173,7 +173,12 @@ function claimChecks(payload: JWTPayload) {
   return true
 }
 
-function claimChecksWithExpected(payload: JWTPayload, expectedIssuer?: string, expectedAudience?: string) {
+function claimChecksWithExpected(
+  payload: JWTPayload,
+  expectedIssuer?: string,
+  expectedAudience?: string | string[],
+  options?: { normalizeIssuerMatch?: boolean },
+) {
   const now = Math.floor(Date.now() / 1000)
   const skew = Number(Env.get("OPENCODE_COMPAT_JWT_CLOCK_SKEW_SECONDS")) || JWT_CLOCK_SKEW_SECONDS
   const exp = payload.exp
@@ -181,10 +186,18 @@ function claimChecksWithExpected(payload: JWTPayload, expectedIssuer?: string, e
   const nbf = payload.nbf
   if (typeof nbf === "number" && now < nbf - skew) return false
 
-  if (expectedIssuer && payload.iss !== expectedIssuer) return false
+  if (expectedIssuer) {
+    if (options?.normalizeIssuerMatch) {
+      if (typeof payload.iss !== "string") return false
+      if (normalizeIssuer(payload.iss) !== normalizeIssuer(expectedIssuer)) return false
+    } else if (payload.iss !== expectedIssuer) {
+      return false
+    }
+  }
   if (expectedAudience) {
+    const expected = Array.isArray(expectedAudience) ? expectedAudience : [expectedAudience]
     const audiences = parseAudience(payload.aud)
-    if (!audiences.includes(expectedAudience)) return false
+    if (!expected.some((value) => audiences.includes(value))) return false
   }
   return true
 }
@@ -258,6 +271,21 @@ type OIDCDiscovery = {
   jwks_uri?: string
 }
 
+type OIDCMultiIssuerEntry = {
+  issuer: string
+  audience?: string[]
+}
+
+type OIDCMultiIssuerParseResult =
+  | { mode: "absent" }
+  | { mode: "invalid" }
+  | { mode: "valid"; issuers: Map<string, OIDCMultiIssuerEntry> }
+
+type OIDCMultiVerifyResult = {
+  ok: boolean
+  issuerMatched: boolean
+}
+
 const oidcDiscoveryCache = new Map<string, { expiresAt: number; data?: OIDCDiscovery }>()
 const OIDC_DISCOVERY_TTL_MS = 60_000
 const INTROSPECTION_CACHE_MAX_ENTRIES = 2048
@@ -291,6 +319,53 @@ function enforceAuthURLPolicy(input: string) {
 
 function normalizeIssuer(issuer: string) {
   return issuer.endsWith("/") ? issuer.slice(0, -1) : issuer
+}
+
+function parseOIDCMultiIssuersJSON(raw: string | undefined): OIDCMultiIssuerParseResult {
+  if (raw === undefined) return { mode: "absent" }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return { mode: "invalid" }
+  }
+
+  if (!Array.isArray(parsed) || parsed.length === 0) return { mode: "invalid" }
+
+  const issuers = new Map<string, OIDCMultiIssuerEntry>()
+  for (const item of parsed) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return { mode: "invalid" }
+    const record = item as Record<string, unknown>
+    for (const key of Object.keys(record)) {
+      if (key !== "issuer" && key !== "audience") return { mode: "invalid" }
+    }
+
+    if (typeof record.issuer !== "string") return { mode: "invalid" }
+    const issuer = record.issuer.trim()
+    if (!issuer) return { mode: "invalid" }
+    const normalizedIssuer = normalizeIssuer(issuer)
+
+    let audience: string[] | undefined
+    if (record.audience !== undefined) {
+      if (typeof record.audience === "string") {
+        audience = [record.audience]
+      } else if (Array.isArray(record.audience) && record.audience.length > 0) {
+        if (!record.audience.every((value) => typeof value === "string")) return { mode: "invalid" }
+        audience = record.audience
+      } else {
+        return { mode: "invalid" }
+      }
+    }
+
+    if (issuers.has(normalizedIssuer)) return { mode: "invalid" }
+    issuers.set(normalizedIssuer, {
+      issuer: normalizedIssuer,
+      audience,
+    })
+  }
+
+  return { mode: "valid", issuers }
 }
 
 function trimIssuerPath(input: string) {
@@ -370,28 +445,63 @@ async function loadOIDCDiscovery(issuer: string, context: AuthObserveContext) {
   }
 }
 
+function acceptedOIDCAlgs() {
+  const allowedAlgs = parseList(Env.get("OPENCODE_COMPAT_OIDC_ALGS"))
+  return allowedAlgs.length ? allowedAlgs : ["RS256"]
+}
+
+async function verifyOIDCJWTForIssuer(
+  parsed: ParsedJWT,
+  expectedIssuer: string,
+  expectedAudience: string | string[] | undefined,
+  context: AuthObserveContext,
+  options?: { normalizeIssuerMatch?: boolean },
+) {
+  if (parsed.header.alg === "none") return false
+
+  const acceptedAlgs = acceptedOIDCAlgs()
+  const alg = parsed.header.alg ?? ""
+  if (!acceptedAlgs.includes(alg)) return false
+  if (alg !== "RS256") return false
+
+  const discovery = await loadOIDCDiscovery(expectedIssuer, context)
+  const jwksUrl = discovery?.jwks_uri
+  if (!jwksUrl) return false
+  const signatureOk = await verifyRS256Signature(parsed, jwksUrl, context)
+  if (!signatureOk) return false
+
+  return claimChecksWithExpected(parsed.payload, expectedIssuer, expectedAudience, options)
+}
+
 async function verifyOIDCJWT(token: string, context: AuthObserveContext) {
   const issuer = Env.get("OPENCODE_COMPAT_OIDC_ISSUER")
   if (!issuer) return false
 
   const parsed = parseJWT(token)
   if (!parsed) return false
-  if (parsed.header.alg === "none") return false
-
-  const allowedAlgs = parseList(Env.get("OPENCODE_COMPAT_OIDC_ALGS"))
-  const acceptedAlgs = allowedAlgs.length ? allowedAlgs : ["RS256"]
-  const alg = parsed.header.alg ?? ""
-  if (!acceptedAlgs.includes(alg)) return false
-  if (alg !== "RS256") return false
-
-  const discovery = await loadOIDCDiscovery(issuer, context)
-  const jwksUrl = discovery?.jwks_uri
-  if (!jwksUrl) return false
-  const signatureOk = await verifyRS256Signature(parsed, jwksUrl, context)
-  if (!signatureOk) return false
-
   const audience = Env.get("OPENCODE_COMPAT_OIDC_AUDIENCE")
-  return claimChecksWithExpected(parsed.payload, issuer, audience)
+  return verifyOIDCJWTForIssuer(parsed, issuer, audience, context)
+}
+
+async function verifyOIDCMultiIssuerJWT(token: string, context: AuthObserveContext): Promise<OIDCMultiVerifyResult> {
+  const parsedConfig = parseOIDCMultiIssuersJSON(Env.get("OPENCODE_COMPAT_OIDC_ISSUERS_JSON"))
+  if (parsedConfig.mode !== "valid") {
+    return { ok: false, issuerMatched: false }
+  }
+
+  const parsed = parseJWT(token)
+  if (!parsed) return { ok: false, issuerMatched: false }
+  if (typeof parsed.payload.iss !== "string") return { ok: false, issuerMatched: false }
+
+  const issuerClaim = parsed.payload.iss.trim()
+  if (!issuerClaim) return { ok: false, issuerMatched: false }
+  const matched = parsedConfig.issuers.get(normalizeIssuer(issuerClaim))
+  if (!matched) return { ok: false, issuerMatched: false }
+
+  const ok = await verifyOIDCJWTForIssuer(parsed, matched.issuer, matched.audience, context, {
+    normalizeIssuerMatch: true,
+  })
+  return { ok, issuerMatched: true }
 }
 
 const introspectionCache = new Map<string, { expiresAt: number; allowed: boolean }>()
@@ -638,32 +748,42 @@ function bearerAuthEnabled() {
     !!Env.get("OPENCODE_COMPAT_JWT_JWKS_URL") ||
     !!Env.get("OPENCODE_COMPAT_JWT_HS256_SECRET") ||
     !!Env.get("OPENCODE_COMPAT_OIDC_ISSUER") ||
+    Env.get("OPENCODE_COMPAT_OIDC_ISSUERS_JSON") !== undefined ||
     introspectionEnabled()
   )
 }
 
-function allowJwtFallbackToIntrospection() {
+function allowJwtFallbackToIntrospection(multiOIDCMode: boolean) {
   const value = Env.get("OPENCODE_COMPAT_BEARER_FALLBACK_TO_INTROSPECTION")
-  if (value === undefined) return true
+  if (value === undefined) return multiOIDCMode ? false : true
   const normalized = value.trim().toLowerCase()
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on"
 }
 
 async function verifyBearerToken(token: string, context: AuthObserveContext) {
-  const oidcEnabled = !!Env.get("OPENCODE_COMPAT_OIDC_ISSUER")
+  const multiOIDCConfigured = Env.get("OPENCODE_COMPAT_OIDC_ISSUERS_JSON") !== undefined
+  const oidcEnabled = !!Env.get("OPENCODE_COMPAT_OIDC_ISSUER") || multiOIDCConfigured
   const jwtEnabled = !!Env.get("OPENCODE_COMPAT_JWT_JWKS_URL") || !!Env.get("OPENCODE_COMPAT_JWT_HS256_SECRET")
   const introspectionOn = introspectionEnabled()
 
   const likelyJWT = isLikelyJWT(token)
   if (likelyJWT) {
     if (oidcEnabled) {
+      if (multiOIDCConfigured) {
+        const multiResult = await verifyOIDCMultiIssuerJWT(token, context)
+        if (multiResult.ok) return true
+        if (multiResult.issuerMatched && introspectionOn && allowJwtFallbackToIntrospection(true)) {
+          return verifyIntrospectionToken(token, context)
+        }
+        return false
+      }
       if (await verifyOIDCJWT(token, context)) return true
-      if (introspectionOn && allowJwtFallbackToIntrospection()) return verifyIntrospectionToken(token, context)
+      if (introspectionOn && allowJwtFallbackToIntrospection(false)) return verifyIntrospectionToken(token, context)
       return false
     }
     if (jwtEnabled) {
       if (await verifyJWT(token, context)) return true
-      if (introspectionOn && allowJwtFallbackToIntrospection()) return verifyIntrospectionToken(token, context)
+      if (introspectionOn && allowJwtFallbackToIntrospection(false)) return verifyIntrospectionToken(token, context)
       return false
     }
     if (introspectionOn) {

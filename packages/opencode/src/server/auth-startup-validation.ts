@@ -23,6 +23,7 @@ const SUPPORTED_INTROSPECTION_AUTH_METHODS = new Set([
   "bearer_client_credentials",
 ])
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"])
+const OIDC_MULTI_ALLOWED_KEYS = new Set(["issuer", "audience"])
 
 function normalizeToolEndpointAuth(raw: unknown): string[] {
   if (raw === undefined) return ["api-key"]
@@ -36,6 +37,10 @@ function parseList(input: string | undefined) {
     .split(/[\s,]+/)
     .map((item) => item.trim())
     .filter(Boolean)
+}
+
+function normalizeIssuer(input: string) {
+  return input.endsWith("/") ? input.slice(0, -1) : input
 }
 
 function parseURL(input: string) {
@@ -170,6 +175,118 @@ function validateJWTConfig(getEnv: ValidatorContext["getEnv"]) {
 
 function validateOIDCConfig(getEnv: ValidatorContext["getEnv"]) {
   const issuer = getEnv("OPENCODE_COMPAT_OIDC_ISSUER")
+  const issuersJSON = getEnv("OPENCODE_COMPAT_OIDC_ISSUERS_JSON")
+
+  if (issuer && issuersJSON) {
+    fail({
+      code: "AUTH_CONFIG_CONFLICT",
+      strategy: "oidc",
+      key: "env.OPENCODE_COMPAT_OIDC_ISSUER|env.OPENCODE_COMPAT_OIDC_ISSUERS_JSON",
+      reason: "mutually_exclusive_issuer_sources",
+    })
+  }
+
+  if (issuersJSON) {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(issuersJSON)
+    } catch {
+      fail({
+        code: "AUTH_CONFIG_UNSUPPORTED_REF",
+        strategy: "oidc",
+        key: "env.OPENCODE_COMPAT_OIDC_ISSUERS_JSON",
+        reason: "invalid_json",
+      })
+    }
+
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      fail({
+        code: "AUTH_CONFIG_UNSUPPORTED_REF",
+        strategy: "oidc",
+        key: "env.OPENCODE_COMPAT_OIDC_ISSUERS_JSON",
+        reason: "must_be_non_empty_array",
+      })
+    }
+
+    const seen = new Set<string>()
+    for (const entry of parsed) {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+        fail({
+          code: "AUTH_CONFIG_UNSUPPORTED_REF",
+          strategy: "oidc",
+          key: "env.OPENCODE_COMPAT_OIDC_ISSUERS_JSON",
+          reason: "entry_must_be_object",
+        })
+      }
+
+      const record = entry as Record<string, unknown>
+      for (const key of Object.keys(record)) {
+        if (!OIDC_MULTI_ALLOWED_KEYS.has(key)) {
+          fail({
+            code: "AUTH_CONFIG_UNSUPPORTED_REF",
+            strategy: "oidc",
+            key: "env.OPENCODE_COMPAT_OIDC_ISSUERS_JSON",
+            reason: "unknown_entry_keys",
+          })
+        }
+      }
+
+      if (typeof record.issuer !== "string" || !record.issuer.trim()) {
+        fail({
+          code: "AUTH_CONFIG_UNSUPPORTED_REF",
+          strategy: "oidc",
+          key: "env.OPENCODE_COMPAT_OIDC_ISSUERS_JSON",
+          reason: "issuer_required",
+        })
+      }
+      const normalized = normalizeIssuer(record.issuer.trim())
+      validateAuthURL("oidc", "env.OPENCODE_COMPAT_OIDC_ISSUERS_JSON", normalized)
+      if (seen.has(normalized)) {
+        fail({
+          code: "AUTH_CONFIG_CONFLICT",
+          strategy: "oidc",
+          key: "env.OPENCODE_COMPAT_OIDC_ISSUERS_JSON",
+          reason: "duplicate_normalized_issuers",
+        })
+      }
+      seen.add(normalized)
+
+      if (record.audience !== undefined) {
+        const audience = record.audience
+        const valid =
+          typeof audience === "string" ||
+          (Array.isArray(audience) && audience.length > 0 && audience.every((value) => typeof value === "string"))
+        if (!valid) {
+          fail({
+            code: "AUTH_CONFIG_UNSUPPORTED_REF",
+            strategy: "oidc",
+            key: "env.OPENCODE_COMPAT_OIDC_ISSUERS_JSON",
+            reason: "invalid_audience_shape",
+          })
+        }
+      }
+    }
+
+    const allowedAlgs = parseList(getEnv("OPENCODE_COMPAT_OIDC_ALGS"))
+    if (allowedAlgs.some((alg) => alg.toLowerCase() === "none")) {
+      fail({
+        code: "AUTH_CONFIG_UNSUPPORTED_REF",
+        strategy: "oidc",
+        key: "env.OPENCODE_COMPAT_OIDC_ALGS",
+        reason: "alg_none_disallowed",
+      })
+    }
+    if (allowedAlgs.some((alg) => alg !== "RS256")) {
+      fail({
+        code: "AUTH_CONFIG_UNSUPPORTED_REF",
+        strategy: "oidc",
+        key: "env.OPENCODE_COMPAT_OIDC_ALGS",
+        reason: "only_rs256_supported",
+      })
+    }
+    return
+  }
+
   if (!issuer) {
     fail({
       code: "AUTH_CONFIG_MISSING",

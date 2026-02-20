@@ -101,6 +101,81 @@ describe("startup auth config validation", () => {
     })
   })
 
+  test("oidc multi issuer rejects malformed JSON", async () => {
+    await expectStartupError({
+      auth: "oidc",
+      env: {
+        OPENCODE_COMPAT_OIDC_ISSUERS_JSON: "{bad-json",
+      },
+      code: "AUTH_CONFIG_UNSUPPORTED_REF",
+      message: "AUTH_CONFIG_UNSUPPORTED_REF strategy=oidc key=env.OPENCODE_COMPAT_OIDC_ISSUERS_JSON reason=invalid_json",
+    })
+  })
+
+  test("oidc multi issuer rejects non-object entries", async () => {
+    await expectStartupError({
+      auth: "oidc",
+      env: {
+        OPENCODE_COMPAT_OIDC_ISSUERS_JSON: JSON.stringify(["https://issuer.example"]),
+      },
+      code: "AUTH_CONFIG_UNSUPPORTED_REF",
+      message:
+        "AUTH_CONFIG_UNSUPPORTED_REF strategy=oidc key=env.OPENCODE_COMPAT_OIDC_ISSUERS_JSON reason=entry_must_be_object",
+    })
+  })
+
+  test("oidc multi issuer rejects unknown object keys", async () => {
+    await expectStartupError({
+      auth: "oidc",
+      env: {
+        OPENCODE_COMPAT_OIDC_ISSUERS_JSON: JSON.stringify([{ issuer: "https://issuer.example", extra: "nope" }]),
+      },
+      code: "AUTH_CONFIG_UNSUPPORTED_REF",
+      message:
+        "AUTH_CONFIG_UNSUPPORTED_REF strategy=oidc key=env.OPENCODE_COMPAT_OIDC_ISSUERS_JSON reason=unknown_entry_keys",
+    })
+  })
+
+  test("oidc multi issuer rejects duplicate normalized issuers", async () => {
+    await expectStartupError({
+      auth: "oidc",
+      env: {
+        OPENCODE_COMPAT_OIDC_ISSUERS_JSON: JSON.stringify([
+          { issuer: "https://issuer.example/" },
+          { issuer: "https://issuer.example" },
+        ]),
+      },
+      code: "AUTH_CONFIG_CONFLICT",
+      message:
+        "AUTH_CONFIG_CONFLICT strategy=oidc key=env.OPENCODE_COMPAT_OIDC_ISSUERS_JSON reason=duplicate_normalized_issuers",
+    })
+  })
+
+  test("oidc startup rejects legacy and multi issuer config conflict", async () => {
+    await expectStartupError({
+      auth: "oidc",
+      env: {
+        OPENCODE_COMPAT_OIDC_ISSUER: "https://issuer.example",
+        OPENCODE_COMPAT_OIDC_ISSUERS_JSON: JSON.stringify([{ issuer: "https://issuer-2.example" }]),
+      },
+      code: "AUTH_CONFIG_CONFLICT",
+      message:
+        "AUTH_CONFIG_CONFLICT strategy=oidc key=env.OPENCODE_COMPAT_OIDC_ISSUER|env.OPENCODE_COMPAT_OIDC_ISSUERS_JSON reason=mutually_exclusive_issuer_sources",
+    })
+  })
+
+  test("oidc multi issuer validates URL policy with sanitized detail", async () => {
+    await expectStartupError({
+      auth: "oidc",
+      env: {
+        OPENCODE_COMPAT_OIDC_ISSUERS_JSON: JSON.stringify([{ issuer: "http://example.internal/auth" }]),
+      },
+      code: "AUTH_CONFIG_INVALID_URL",
+      message:
+        "AUTH_CONFIG_INVALID_URL strategy=oidc key=env.OPENCODE_COMPAT_OIDC_ISSUERS_JSON reason=requires_https_or_exact_loopback_http url_class=scheme=http host_class=non_loopback path_class=custom",
+    })
+  })
+
   test("oauth2 strategy validates timeout bounds", async () => {
     await expectStartupError({
       auth: "oauth2",
@@ -175,6 +250,34 @@ describe("startup auth config validation", () => {
     expect(message).toContain("url_class=scheme=http host_class=non_loopback path_class=oauth")
   })
 
+  test("oidc multi issuer error output is redacted and does not leak raw json or full urls", async () => {
+    const issuer = "http://example.com/auth?token=leak-me"
+    const json = JSON.stringify([{ issuer }])
+    const promise = validateStartupAuthConfig({
+      config: config("oidc"),
+      getEnv: (key) => {
+        const env: Record<string, string> = {
+          OPENCODE_COMPAT_OIDC_ISSUERS_JSON: json,
+        }
+        return env[key]
+      },
+      getApiKey: () => undefined,
+      hasExternalHttpHook: async () => false,
+    })
+
+    let error: unknown
+    try {
+      await promise
+    } catch (caught) {
+      error = caught
+    }
+    expect(error).toBeInstanceOf(AuthConfigStartupError)
+    const message = (error as AuthConfigStartupError).message
+    expect(message.includes(issuer)).toBe(false)
+    expect(message.includes(json)).toBe(false)
+    expect(message).toContain("url_class=scheme=http host_class=non_loopback path_class=custom")
+  })
+
   test("valid startup matrix passes for jwt, oidc, and oauth2", async () => {
     await expect(
       validateStartupAuthConfig({
@@ -189,6 +292,21 @@ describe("startup auth config validation", () => {
       validateStartupAuthConfig({
         config: config("oidc"),
         getEnv: (key) => ({ OPENCODE_COMPAT_OIDC_ISSUER: "https://issuer.example" })[key],
+        getApiKey: () => undefined,
+        hasExternalHttpHook: async () => false,
+      }),
+    ).resolves.toBeUndefined()
+
+    await expect(
+      validateStartupAuthConfig({
+        config: config("oidc"),
+        getEnv: (key) =>
+          ({
+            OPENCODE_COMPAT_OIDC_ISSUERS_JSON: JSON.stringify([
+              { issuer: "https://issuer-a.example", audience: "aud-a" },
+              { issuer: "https://issuer-b.example", audience: ["aud-b", "aud-b-2"] },
+            ]),
+          })[key],
         getApiKey: () => undefined,
         hasExternalHttpHook: async () => false,
       }),
