@@ -353,14 +353,29 @@ async function main() {
         expectedStatus: 404,
         setup: async () => {},
         headersForRequest: () => {
-          if (scenarioMeta.id === "api_key") return { "x-api-key": "perf-api-key" }
-          if (scenarioMeta.id === "jwt_jwks") return { authorization: `Bearer ${tokenForJWT}` }
-          if (scenarioMeta.id === "oidc") return { authorization: `Bearer ${tokenForJWT}` }
-          if (scenarioMeta.id === "oauth2_cold") {
-            return { authorization: `Bearer cold-token-${crypto.randomUUID()}` }
+          const headers: Record<string, string> = {}
+          if (scenarioMeta.id === "api_key") {
+            headers["x-api-key"] = "perf-api-key"
+            return headers
           }
-          if (scenarioMeta.id === "oauth2_warm") return { authorization: "Bearer warm-shared-token" }
-          return { authorization: "Bearer stale-shared-token" }
+          if (scenarioMeta.id === "jwt_jwks") {
+            headers.authorization = `Bearer ${tokenForJWT}`
+            return headers
+          }
+          if (scenarioMeta.id === "oidc") {
+            headers.authorization = `Bearer ${tokenForJWT}`
+            return headers
+          }
+          if (scenarioMeta.id === "oauth2_cold") {
+            headers.authorization = `Bearer cold-token-${crypto.randomUUID()}`
+            return headers
+          }
+          if (scenarioMeta.id === "oauth2_warm") {
+            headers.authorization = "Bearer warm-shared-token"
+            return headers
+          }
+          headers.authorization = "Bearer stale-shared-token"
+          return headers
         },
         teardown: async () => {},
       }

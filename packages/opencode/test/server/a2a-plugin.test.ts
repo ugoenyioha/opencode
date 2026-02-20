@@ -1144,9 +1144,9 @@ Test agent prompt.
         Env.set("ANTHROPIC_API_KEY", "test-key")
       },
       fn: async () => {
-        const promptSpy = spyOn(SessionPrompt, "prompt").mockImplementation(async () => {
+        const promptSpy = spyOn(SessionPrompt, "prompt").mockImplementation((async () => {
           throw new Error("Session prompt failed\n    at SecretStack (/internal/stack) sessionId=ses-999 token=abc123")
-        })
+        }) as any)
 
         try {
           const app = Server.App()
@@ -1205,9 +1205,9 @@ Test agent prompt.
         Env.set("ANTHROPIC_API_KEY", "test-key")
       },
       fn: async () => {
-        const promptSpy = spyOn(SessionPrompt, "prompt").mockImplementation(async () => {
+        const promptSpy = spyOn(SessionPrompt, "prompt").mockImplementation((async () => {
           throw new Error("forced fail")
-        })
+        }) as any)
 
         try {
           const app = Server.App()
@@ -1271,9 +1271,9 @@ Test agent prompt.
         Env.set("ANTHROPIC_API_KEY", "test-key")
       },
       fn: async () => {
-        const promptSpy = spyOn(SessionPrompt, "prompt").mockImplementation(async () => {
+        const promptSpy = spyOn(SessionPrompt, "prompt").mockImplementation((async () => {
           await new Promise(() => {})
-        })
+        }) as any)
         const busSpy = spyOn(Bus, "subscribe").mockImplementation(() => {
           return () => {}
         })
