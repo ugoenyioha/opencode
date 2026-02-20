@@ -4,7 +4,8 @@ process.env["OPENCODE_TOOL_ENDPOINT_API_KEY"] = "test-a2a-key"
 import { afterAll, describe, expect, spyOn, test } from "bun:test"
 import path from "path"
 import fs from "fs/promises"
-import { createHmac } from "crypto"
+import { createPublicKey, createSign, generateKeyPairSync } from "crypto"
+import { createServer } from "http"
 import { Instance } from "../../src/project/instance"
 import { Server } from "../../src/server/server"
 import { Env } from "../../src/env"
@@ -26,12 +27,15 @@ function encodeBase64url(input: string | Buffer) {
   return buffer.toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_")
 }
 
-function signHS256(payload: Record<string, unknown>, secret: string) {
-  const header = { alg: "HS256", typ: "JWT" }
+function signRS256(payload: Record<string, unknown>, privateKey: string, kid: string) {
+  const header = { alg: "RS256", typ: "JWT", kid }
   const encodedHeader = encodeBase64url(JSON.stringify(header))
   const encodedPayload = encodeBase64url(JSON.stringify(payload))
   const signingInput = `${encodedHeader}.${encodedPayload}`
-  const signature = createHmac("sha256", secret).update(signingInput, "utf8").digest()
+  const signer = createSign("RSA-SHA256")
+  signer.update(signingInput)
+  signer.end()
+  const signature = signer.sign(privateKey)
   return `${signingInput}.${encodeBase64url(signature)}`
 }
 
@@ -1524,54 +1528,79 @@ You are a public agent.
   test("auth: server.a2a jwt enforces strict bearer semantics over x-api-key", async () => {
     await using tmp = await projectWithServerA2AAuth(true, ["jwt"])
     await Instance.disposeAll()
-    await Instance.provide({
-      directory: tmp.path,
-      init: async () => {
-        Env.set("ANTHROPIC_API_KEY", "test-key")
-      },
-      fn: async () => {
-        const previousSecret = process.env.OPENCODE_COMPAT_JWT_HS256_SECRET
-        const previousIssuer = process.env.OPENCODE_COMPAT_JWT_ISSUER
-        const previousAudience = process.env.OPENCODE_COMPAT_JWT_AUDIENCE
-        try {
-          Env.set("OPENCODE_COMPAT_JWT_HS256_SECRET", "a2a-jwt-secret")
-          Env.set("OPENCODE_COMPAT_JWT_ISSUER", "a2a-issuer")
-          Env.set("OPENCODE_COMPAT_JWT_AUDIENCE", "a2a-audience")
-
-          const app = Server.App()
-          const goodToken = signHS256(
-            { exp: Math.floor(Date.now() / 1000) + 120, iss: "a2a-issuer", aud: "a2a-audience" },
-            "a2a-jwt-secret",
-          )
-
-          const allowed = await app.request("/a2a/neo-sidecar/tasks", {
-            method: "GET",
-            headers: {
-              "x-opencode-directory": tmp.path,
-              authorization: `Bearer ${goodToken}`,
-            },
-          })
-          expect(allowed.status).toBe(200)
-
-          const denied = await app.request("/a2a/neo-sidecar/tasks", {
-            method: "GET",
-            headers: {
-              "x-opencode-directory": tmp.path,
-              authorization: "Bearer not-a-jwt",
-              ...AUTH_HEADER,
-            },
-          })
-          expect(denied.status).toBe(401)
-        } finally {
-          if (previousSecret === undefined) delete process.env.OPENCODE_COMPAT_JWT_HS256_SECRET
-          else process.env.OPENCODE_COMPAT_JWT_HS256_SECRET = previousSecret
-          if (previousIssuer === undefined) delete process.env.OPENCODE_COMPAT_JWT_ISSUER
-          else process.env.OPENCODE_COMPAT_JWT_ISSUER = previousIssuer
-          if (previousAudience === undefined) delete process.env.OPENCODE_COMPAT_JWT_AUDIENCE
-          else process.env.OPENCODE_COMPAT_JWT_AUDIENCE = previousAudience
-        }
-      },
+    const { privateKey, publicKey } = generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+      publicKeyEncoding: { format: "pem", type: "spki" },
+      privateKeyEncoding: { format: "pem", type: "pkcs8" },
     })
+    const kid = "a2a-jwt-kid"
+    const jwk = createPublicKey(publicKey).export({ format: "jwk" }) as Record<string, unknown>
+    const jwks = createServer((req, res) => {
+      if (req.url !== "/.well-known/jwks.json") {
+        res.statusCode = 404
+        res.end()
+        return
+      }
+      res.setHeader("content-type", "application/json")
+      res.end(JSON.stringify({ keys: [{ ...jwk, use: "sig", alg: "RS256", kid }] }))
+    })
+    await new Promise<void>((resolve) => jwks.listen(0, "127.0.0.1", () => resolve()))
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        init: async () => {
+          Env.set("ANTHROPIC_API_KEY", "test-key")
+        },
+        fn: async () => {
+          const previousJwks = process.env.OPENCODE_COMPAT_JWT_JWKS_URL
+          const previousIssuer = process.env.OPENCODE_COMPAT_JWT_ISSUER
+          const previousAudience = process.env.OPENCODE_COMPAT_JWT_AUDIENCE
+          try {
+            const address = jwks.address()
+            if (!address || typeof address === "string") throw new Error("failed to start jwks server")
+            const jwksUrl = `http://127.0.0.1:${address.port}/.well-known/jwks.json`
+            Env.set("OPENCODE_COMPAT_JWT_JWKS_URL", jwksUrl)
+            Env.set("OPENCODE_COMPAT_JWT_ISSUER", "a2a-issuer")
+            Env.set("OPENCODE_COMPAT_JWT_AUDIENCE", "a2a-audience")
+
+            const app = Server.App()
+            const goodToken = signRS256(
+              { exp: Math.floor(Date.now() / 1000) + 120, iss: "a2a-issuer", aud: "a2a-audience" },
+              privateKey,
+              kid,
+            )
+
+            const allowed = await app.request("/a2a/neo-sidecar/tasks", {
+              method: "GET",
+              headers: {
+                "x-opencode-directory": tmp.path,
+                authorization: `Bearer ${goodToken}`,
+              },
+            })
+            expect(allowed.status).toBe(200)
+
+            const denied = await app.request("/a2a/neo-sidecar/tasks", {
+              method: "GET",
+              headers: {
+                "x-opencode-directory": tmp.path,
+                authorization: "Bearer not-a-jwt",
+                ...AUTH_HEADER,
+              },
+            })
+            expect(denied.status).toBe(401)
+          } finally {
+            if (previousJwks === undefined) delete process.env.OPENCODE_COMPAT_JWT_JWKS_URL
+            else process.env.OPENCODE_COMPAT_JWT_JWKS_URL = previousJwks
+            if (previousIssuer === undefined) delete process.env.OPENCODE_COMPAT_JWT_ISSUER
+            else process.env.OPENCODE_COMPAT_JWT_ISSUER = previousIssuer
+            if (previousAudience === undefined) delete process.env.OPENCODE_COMPAT_JWT_AUDIENCE
+            else process.env.OPENCODE_COMPAT_JWT_AUDIENCE = previousAudience
+          }
+        },
+      })
+    } finally {
+      await new Promise<void>((resolve, reject) => jwks.close((error) => (error ? reject(error) : resolve())))
+    }
   })
 
   test("auth: server.a2a plugin strategy is fail-closed on protected routes", async () => {

@@ -2,7 +2,6 @@ import { anthropicError, openAIError } from "./error"
 import { Env } from "@/env"
 import { timingSafeEqual } from "crypto"
 import { createHash } from "crypto"
-import { createHmac } from "crypto"
 import { createPublicKey } from "crypto"
 import { createVerify } from "crypto"
 import {
@@ -98,6 +97,11 @@ type OAuthTokenResponse = {
   access_token?: string
   expires_in?: number
 }
+
+type IntrospectionBearerTokenResult =
+  | { kind: "ok"; token: string }
+  | { kind: "outage" }
+  | { kind: "explicit_deny" }
 
 type ParsedJWT = {
   header: JWTHeader
@@ -200,13 +204,6 @@ function claimChecksWithExpected(
     if (!expected.some((value) => audiences.includes(value))) return false
   }
   return true
-}
-
-function verifyHS256JWT(parsed: ParsedJWT, secret: string) {
-  if (parsed.header.alg !== "HS256") return false
-  const expected = createHmac("sha256", secret).update(parsed.signingInput, "utf8").digest()
-  if (expected.length !== parsed.signature.length || !timingSafeEqual(parsed.signature, expected)) return false
-  return claimChecks(parsed.payload)
 }
 
 type JWKSet = {
@@ -377,7 +374,7 @@ function trimIssuerPath(input: string) {
   return parsed.toString().replace(/\/$/, "")
 }
 
-function introspectionCacheSet(key: string, value: { expiresAt: number; allowed: boolean }) {
+function introspectionCacheSet(key: string, value: { expiresAt: number; allowed: boolean; verifiedAt?: number; expMs?: number }) {
   introspectionCache.set(key, value)
   if (introspectionCache.size <= INTROSPECTION_CACHE_MAX_ENTRIES) return
 
@@ -504,7 +501,14 @@ async function verifyOIDCMultiIssuerJWT(token: string, context: AuthObserveConte
   return { ok, issuerMatched: true }
 }
 
-const introspectionCache = new Map<string, { expiresAt: number; allowed: boolean }>()
+type IntrospectionCacheEntry = {
+  expiresAt: number
+  allowed: boolean
+  verifiedAt?: number
+  expMs?: number
+}
+
+const introspectionCache = new Map<string, IntrospectionCacheEntry>()
 const INTROSPECTION_SUCCESS_TTL_MS = 60_000
 const introspectionAuthTokenCache = new Map<string, { expiresAt: number; token: string }>()
 
@@ -530,6 +534,59 @@ function introspectionAuthTokenCacheKey() {
 
 function introspectionCacheTokenKey(token: string) {
   return createHash("sha256").update(`${introspectionConfigKey()}|${token}`, "utf8").digest("hex")
+}
+
+function parseCompatBoolean(input: string | undefined, fallback: boolean) {
+  if (input === undefined) return fallback
+  const normalized = input.trim().toLowerCase()
+  if (normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on") return true
+  if (normalized === "0" || normalized === "false" || normalized === "no" || normalized === "off") return false
+  return fallback
+}
+
+function introspectionStaleWhileErrorMs() {
+  const raw = Env.get("OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_WHILE_ERROR_MS")
+  if (raw === undefined) return 0
+  const parsed = Number(raw)
+  if (!Number.isInteger(parsed) || parsed < 0) return 0
+  return parsed
+}
+
+function introspectionStaleRequireExp() {
+  return parseCompatBoolean(Env.get("OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_REQUIRE_EXP"), true)
+}
+
+function introspectionStaleMaxAbsAgeMs() {
+  const raw = Env.get("OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_MAX_ABS_AGE_MS")
+  if (raw === undefined) return 30_000
+  const parsed = Number(raw)
+  if (!Number.isInteger(parsed) || parsed < 0) return 30_000
+  return parsed
+}
+
+function clockSkewMs() {
+  const skewSeconds = Number(Env.get("OPENCODE_COMPAT_JWT_CLOCK_SKEW_SECONDS")) || JWT_CLOCK_SKEW_SECONDS
+  return Math.max(0, skewSeconds) * 1000
+}
+
+function canUseStaleIntrospectionAllow(params: {
+  now: number
+  cached?: IntrospectionCacheEntry
+  staleWhileErrorMs: number
+}): boolean {
+  if (params.staleWhileErrorMs <= 0) return false
+  const cached = params.cached
+  if (!cached || !cached.allowed) return false
+  if (typeof cached.verifiedAt !== "number") return false
+
+  const staleMaxAbsAgeMs = introspectionStaleMaxAbsAgeMs()
+  if (params.now - cached.verifiedAt > staleMaxAbsAgeMs) return false
+  if (params.now > cached.expiresAt + params.staleWhileErrorMs) return false
+
+  const requireExp = introspectionStaleRequireExp()
+  if (typeof cached.expMs !== "number") return !requireExp
+  if (params.now > cached.expMs + clockSkewMs()) return false
+  return true
 }
 
 function introspectionEnabled() {
@@ -564,14 +621,14 @@ async function loadIntrospectionBearerToken(
   clientId: string,
   clientSecret: string,
   timeoutMs: number,
-) {
+): Promise<IntrospectionBearerTokenResult> {
   const cacheKey = introspectionAuthTokenCacheKey()
   const cached = introspectionAuthTokenCache.get(cacheKey)
   const now = Date.now()
-  if (cached && cached.expiresAt > now) return cached.token
+  if (cached && cached.expiresAt > now) return { kind: "ok", token: cached.token }
 
   const tokenURL = resolveIntrospectionTokenURL(endpointURL)
-  if (!tokenURL) return
+  if (!tokenURL) return { kind: "explicit_deny" }
 
   const scope = Env.get("OPENCODE_COMPAT_OAUTH_INTROSPECTION_BEARER_SCOPE") ?? "internal_oauth2_introspect"
   const tokenBody = new URLSearchParams({
@@ -589,18 +646,21 @@ async function loadIntrospectionBearerToken(
       body: tokenBody.toString(),
       signal: AbortSignal.timeout(timeoutMs),
     })
-    if (!response.ok) return
+    if (!response.ok) {
+      if (response.status >= 500) return { kind: "outage" }
+      return { kind: "explicit_deny" }
+    }
     const payload = (await response.json()) as OAuthTokenResponse
-    if (!payload?.access_token) return
+    if (!payload?.access_token) return { kind: "explicit_deny" }
 
     const ttlMs = Math.max(1000, ((payload.expires_in ?? 60) - 5) * 1000)
     introspectionAuthTokenCache.set(cacheKey, {
       token: payload.access_token,
       expiresAt: now + ttlMs,
     })
-    return payload.access_token
+    return { kind: "ok", token: payload.access_token }
   } catch {
-    return
+    return { kind: "outage" }
   }
 }
 
@@ -645,6 +705,9 @@ async function verifyIntrospectionToken(token: string, context: AuthObserveConte
   const cached = introspectionCache.get(key)
   if (cached && cached.expiresAt > now) return cached.allowed
 
+  const staleWhileErrorMs = introspectionStaleWhileErrorMs()
+  const useStaleAllow = () => canUseStaleIntrospectionAllow({ now: Date.now(), cached, staleWhileErrorMs })
+
   const endpoint = Env.get("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL")!
   const clientId = Env.get("OPENCODE_COMPAT_OAUTH_CLIENT_ID")!
   const clientSecret = Env.get("OPENCODE_COMPAT_OAUTH_CLIENT_SECRET")!
@@ -665,12 +728,13 @@ async function verifyIntrospectionToken(token: string, context: AuthObserveConte
     body.set("client_id", clientId)
     body.set("client_secret", clientSecret)
   } else if (authMethod === "bearer_client_credentials") {
-    const bearerToken = await loadIntrospectionBearerToken(endpointUrl, clientId, clientSecret, timeoutMs)
-    if (!bearerToken) {
+    const bearerTokenResult = await loadIntrospectionBearerToken(endpointUrl, clientId, clientSecret, timeoutMs)
+    if (bearerTokenResult.kind !== "ok") {
+      if (bearerTokenResult.kind === "outage" && useStaleAllow()) return true
       introspectionCacheSet(key, { expiresAt: now + JWKS_ERROR_TTL_MS, allowed: false })
       return false
     }
-    headers.authorization = `Bearer ${bearerToken}`
+    headers.authorization = `Bearer ${bearerTokenResult.token}`
   } else {
     const credentials = Buffer.from(`${clientId}:${clientSecret}`, "utf8").toString("base64")
     headers.authorization = `Basic ${credentials}`
@@ -684,6 +748,7 @@ async function verifyIntrospectionToken(token: string, context: AuthObserveConte
       signal: AbortSignal.timeout(timeoutMs),
     })
     if (!response.ok) {
+      if (response.status >= 500 && useStaleAllow()) return true
       introspectionCacheSet(key, { expiresAt: now + JWKS_ERROR_TTL_MS, allowed: false })
       return false
     }
@@ -698,10 +763,11 @@ async function verifyIntrospectionToken(token: string, context: AuthObserveConte
 
     const exp = typeof payload.exp === "number" ? payload.exp * 1000 : undefined
     const successExpiry = exp ? Math.min(exp, now + INTROSPECTION_SUCCESS_TTL_MS) : now + INTROSPECTION_SUCCESS_TTL_MS
-    introspectionCacheSet(key, { expiresAt: successExpiry, allowed: true })
+    introspectionCacheSet(key, { expiresAt: successExpiry, allowed: true, verifiedAt: now, expMs: exp })
     return true
   } catch {
     verifierWarn("oauth2", "oauth_introspection_error", context)
+    if (useStaleAllow()) return true
     introspectionCacheSet(key, { expiresAt: now + JWKS_ERROR_TTL_MS, allowed: false })
     return false
   }
@@ -712,13 +778,8 @@ async function verifyJWT(token: string, context: AuthObserveContext) {
   if (!parsed) return false
   if (parsed.header.alg === "none") return false
 
-  const hs256Secret = Env.get("OPENCODE_COMPAT_JWT_HS256_SECRET")
   const jwksURL = Env.get("OPENCODE_COMPAT_JWT_JWKS_URL")
 
-  if (parsed.header.alg === "HS256") {
-    if (!hs256Secret) return false
-    return verifyHS256JWT(parsed, hs256Secret)
-  }
   if (parsed.header.alg === "RS256") {
     if (!jwksURL) return false
     const validatedJWKSURL = enforceAuthURLPolicy(jwksURL)
@@ -746,7 +807,6 @@ export async function verifyBearerForStrategy(
 function bearerAuthEnabled() {
   return (
     !!Env.get("OPENCODE_COMPAT_JWT_JWKS_URL") ||
-    !!Env.get("OPENCODE_COMPAT_JWT_HS256_SECRET") ||
     !!Env.get("OPENCODE_COMPAT_OIDC_ISSUER") ||
     Env.get("OPENCODE_COMPAT_OIDC_ISSUERS_JSON") !== undefined ||
     introspectionEnabled()
@@ -763,7 +823,7 @@ function allowJwtFallbackToIntrospection(multiOIDCMode: boolean) {
 async function verifyBearerToken(token: string, context: AuthObserveContext) {
   const multiOIDCConfigured = Env.get("OPENCODE_COMPAT_OIDC_ISSUERS_JSON") !== undefined
   const oidcEnabled = !!Env.get("OPENCODE_COMPAT_OIDC_ISSUER") || multiOIDCConfigured
-  const jwtEnabled = !!Env.get("OPENCODE_COMPAT_JWT_JWKS_URL") || !!Env.get("OPENCODE_COMPAT_JWT_HS256_SECRET")
+  const jwtEnabled = !!Env.get("OPENCODE_COMPAT_JWT_JWKS_URL")
   const introspectionOn = introspectionEnabled()
 
   const likelyJWT = isLikelyJWT(token)

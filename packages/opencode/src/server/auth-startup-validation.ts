@@ -149,23 +149,65 @@ function validateIntrospectionTimeoutBounds(getEnv: ValidatorContext["getEnv"]) 
   }
 }
 
+function validateIntrospectionStaleBounds(getEnv: ValidatorContext["getEnv"]) {
+  const staleWhileErrorRaw = getEnv("OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_WHILE_ERROR_MS")
+  if (staleWhileErrorRaw !== undefined) {
+    const parsed = Number(staleWhileErrorRaw)
+    if (!Number.isInteger(parsed) || parsed < 0 || parsed > 60000) {
+      fail({
+        code: "AUTH_CONFIG_BOUNDS",
+        strategy: "oauth2",
+        key: "env.OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_WHILE_ERROR_MS",
+        reason: "must_be_integer_between_0_and_60000",
+      })
+    }
+  }
+
+  const staleMaxAbsAgeRaw = getEnv("OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_MAX_ABS_AGE_MS")
+  if (staleMaxAbsAgeRaw !== undefined) {
+    const parsed = Number(staleMaxAbsAgeRaw)
+    if (!Number.isInteger(parsed) || parsed < 0 || parsed > 60000) {
+      fail({
+        code: "AUTH_CONFIG_BOUNDS",
+        strategy: "oauth2",
+        key: "env.OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_MAX_ABS_AGE_MS",
+        reason: "must_be_integer_between_0_and_60000",
+      })
+    }
+  }
+}
+
+function validateIntrospectionStaleRequireExpLiteral(getEnv: ValidatorContext["getEnv"]) {
+  const raw = getEnv("OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_REQUIRE_EXP")
+  if (raw === undefined) return
+  const normalized = raw.trim().toLowerCase()
+  if (normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on") return
+  if (normalized === "0" || normalized === "false" || normalized === "no" || normalized === "off") return
+  fail({
+    code: "AUTH_CONFIG_BOUNDS",
+    strategy: "oauth2",
+    key: "env.OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_REQUIRE_EXP",
+    reason: "must_be_boolean_literal",
+  })
+}
+
 function validateJWTConfig(getEnv: ValidatorContext["getEnv"]) {
   const jwks = getEnv("OPENCODE_COMPAT_JWT_JWKS_URL")
   const hs256 = getEnv("OPENCODE_COMPAT_JWT_HS256_SECRET")
-  if (!jwks && !hs256) {
+  if (hs256) {
+    fail({
+      code: "AUTH_CONFIG_UNSUPPORTED_REF",
+      strategy: "jwt",
+      key: "env.OPENCODE_COMPAT_JWT_HS256_SECRET",
+      reason: "hs256_deprecated_use_jwks",
+    })
+  }
+  if (!jwks) {
     fail({
       code: "AUTH_CONFIG_MISSING",
       strategy: "jwt",
-      key: "env.OPENCODE_COMPAT_JWT_JWKS_URL|env.OPENCODE_COMPAT_JWT_HS256_SECRET",
-      reason: "requires_one_key_source",
-    })
-  }
-  if (jwks && hs256) {
-    fail({
-      code: "AUTH_CONFIG_CONFLICT",
-      strategy: "jwt",
-      key: "env.OPENCODE_COMPAT_JWT_JWKS_URL|env.OPENCODE_COMPAT_JWT_HS256_SECRET",
-      reason: "mutually_exclusive_key_sources",
+      key: "env.OPENCODE_COMPAT_JWT_JWKS_URL",
+      reason: "required",
     })
   }
   if (jwks) {
@@ -348,6 +390,8 @@ function validateOAuth2Config(getEnv: ValidatorContext["getEnv"]) {
 
   validateAuthURL("oauth2", "env.OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL", introspectionURL)
   validateIntrospectionTimeoutBounds(getEnv)
+  validateIntrospectionStaleBounds(getEnv)
+  validateIntrospectionStaleRequireExpLiteral(getEnv)
 
   const authMethod = getEnv("OPENCODE_COMPAT_OAUTH_INTROSPECTION_AUTH_METHOD") ?? "client_secret_basic"
   if (!SUPPORTED_INTROSPECTION_AUTH_METHODS.has(authMethod)) {

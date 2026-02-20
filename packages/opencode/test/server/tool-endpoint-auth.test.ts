@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import path from "path"
-import { createHmac, createPublicKey, createSign, generateKeyPairSync } from "crypto"
+import { createPublicKey, createSign, generateKeyPairSync } from "crypto"
 import { createServer } from "http"
 import { tmpdir } from "../fixture/fixture"
 import { Instance } from "../../src/project/instance"
@@ -37,15 +37,6 @@ async function project(auth: ToolAuth | ToolAuth[], extra?: Record<string, unkno
 function encodeBase64url(input: string | Buffer) {
   const buffer = typeof input === "string" ? Buffer.from(input, "utf8") : input
   return buffer.toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_")
-}
-
-function signHS256(payload: Record<string, unknown>, secret: string) {
-  const header = { alg: "HS256", typ: "JWT" }
-  const encodedHeader = encodeBase64url(JSON.stringify(header))
-  const encodedPayload = encodeBase64url(JSON.stringify(payload))
-  const signingInput = `${encodedHeader}.${encodedPayload}`
-  const signature = createHmac("sha256", secret).update(signingInput, "utf8").digest()
-  return `${signingInput}.${encodeBase64url(signature)}`
 }
 
 function signRS256(payload: Record<string, unknown>, privateKey: string, kid: string) {
@@ -119,32 +110,58 @@ describe("tool endpoint auth policy", () => {
   test("mixed auth array does not require x-api-key when jwt succeeds", async () => {
     await using tmp = await project(["jwt", "api-key"])
     await Instance.disposeAll()
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        await withEnv(
-          {
-            OPENCODE_COMPAT_JWT_HS256_SECRET: "jwt-array-secret",
-            OPENCODE_COMPAT_JWT_ISSUER: "issuer-jwt-array",
-            OPENCODE_COMPAT_JWT_AUDIENCE: "aud-jwt-array",
-          },
-          async () => {
-            const app = Server.App()
-            const sessionID = await createSession(app, tmp.path)
-
-            const token = signHS256(
-              { exp: Math.floor(Date.now() / 1000) + 120, iss: "issuer-jwt-array", aud: "aud-jwt-array" },
-              "jwt-array-secret",
-            )
-
-            const response = await invokeTool(app, tmp.path, sessionID, {
-              authorization: `Bearer ${token}`,
-            })
-            expect(response.status).toBe(404)
-          },
-        )
-      },
+    const { privateKey, publicKey } = generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+      publicKeyEncoding: { format: "pem", type: "spki" },
+      privateKeyEncoding: { format: "pem", type: "pkcs8" },
     })
+    const kid = "jwt-array-kid"
+    const jwk = createPublicKey(publicKey).export({ format: "jwk" }) as Record<string, unknown>
+    const jwks = createServer((req, res) => {
+      if (req.url !== "/.well-known/jwks.json") {
+        res.statusCode = 404
+        res.end()
+        return
+      }
+      res.setHeader("content-type", "application/json")
+      res.end(JSON.stringify({ keys: [{ ...jwk, use: "sig", alg: "RS256", kid }] }))
+    })
+    await new Promise<void>((resolve) => jwks.listen(0, "127.0.0.1", () => resolve()))
+    try {
+      const address = jwks.address()
+      if (!address || typeof address === "string") throw new Error("failed to start jwks server")
+      const jwksUrl = `http://127.0.0.1:${address.port}/.well-known/jwks.json`
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          await withEnv(
+            {
+              OPENCODE_COMPAT_JWT_JWKS_URL: jwksUrl,
+              OPENCODE_COMPAT_JWT_ISSUER: "issuer-jwt-array",
+              OPENCODE_COMPAT_JWT_AUDIENCE: "aud-jwt-array",
+            },
+            async () => {
+              const app = Server.App()
+              const sessionID = await createSession(app, tmp.path)
+
+              const token = signRS256(
+                { exp: Math.floor(Date.now() / 1000) + 120, iss: "issuer-jwt-array", aud: "aud-jwt-array" },
+                privateKey,
+                kid,
+              )
+
+              const response = await invokeTool(app, tmp.path, sessionID, {
+                authorization: `Bearer ${token}`,
+              })
+              expect(response.status).toBe(404)
+            },
+          )
+        },
+      })
+    } finally {
+      await new Promise<void>((resolve, reject) => jwks.close((error) => (error ? reject(error) : resolve())))
+    }
   })
 
   test("ordered auth array allows later strategy after earlier fails", async () => {
@@ -169,38 +186,64 @@ describe("tool endpoint auth policy", () => {
   test("jwt strategy authorizes valid bearer and rejects invalid bearer even with x-api-key", async () => {
     await using tmp = await project("jwt")
     await Instance.disposeAll()
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        await withEnv(
-          {
-            OPENCODE_COMPAT_JWT_HS256_SECRET: "jwt-secret",
-            OPENCODE_COMPAT_JWT_ISSUER: "issuer-jwt",
-            OPENCODE_COMPAT_JWT_AUDIENCE: "aud-jwt",
-            OPENCODE_TOOL_ENDPOINT_API_KEY: "still-not-used",
-          },
-          async () => {
-            const app = Server.App()
-            const sessionID = await createSession(app, tmp.path, { "x-api-key": "still-not-used" })
-
-            const goodToken = signHS256(
-              { exp: Math.floor(Date.now() / 1000) + 120, iss: "issuer-jwt", aud: "aud-jwt" },
-              "jwt-secret",
-            )
-            const allowed = await invokeTool(app, tmp.path, sessionID, {
-              authorization: `Bearer ${goodToken}`,
-            })
-            expect(allowed.status).toBe(404)
-
-            const denied = await invokeTool(app, tmp.path, sessionID, {
-              authorization: "Bearer not-a-jwt",
-              "x-api-key": "still-not-used",
-            })
-            expect(denied.status).toBe(401)
-          },
-        )
-      },
+    const { privateKey, publicKey } = generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+      publicKeyEncoding: { format: "pem", type: "spki" },
+      privateKeyEncoding: { format: "pem", type: "pkcs8" },
     })
+    const kid = "jwt-strategy-kid"
+    const jwk = createPublicKey(publicKey).export({ format: "jwk" }) as Record<string, unknown>
+    const jwks = createServer((req, res) => {
+      if (req.url !== "/.well-known/jwks.json") {
+        res.statusCode = 404
+        res.end()
+        return
+      }
+      res.setHeader("content-type", "application/json")
+      res.end(JSON.stringify({ keys: [{ ...jwk, use: "sig", alg: "RS256", kid }] }))
+    })
+    await new Promise<void>((resolve) => jwks.listen(0, "127.0.0.1", () => resolve()))
+    try {
+      const address = jwks.address()
+      if (!address || typeof address === "string") throw new Error("failed to start jwks server")
+      const jwksUrl = `http://127.0.0.1:${address.port}/.well-known/jwks.json`
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          await withEnv(
+            {
+              OPENCODE_COMPAT_JWT_JWKS_URL: jwksUrl,
+              OPENCODE_COMPAT_JWT_ISSUER: "issuer-jwt",
+              OPENCODE_COMPAT_JWT_AUDIENCE: "aud-jwt",
+              OPENCODE_TOOL_ENDPOINT_API_KEY: "still-not-used",
+            },
+            async () => {
+              const app = Server.App()
+              const sessionID = await createSession(app, tmp.path, { "x-api-key": "still-not-used" })
+
+              const goodToken = signRS256(
+                { exp: Math.floor(Date.now() / 1000) + 120, iss: "issuer-jwt", aud: "aud-jwt" },
+                privateKey,
+                kid,
+              )
+              const allowed = await invokeTool(app, tmp.path, sessionID, {
+                authorization: `Bearer ${goodToken}`,
+              })
+              expect(allowed.status).toBe(404)
+
+              const denied = await invokeTool(app, tmp.path, sessionID, {
+                authorization: "Bearer not-a-jwt",
+                "x-api-key": "still-not-used",
+              })
+              expect(denied.status).toBe(401)
+            },
+          )
+        },
+      })
+    } finally {
+      await new Promise<void>((resolve, reject) => jwks.close((error) => (error ? reject(error) : resolve())))
+    }
   })
 
   test("oidc strategy strictly validates via discovery jwks", async () => {
@@ -363,43 +406,69 @@ describe("tool endpoint auth policy", () => {
       allowedTools: ["missing_tool", "bash"],
     })
     await Instance.disposeAll()
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        await withEnv(
-          {
-            OPENCODE_COMPAT_JWT_HS256_SECRET: "jwt-secret-allowlist",
-            OPENCODE_COMPAT_JWT_ISSUER: "issuer-allowlist",
-            OPENCODE_COMPAT_JWT_AUDIENCE: "aud-allowlist",
-          },
-          async () => {
-          const app = Server.App()
-          const sessionID = await createSession(app, tmp.path)
-          const token = signHS256(
-            { exp: Math.floor(Date.now() / 1000) + 120, iss: "issuer-allowlist", aud: "aud-allowlist" },
-            "jwt-secret-allowlist",
-          )
-
-          const disallowed = await invokeTool(
-            app,
-            tmp.path,
-            sessionID,
-            { authorization: `Bearer ${token}` },
-            "not_allowed",
-          )
-          expect(disallowed.status).toBe(403)
-
-          const sensitive = await invokeTool(
-            app,
-            tmp.path,
-            sessionID,
-            { authorization: `Bearer ${token}` },
-            "bash",
-          )
-          expect(sensitive.status).toBe(403)
-          },
-        )
-      },
+    const { privateKey, publicKey } = generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+      publicKeyEncoding: { format: "pem", type: "spki" },
+      privateKeyEncoding: { format: "pem", type: "pkcs8" },
     })
+    const kid = "jwt-allowlist-kid"
+    const jwk = createPublicKey(publicKey).export({ format: "jwk" }) as Record<string, unknown>
+    const jwks = createServer((req, res) => {
+      if (req.url !== "/.well-known/jwks.json") {
+        res.statusCode = 404
+        res.end()
+        return
+      }
+      res.setHeader("content-type", "application/json")
+      res.end(JSON.stringify({ keys: [{ ...jwk, use: "sig", alg: "RS256", kid }] }))
+    })
+    await new Promise<void>((resolve) => jwks.listen(0, "127.0.0.1", () => resolve()))
+    try {
+      const address = jwks.address()
+      if (!address || typeof address === "string") throw new Error("failed to start jwks server")
+      const jwksUrl = `http://127.0.0.1:${address.port}/.well-known/jwks.json`
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          await withEnv(
+            {
+              OPENCODE_COMPAT_JWT_JWKS_URL: jwksUrl,
+              OPENCODE_COMPAT_JWT_ISSUER: "issuer-allowlist",
+              OPENCODE_COMPAT_JWT_AUDIENCE: "aud-allowlist",
+            },
+            async () => {
+              const app = Server.App()
+              const sessionID = await createSession(app, tmp.path)
+              const token = signRS256(
+                { exp: Math.floor(Date.now() / 1000) + 120, iss: "issuer-allowlist", aud: "aud-allowlist" },
+                privateKey,
+                kid,
+              )
+
+              const disallowed = await invokeTool(
+                app,
+                tmp.path,
+                sessionID,
+                { authorization: `Bearer ${token}` },
+                "not_allowed",
+              )
+              expect(disallowed.status).toBe(403)
+
+              const sensitive = await invokeTool(
+                app,
+                tmp.path,
+                sessionID,
+                { authorization: `Bearer ${token}` },
+                "bash",
+              )
+              expect(sensitive.status).toBe(403)
+            },
+          )
+        },
+      })
+    } finally {
+      await new Promise<void>((resolve, reject) => jwks.close((error) => (error ? reject(error) : resolve())))
+    }
   })
 })

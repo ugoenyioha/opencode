@@ -76,16 +76,15 @@ describe("startup auth config validation", () => {
     })
   })
 
-  test("jwt strategy rejects conflicting key sources", async () => {
+  test("jwt strategy rejects deprecated hs256 secret", async () => {
     await expectStartupError({
       auth: "jwt",
       env: {
-        OPENCODE_COMPAT_JWT_JWKS_URL: "https://issuer.example/.well-known/jwks.json",
         OPENCODE_COMPAT_JWT_HS256_SECRET: "super-secret-value",
       },
-      code: "AUTH_CONFIG_CONFLICT",
+      code: "AUTH_CONFIG_UNSUPPORTED_REF",
       message:
-        "AUTH_CONFIG_CONFLICT strategy=jwt key=env.OPENCODE_COMPAT_JWT_JWKS_URL|env.OPENCODE_COMPAT_JWT_HS256_SECRET reason=mutually_exclusive_key_sources",
+        "AUTH_CONFIG_UNSUPPORTED_REF strategy=jwt key=env.OPENCODE_COMPAT_JWT_HS256_SECRET reason=hs256_deprecated_use_jwks",
     })
   })
 
@@ -191,6 +190,51 @@ describe("startup auth config validation", () => {
     })
   })
 
+  test("oauth2 strategy validates stale while error bounds", async () => {
+    await expectStartupError({
+      auth: "oauth2",
+      env: {
+        OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL: "https://auth.example.com/introspect",
+        OPENCODE_COMPAT_OAUTH_CLIENT_ID: "client-id",
+        OPENCODE_COMPAT_OAUTH_CLIENT_SECRET: "client-secret",
+        OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_WHILE_ERROR_MS: "60001",
+      },
+      code: "AUTH_CONFIG_BOUNDS",
+      message:
+        "AUTH_CONFIG_BOUNDS strategy=oauth2 key=env.OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_WHILE_ERROR_MS reason=must_be_integer_between_0_and_60000",
+    })
+  })
+
+  test("oauth2 strategy validates stale max abs age bounds", async () => {
+    await expectStartupError({
+      auth: "oauth2",
+      env: {
+        OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL: "https://auth.example.com/introspect",
+        OPENCODE_COMPAT_OAUTH_CLIENT_ID: "client-id",
+        OPENCODE_COMPAT_OAUTH_CLIENT_SECRET: "client-secret",
+        OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_MAX_ABS_AGE_MS: "-1",
+      },
+      code: "AUTH_CONFIG_BOUNDS",
+      message:
+        "AUTH_CONFIG_BOUNDS strategy=oauth2 key=env.OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_MAX_ABS_AGE_MS reason=must_be_integer_between_0_and_60000",
+    })
+  })
+
+  test("oauth2 strategy rejects invalid stale require exp literal", async () => {
+    await expectStartupError({
+      auth: "oauth2",
+      env: {
+        OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL: "https://auth.example.com/introspect",
+        OPENCODE_COMPAT_OAUTH_CLIENT_ID: "client-id",
+        OPENCODE_COMPAT_OAUTH_CLIENT_SECRET: "client-secret",
+        OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_REQUIRE_EXP: "sometimes",
+      },
+      code: "AUTH_CONFIG_BOUNDS",
+      message:
+        "AUTH_CONFIG_BOUNDS strategy=oauth2 key=env.OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_REQUIRE_EXP reason=must_be_boolean_literal",
+    })
+  })
+
   test("unsupported strategy ref fails startup", async () => {
     await expectStartupError({
       auth: "unknown",
@@ -215,8 +259,7 @@ describe("startup auth config validation", () => {
     await expectStartupError({
       auth: ["jwt", "api-key"],
       code: "AUTH_CONFIG_MISSING",
-      message:
-        "AUTH_CONFIG_MISSING strategy=jwt key=env.OPENCODE_COMPAT_JWT_JWKS_URL|env.OPENCODE_COMPAT_JWT_HS256_SECRET reason=requires_one_key_source",
+      message: "AUTH_CONFIG_MISSING strategy=jwt key=env.OPENCODE_COMPAT_JWT_JWKS_URL reason=required",
     })
   })
 
@@ -282,7 +325,7 @@ describe("startup auth config validation", () => {
     await expect(
       validateStartupAuthConfig({
         config: config("jwt"),
-        getEnv: (key) => ({ OPENCODE_COMPAT_JWT_HS256_SECRET: "hs-secret" })[key],
+        getEnv: (key) => ({ OPENCODE_COMPAT_JWT_JWKS_URL: "https://issuer.example/.well-known/jwks.json" })[key],
         getApiKey: () => undefined,
         hasExternalHttpHook: async () => false,
       }),
@@ -330,7 +373,7 @@ describe("startup auth config validation", () => {
     await expect(
       validateStartupAuthConfig({
         config: config(["api-key", "jwt"]),
-        getEnv: (key) => ({ OPENCODE_COMPAT_JWT_HS256_SECRET: "hs-secret" })[key],
+        getEnv: (key) => ({ OPENCODE_COMPAT_JWT_JWKS_URL: "https://issuer.example/.well-known/jwks.json" })[key],
         getApiKey: () => "api-key-present",
         hasExternalHttpHook: async () => false,
       }),
