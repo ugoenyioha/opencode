@@ -46,7 +46,8 @@ import { MDNS } from "./mdns"
 import { Plugin } from "@/plugin"
 import { ToolRoutes, isSensitiveTool } from "./routes/tool"
 import { CompatRoutes } from "./compat"
-import { authorizeRequest, type RouteAuthRule } from "./auth-policy"
+import { evaluateAuthorization, type RouteAuthRule } from "./auth-policy"
+import { emitAuthBoundary, emitAuthDecision } from "./auth-observability"
 
 // @ts-ignore This global is needed to prevent ai-sdk from logging warnings to stdout https://github.com/vercel/ai/blob/2dc67e0ef538307f21368db32d5a12345d98831b/packages/ai/src/logger/log-warnings.ts#L85
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -168,8 +169,32 @@ export namespace Server {
               return c.json({ error: "Unauthorized" }, 401)
             }
           }
-          const ok = await authorizeRequest(c.req.method, c.req.path, c.req.raw.headers, routeRules)
-          if (ok) return next()
+          const auth = await evaluateAuthorization(c.req.method, c.req.path, c.req.raw.headers, routeRules)
+
+          if (auth.policyMode === "defer") {
+            emitAuthBoundary({
+              surface: auth.surface,
+              route: auth.route,
+              policyMode: "defer",
+            })
+          }
+
+          const shouldEmitDecision =
+            (auth.policyMode === "global-default" || auth.policyMode === "strategies") && auth.route !== "anthropic.compat"
+
+          if (shouldEmitDecision) {
+            emitAuthDecision({
+              source: "centralized",
+              surface: auth.surface,
+              route: auth.route,
+              policyMode: auth.policyMode,
+              outcome: auth.ok ? "allow" : "deny",
+              strategy: auth.strategy,
+              reason: auth.reason,
+            })
+          }
+
+          if (auth.ok) return next()
           return c.json({ error: "Unauthorized" }, 401)
         })
         .use(async (c, next) => {

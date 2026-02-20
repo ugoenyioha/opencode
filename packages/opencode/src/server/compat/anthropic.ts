@@ -7,6 +7,7 @@ import { CompatTimeoutError, executeCompat, startCompat } from "./pipeline"
 import { resolveModel } from "./model"
 import { anthropicMessageSessionStream } from "./stream"
 import { parseJSONBody } from "./request"
+import { emitAuthDecision } from "../auth-observability"
 
 const MESSAGE_MAX = 128
 const BLOCK_MAX = 128
@@ -123,7 +124,27 @@ export function AnthropicCompatRoutes() {
     .post("/v1/messages", async (c) => {
       if (!(await enabled())) return new Response("Not Found", { status: 404 })
       const auth = requireAnthropicHeaders(c.req.raw)
-      if (typeof auth !== "string") return auth
+      if (typeof auth !== "string") {
+        emitAuthDecision({
+          source: "compat",
+          surface: "anthropic",
+          route: "anthropic.compat",
+          policyMode: "strategies",
+          outcome: "deny",
+          strategy: "none",
+          reason: "invalid_api_key",
+        })
+        return auth
+      }
+      emitAuthDecision({
+        source: "compat",
+        surface: "anthropic",
+        route: "anthropic.compat",
+        policyMode: "strategies",
+        outcome: "allow",
+        strategy: "api-key",
+        reason: "none",
+      })
 
       const body = await parseJSONBody(c.req.raw, "anthropic").catch(() => undefined)
       if (!body?.ok) return body?.response ?? anthropicError("bad_request", "Invalid request")
@@ -199,7 +220,27 @@ export function AnthropicCompatRoutes() {
     .post("/v1/messages/count_tokens", async (c) => {
       if (!(await enabled())) return new Response("Not Found", { status: 404 })
       const auth = requireAnthropicHeaders(c.req.raw)
-      if (typeof auth !== "string") return auth
+      if (typeof auth !== "string") {
+        emitAuthDecision({
+          source: "compat",
+          surface: "anthropic",
+          route: "anthropic.compat",
+          policyMode: "strategies",
+          outcome: "deny",
+          strategy: "none",
+          reason: "invalid_api_key",
+        })
+        return auth
+      }
+      emitAuthDecision({
+        source: "compat",
+        surface: "anthropic",
+        route: "anthropic.compat",
+        policyMode: "strategies",
+        outcome: "allow",
+        strategy: "api-key",
+        reason: "none",
+      })
 
       const body = await parseJSONBody(c.req.raw, "anthropic").catch(() => undefined)
       if (!body?.ok) return body?.response ?? anthropicError("bad_request", "Invalid request")

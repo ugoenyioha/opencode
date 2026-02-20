@@ -2,6 +2,7 @@ import type { AuthStrategy } from "@opencode-ai/plugin"
 import { Flag } from "@/flag/flag"
 import { timingSafeEqual } from "crypto"
 import { bearerFromHeaders, verifyBearerForStrategy } from "./compat/auth"
+import { normalizeAuthRoute, surfaceFromRoute, type AuthReason, type AuthRoute, type AuthStrategyLabel } from "./auth-observability"
 
 export type RouteAuthRule = {
   method: string
@@ -14,6 +15,15 @@ type AuthPolicy =
   | { mode: "public" }
   | { mode: "global-default" }
   | { mode: "strategies"; anyOf: AuthStrategy[] }
+
+export type AuthorizationDecision = {
+  ok: boolean
+  policyMode: AuthPolicy["mode"]
+  route: AuthRoute
+  surface: ReturnType<typeof surfaceFromRoute>
+  strategy: AuthStrategyLabel
+  reason: AuthReason
+}
 
 function pathMatches(reqPath: string, pattern: string): boolean {
   const reqParts = reqPath.split("/")
@@ -71,7 +81,11 @@ function validBasicAuth(headers: Headers) {
   }
 }
 
-async function strategyPasses(strategy: AuthStrategy, headers: Headers) {
+async function strategyPasses(
+  strategy: AuthStrategy,
+  headers: Headers,
+  context: { surface: ReturnType<typeof surfaceFromRoute>; route: AuthRoute },
+) {
   if (strategy === "api-key") return validAPIKey(headers)
   // plugin auth is enforced by explicit plugin hooks (http.request).
   // Do not treat it as pre-authorized at the centralized middleware gate.
@@ -79,7 +93,11 @@ async function strategyPasses(strategy: AuthStrategy, headers: Headers) {
   if (strategy === "jwt" || strategy === "oidc" || strategy === "oauth2") {
     const token = bearerFromHeaders(headers)
     if (!token) return false
-    return verifyBearerForStrategy(strategy, token)
+    return verifyBearerForStrategy(strategy, token, {
+      surface: context.surface,
+      route: context.route,
+      source: "centralized",
+    })
   }
   return false
 }
@@ -93,12 +111,86 @@ function defaultGatePasses(headers: Headers) {
   return false
 }
 
-export async function authorizeRequest(method: string, path: string, headers: Headers, routeRules: RouteAuthRule[]) {
+function strategyLabel(strategy: AuthStrategy): AuthStrategyLabel {
+  if (strategy === "api-key") return "api-key"
+  if (strategy === "jwt") return "jwt"
+  if (strategy === "oidc") return "oidc"
+  if (strategy === "oauth2") return "oauth2"
+  return "plugin"
+}
+
+export async function evaluateAuthorization(
+  method: string,
+  path: string,
+  headers: Headers,
+  routeRules: RouteAuthRule[],
+): Promise<AuthorizationDecision> {
   const policy = resolvePolicy(method, path, routeRules)
-  if (policy.mode === "defer" || policy.mode === "public") return true
-  if (policy.mode === "global-default") return defaultGatePasses(headers)
-  for (const strategy of policy.anyOf) {
-    if (await strategyPasses(strategy, headers)) return true
+  const route = normalizeAuthRoute(path)
+  const surface = surfaceFromRoute(route)
+
+  if (policy.mode === "defer") {
+    return {
+      ok: true,
+      policyMode: "defer",
+      route,
+      surface,
+      strategy: "none",
+      reason: "none",
+    }
   }
-  return false
+
+  if (policy.mode === "public") {
+    return {
+      ok: true,
+      policyMode: "public",
+      route,
+      surface,
+      strategy: "none",
+      reason: "none",
+    }
+  }
+
+  if (policy.mode === "global-default") {
+    const hasPassword = !!Flag.OPENCODE_SERVER_PASSWORD
+    const hasApiKey = !!process.env["OPENCODE_TOOL_ENDPOINT_API_KEY"]
+    const byApiKey = hasApiKey && validAPIKey(headers)
+    const byBasic = hasPassword && validBasicAuth(headers)
+    const ok = defaultGatePasses(headers)
+    return {
+      ok,
+      policyMode: "global-default",
+      route,
+      surface,
+      strategy: byApiKey ? "api-key" : byBasic ? "basic" : "none",
+      reason: ok ? "none" : hasApiKey ? "invalid_api_key" : "invalid_basic_auth",
+    }
+  }
+
+  for (const strategy of policy.anyOf) {
+    const passed = await strategyPasses(strategy, headers, { surface, route })
+    if (passed) {
+      return {
+        ok: true,
+        policyMode: "strategies",
+        route,
+        surface,
+        strategy: strategyLabel(strategy),
+        reason: "none",
+      }
+    }
+  }
+
+  return {
+    ok: false,
+    policyMode: "strategies",
+    route,
+    surface,
+    strategy: "none",
+    reason: "invalid_token",
+  }
+}
+
+export async function authorizeRequest(method: string, path: string, headers: Headers, routeRules: RouteAuthRule[]) {
+  return (await evaluateAuthorization(method, path, headers, routeRules)).ok
 }

@@ -5,6 +5,40 @@ import { createHash } from "crypto"
 import { createHmac } from "crypto"
 import { createPublicKey } from "crypto"
 import { createVerify } from "crypto"
+import {
+  emitAuthDecision,
+  emitAuthVerifierWarn,
+  type AuthReason,
+  type AuthRoute,
+  type AuthSource,
+  type AuthStrategyLabel,
+  type AuthSurface,
+} from "../auth-observability"
+
+type AuthObserveContext = {
+  surface: AuthSurface
+  route: AuthRoute
+  source: AuthSource
+}
+
+const OPENAI_COMPAT_CONTEXT: AuthObserveContext = {
+  surface: "openai",
+  route: "openai.compat",
+  source: "compat",
+}
+
+function verifierWarn(
+  strategy: AuthStrategyLabel,
+  reason: Extract<AuthReason, "jwt_verifier_error" | "oidc_discovery_error" | "oauth_introspection_error" | "verifier_internal_error">,
+  context: AuthObserveContext,
+) {
+  emitAuthVerifierWarn({
+    surface: context.surface,
+    route: context.route,
+    strategy,
+    reason,
+  })
+}
 
 function bearer(input: string | undefined) {
   if (!input) return
@@ -172,7 +206,7 @@ const JWKS_ERROR_TTL_MS = 10_000
 const JWKS_FETCH_TIMEOUT_MS = 5_000
 const JWT_CLOCK_SKEW_SECONDS = 30
 
-async function loadJWKS(url: string) {
+async function loadJWKS(url: string, context: AuthObserveContext) {
   const cached = jwksCache.get(url)
   const now = Date.now()
   if (cached && cached.expiresAt > now) return cached.keys
@@ -188,16 +222,17 @@ async function loadJWKS(url: string) {
     jwksCache.set(url, { expiresAt: now + JWKS_TTL_MS, keys })
     return keys
   } catch {
+    verifierWarn("jwt", "jwt_verifier_error", context)
     jwksCache.set(url, { expiresAt: now + JWKS_ERROR_TTL_MS, keys: [] })
     return []
   }
 }
 
-async function verifyRS256Signature(parsed: ParsedJWT, jwksURL: string) {
+async function verifyRS256Signature(parsed: ParsedJWT, jwksURL: string, context: AuthObserveContext) {
   if (parsed.header.alg !== "RS256") return false
   if (!parsed.header.kid) return false
 
-  const keys = await loadJWKS(jwksURL)
+  const keys = await loadJWKS(jwksURL, context)
   const jwk = keys.find((key) => key.kid === parsed.header.kid && key.kty === "RSA")
   if (!jwk) return false
 
@@ -212,8 +247,8 @@ async function verifyRS256Signature(parsed: ParsedJWT, jwksURL: string) {
   }
 }
 
-async function verifyRS256JWT(parsed: ParsedJWT, jwksURL: string) {
-  const signatureOk = await verifyRS256Signature(parsed, jwksURL)
+async function verifyRS256JWT(parsed: ParsedJWT, jwksURL: string, context: AuthObserveContext) {
+  const signatureOk = await verifyRS256Signature(parsed, jwksURL, context)
   if (!signatureOk) return false
   return claimChecks(parsed.payload)
 }
@@ -284,7 +319,7 @@ function introspectionCacheSet(key: string, value: { expiresAt: number; allowed:
   }
 }
 
-async function loadOIDCDiscovery(issuer: string) {
+async function loadOIDCDiscovery(issuer: string, context: AuthObserveContext) {
   const cached = oidcDiscoveryCache.get(issuer)
   const now = Date.now()
   if (cached && cached.expiresAt > now) return cached.data
@@ -329,12 +364,13 @@ async function loadOIDCDiscovery(issuer: string) {
     oidcDiscoveryCache.set(issuer, { expiresAt: now + OIDC_DISCOVERY_TTL_MS, data: normalizedData })
     return normalizedData
   } catch {
+    verifierWarn("oidc", "oidc_discovery_error", context)
     oidcDiscoveryCache.set(issuer, { expiresAt: now + JWKS_ERROR_TTL_MS })
     return
   }
 }
 
-async function verifyOIDCJWT(token: string) {
+async function verifyOIDCJWT(token: string, context: AuthObserveContext) {
   const issuer = Env.get("OPENCODE_COMPAT_OIDC_ISSUER")
   if (!issuer) return false
 
@@ -348,10 +384,10 @@ async function verifyOIDCJWT(token: string) {
   if (!acceptedAlgs.includes(alg)) return false
   if (alg !== "RS256") return false
 
-  const discovery = await loadOIDCDiscovery(issuer)
+  const discovery = await loadOIDCDiscovery(issuer, context)
   const jwksUrl = discovery?.jwks_uri
   if (!jwksUrl) return false
-  const signatureOk = await verifyRS256Signature(parsed, jwksUrl)
+  const signatureOk = await verifyRS256Signature(parsed, jwksUrl, context)
   if (!signatureOk) return false
 
   const audience = Env.get("OPENCODE_COMPAT_OIDC_AUDIENCE")
@@ -492,7 +528,7 @@ function verifyIntrospectionClaims(payload: IntrospectionResponse) {
   return true
 }
 
-async function verifyIntrospectionToken(token: string) {
+async function verifyIntrospectionToken(token: string, context: AuthObserveContext) {
   if (!introspectionEnabled()) return false
   const key = introspectionCacheTokenKey(token)
   const now = Date.now()
@@ -555,12 +591,13 @@ async function verifyIntrospectionToken(token: string) {
     introspectionCacheSet(key, { expiresAt: successExpiry, allowed: true })
     return true
   } catch {
+    verifierWarn("oauth2", "oauth_introspection_error", context)
     introspectionCacheSet(key, { expiresAt: now + JWKS_ERROR_TTL_MS, allowed: false })
     return false
   }
 }
 
-async function verifyJWT(token: string) {
+async function verifyJWT(token: string, context: AuthObserveContext) {
   const parsed = parseJWT(token)
   if (!parsed) return false
   if (parsed.header.alg === "none") return false
@@ -576,17 +613,22 @@ async function verifyJWT(token: string) {
     if (!jwksURL) return false
     const validatedJWKSURL = enforceAuthURLPolicy(jwksURL)
     if (!validatedJWKSURL) return false
-    return verifyRS256JWT(parsed, validatedJWKSURL.toString())
+    return verifyRS256JWT(parsed, validatedJWKSURL.toString(), context)
   }
   return false
 }
 
-export async function verifyBearerForStrategy(strategy: StrictBearerStrategy, token: string) {
+export async function verifyBearerForStrategy(
+  strategy: StrictBearerStrategy,
+  token: string,
+  context: AuthObserveContext = { surface: "server", route: "other", source: "centralized" },
+) {
   try {
-    if (strategy === "jwt") return verifyJWT(token)
-    if (strategy === "oidc") return verifyOIDCJWT(token)
-    return verifyIntrospectionToken(token)
+    if (strategy === "jwt") return verifyJWT(token, context)
+    if (strategy === "oidc") return verifyOIDCJWT(token, context)
+    return verifyIntrospectionToken(token, context)
   } catch {
+    verifierWarn(strategy, "verifier_internal_error", context)
     return false
   }
 }
@@ -607,7 +649,7 @@ function allowJwtFallbackToIntrospection() {
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on"
 }
 
-async function verifyBearerToken(token: string) {
+async function verifyBearerToken(token: string, context: AuthObserveContext) {
   const oidcEnabled = !!Env.get("OPENCODE_COMPAT_OIDC_ISSUER")
   const jwtEnabled = !!Env.get("OPENCODE_COMPAT_JWT_JWKS_URL") || !!Env.get("OPENCODE_COMPAT_JWT_HS256_SECRET")
   const introspectionOn = introspectionEnabled()
@@ -615,23 +657,23 @@ async function verifyBearerToken(token: string) {
   const likelyJWT = isLikelyJWT(token)
   if (likelyJWT) {
     if (oidcEnabled) {
-      if (await verifyOIDCJWT(token)) return true
-      if (introspectionOn && allowJwtFallbackToIntrospection()) return verifyIntrospectionToken(token)
+      if (await verifyOIDCJWT(token, context)) return true
+      if (introspectionOn && allowJwtFallbackToIntrospection()) return verifyIntrospectionToken(token, context)
       return false
     }
     if (jwtEnabled) {
-      if (await verifyJWT(token)) return true
-      if (introspectionOn && allowJwtFallbackToIntrospection()) return verifyIntrospectionToken(token)
+      if (await verifyJWT(token, context)) return true
+      if (introspectionOn && allowJwtFallbackToIntrospection()) return verifyIntrospectionToken(token, context)
       return false
     }
     if (introspectionOn) {
-      return verifyIntrospectionToken(token)
+      return verifyIntrospectionToken(token, context)
     }
     return authorized(token)
   }
 
   if (introspectionOn) {
-    return verifyIntrospectionToken(token)
+    return verifyIntrospectionToken(token, context)
   }
   if (oidcEnabled || jwtEnabled) {
     return false
@@ -664,12 +706,62 @@ export async function requireOpenAIBearer(req: Request) {
   const bearerToken = bearer(req.headers.get("authorization") ?? undefined)
   if (bearerToken) {
     if (bearerAuthEnabled()) {
-      if (await verifyBearerToken(bearerToken)) return bearerToken
+      if (await verifyBearerToken(bearerToken, OPENAI_COMPAT_CONTEXT)) {
+        emitAuthDecision({
+          source: "compat",
+          surface: "openai",
+          route: "openai.compat",
+          policyMode: "strategies",
+          outcome: "allow",
+          strategy: "jwt",
+          reason: "none",
+        })
+        return bearerToken
+      }
+      emitAuthDecision({
+        source: "compat",
+        surface: "openai",
+        route: "openai.compat",
+        policyMode: "strategies",
+        outcome: "deny",
+        strategy: "none",
+        reason: "invalid_token",
+      })
       return openAIError("unauthorized", "Unauthorized")
     }
-    if (authorized(bearerToken)) return bearerToken
+    if (authorized(bearerToken)) {
+      emitAuthDecision({
+        source: "compat",
+        surface: "openai",
+        route: "openai.compat",
+        policyMode: "strategies",
+        outcome: "allow",
+        strategy: "none",
+        reason: "none",
+      })
+      return bearerToken
+    }
+    emitAuthDecision({
+      source: "compat",
+      surface: "openai",
+      route: "openai.compat",
+      policyMode: "strategies",
+      outcome: "deny",
+      strategy: "none",
+      reason: "invalid_token",
+    })
     return openAIError("unauthorized", "Unauthorized")
   }
+
+  emitAuthDecision({
+    source: "compat",
+    surface: "openai",
+    route: "openai.compat",
+    policyMode: "strategies",
+    outcome: "deny",
+    strategy: "none",
+    reason: "missing_token",
+  })
 
   return openAIError("unauthorized", "Unauthorized")
 }
