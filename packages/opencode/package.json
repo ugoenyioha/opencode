@@ -16,7 +16,9 @@
     "format": "echo 'Formatting code...' && bun run --prettier --write src/**/*.ts",
     "docs": "echo 'Generating documentation...' && find src -name '*.ts' -exec echo 'Processing: {}' \\;",
     "deploy": "echo 'Deploying application...' && bun run build && echo 'Deployment completed successfully'",
-    "db": "bun drizzle-kit"
+    "db": "bun drizzle-kit",
+    "perf:auth": "OPENCODE_TOOL_ENDPOINT_API_KEY=perf-api-key bun run test/perf/auth-benchmark.ts",
+    "perf:auth:ci": "OPENCODE_TOOL_ENDPOINT_API_KEY=perf-api-key OPENCODE_AUTH_BENCH_ENFORCE=1 bun run test/perf/auth-benchmark.ts --out test/perf/results/auth-benchmark.json"
   },
   "bin": {
     "opencode": "./bin/opencode"
