@@ -13,9 +13,9 @@ import type {
 } from "@opencode-ai/sdk"
 
 import type { BunShell } from "./shell"
-import { type ToolDefinition } from "./tool"
+import { type ToolDefinition } from "./tool.js"
 
-export * from "./tool"
+export * from "./tool.js"
 
 export type ProviderContext = {
   source: "env" | "config" | "custom" | "api"
@@ -33,6 +33,15 @@ export type PluginInput = {
 }
 
 export type Plugin = (input: PluginInput) => Promise<Hooks>
+
+export type AuthStrategy = "api-key" | "jwt" | "spiffe" | "oauth2" | "oidc" | "plugin"
+
+export type RouteDefinition = {
+  method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" | "OPTIONS" | "*"
+  path: string
+  auth?: AuthStrategy | AuthStrategy[]
+  handler: (req: Request, params: Record<string, string>) => Promise<Response>
+}
 
 export type AuthHook = {
   provider: string
@@ -148,6 +157,22 @@ export type AuthOuathResult = { url: string; instructions: string } & (
 export interface Hooks {
   event?: (input: { event: Event }) => Promise<void>
   config?: (input: Config) => Promise<void>
+  "http.request"?: (
+    input: {
+      method: string
+      path: string
+      headers: Record<string, string>
+      clientIP: string
+    },
+    output: {
+      response?: {
+        status: number
+        body: string
+        headers?: Record<string, string>
+      }
+    },
+  ) => Promise<void>
+  "http.route"?: RouteDefinition[]
   tool?: {
     [key: string]: ToolDefinition
   }

@@ -1,6 +1,7 @@
 import { BusEvent } from "@/bus/bus-event"
 import { Bus } from "@/bus"
 import { Log } from "../util/log"
+import { timingSafeEqual } from "crypto"
 import { describeRoute, generateSpecs, validator, resolver, openAPIRouteHandler } from "hono-openapi"
 import { Hono } from "hono"
 import { cors } from "hono/cors"
@@ -28,6 +29,8 @@ import { PtyRoutes } from "./routes/pty"
 import { McpRoutes } from "./routes/mcp"
 import { FileRoutes } from "./routes/file"
 import { ConfigRoutes } from "./routes/config"
+import { Config } from "@/config/config"
+import { Env } from "@/env"
 import { ExperimentalRoutes } from "./routes/experimental"
 import { TeamRoutes } from "./routes/team"
 import { ProviderRoutes } from "./routes/provider"
@@ -42,6 +45,9 @@ import { QuestionRoutes } from "./routes/question"
 import { PermissionRoutes } from "./routes/permission"
 import { GlobalRoutes } from "./routes/global"
 import { MDNS } from "./mdns"
+import { Plugin } from "@/plugin"
+import { ToolRoutes, isSensitiveTool } from "./routes/tool"
+import { CompatRoutes } from "./compat"
 
 // @ts-ignore This global is needed to prevent ai-sdk from logging warnings to stdout https://github.com/vercel/ai/blob/2dc67e0ef538307f21368db32d5a12345d98831b/packages/ai/src/logger/log-warnings.ts#L85
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -51,6 +57,59 @@ export namespace Server {
 
   let _url: URL | undefined
   let _corsWhitelist: string[] = []
+
+  const PLUGIN_ROUTE_MISS_HEADER = "x-opencode-plugin-route"
+
+  /**
+   * Match a request path against a route pattern.
+   * Supports :param segments and * wildcards.
+   * Examples: "/a2a/:agent/tasks" matches "/a2a/neo-sidecar/tasks"
+   */
+  function pathMatches(requestPath: string, pattern: string): boolean {
+    const reqParts = requestPath.split("/")
+    const patParts = pattern.split("/")
+    if (reqParts.length !== patParts.length) return false
+    return patParts.every((pat, i) => pat.startsWith(":") || pat === "*" || pat === reqParts[i])
+  }
+
+  function allowExternalRoutes(config: Config.Info) {
+    const value = Env.get("OPENCODE_ALLOW_EXTERNAL_ROUTES")
+    if (value !== undefined) {
+      const normalized = value.toLowerCase()
+      return normalized === "1" || normalized === "true"
+    }
+    return config.server?.allowExternalRoutes === true
+  }
+
+  const pluginRoutes = Instance.state(async () => {
+    const config = await Config.get()
+    const app = new Hono()
+    app.notFound(
+      () =>
+        new Response("", {
+          status: 404,
+          headers: {
+            [PLUGIN_ROUTE_MISS_HEADER]: "miss",
+          },
+        }),
+    )
+
+    const routesWithSource = await Plugin.collectRoutesWithSource(allowExternalRoutes(config))
+
+    // Only internal plugins can declare auth: [] (public routes).
+    // External plugins must not be able to punch auth holes.
+    const publicRoutes = routesWithSource
+      .filter((r) => r.source === "internal" && Array.isArray(r.route.auth) && r.route.auth.length === 0)
+      .map((r) => ({ method: r.route.method.toUpperCase(), path: r.route.path }))
+
+    for (const { route } of routesWithSource) {
+      app.on((route.method === "*" ? "ALL" : route.method) as any, route.path, async (c) => {
+        return route.handler(c.req.raw, c.req.param())
+      })
+    }
+
+    return { app, publicRoutes }
+  })
 
   export function url(): URL {
     return _url ?? new URL("http://localhost:4096")
@@ -79,14 +138,58 @@ export namespace Server {
             status: 500,
           })
         })
-        .use((c, next) => {
+        .use(async (c, next) => {
           // Allow CORS preflight requests to succeed without auth.
-          // Browser clients sending Authorization headers will preflight with OPTIONS.
           if (c.req.method === "OPTIONS") return next()
+
+          // Routes that declare auth: [] are public (e.g. A2A discovery endpoints)
+          // Must match both method and path to prevent method-based bypass
+          let publicRoutes: { method: string; path: string }[] = []
+          try {
+            publicRoutes = (await pluginRoutes()).publicRoutes
+          } catch {}
+          const method = c.req.method.toUpperCase()
+          if (publicRoutes.some((r) => (r.method === method || r.method === "ALL") && pathMatches(c.req.path, r.path)))
+            return next()
+
+          // Two mutually exclusive auth methods — either one passes the request.
+          // 1. OPENCODE_SERVER_PASSWORD — HTTP Basic Auth
+          // 2. OPENCODE_TOOL_ENDPOINT_API_KEY — X-API-Key header
           const password = Flag.OPENCODE_SERVER_PASSWORD
-          if (!password) return next()
-          const username = Flag.OPENCODE_SERVER_USERNAME ?? "opencode"
-          return basicAuth({ username, password })(c, next)
+          const apiKey = process.env["OPENCODE_TOOL_ENDPOINT_API_KEY"]
+
+          // No auth configured — pass through
+          if (!password && !apiKey) return next()
+
+          // Try API key first (stateless, cheaper to check)
+          // Use constant-time comparison to prevent timing attacks
+          if (apiKey) {
+            const header = c.req.header("x-api-key") ?? ""
+            const a = Buffer.from(header, "utf8")
+            const b = Buffer.from(apiKey, "utf8")
+            if (a.length === b.length) {
+              if (timingSafeEqual(a, b)) return next()
+            }
+          }
+
+          // Try basic auth
+          if (password) {
+            const username = Flag.OPENCODE_SERVER_USERNAME ?? "opencode"
+            // basicAuth throws HTTPException on failure — catch it so we can
+            // fall through to the final 401 if both methods are configured
+            try {
+              let passed = false
+              await basicAuth({ username, password })(c, async () => {
+                passed = true
+              })
+              if (passed) return next()
+            } catch {
+              // Basic auth failed — continue to rejection below
+            }
+          }
+
+          // Neither method passed — reject
+          return c.json({ error: "Unauthorized" }, 401)
         })
         .use(async (c, next) => {
           const skipLogging = c.req.path === "/log"
@@ -131,7 +234,6 @@ export namespace Server {
             },
           }),
         )
-        .route("/global", GlobalRoutes())
         .put(
           "/auth/:providerID",
           describeRoute({
@@ -219,6 +321,43 @@ export namespace Server {
             },
           })
         })
+        .use(async (c, next) => {
+          if (c.req.path === "/log") return next()
+          const output: {
+            response?: {
+              status: number
+              body: string
+              headers?: Record<string, string>
+            }
+          } = {}
+          const forwarded = c.req.header("x-forwarded-for")
+          const clientIP =
+            forwarded?.split(",")[0]?.trim() || c.req.header("x-real-ip") || c.req.header("cf-connecting-ip") || ""
+          await Plugin.trigger(
+            "http.request",
+            {
+              method: c.req.method,
+              path: c.req.path,
+              headers: Object.fromEntries(c.req.raw.headers.entries()),
+              clientIP,
+            },
+            output,
+          )
+          if (!output.response) return next()
+          const headers = new Headers(output.response.headers ?? {})
+          return new Response(output.response.body, {
+            status: output.response.status,
+            headers,
+          })
+        })
+        .use(async (c, next) => {
+          if (c.req.path === "/log") return next()
+          const response = await pluginRoutes().then((r) => r.app.fetch(c.req.raw.clone()))
+          if (response.headers.get(PLUGIN_ROUTE_MISS_HEADER) === "miss") {
+            return next()
+          }
+          return response
+        })
         .get(
           "/doc",
           openAPIRouteHandler(app, {
@@ -233,6 +372,8 @@ export namespace Server {
           }),
         )
         .use(validator("query", z.object({ directory: z.string().optional() })))
+        .route("/", CompatRoutes())
+        .route("/global", GlobalRoutes())
         .route("/project", ProjectRoutes())
         .route("/pty", PtyRoutes())
         .route("/config", ConfigRoutes())
@@ -242,6 +383,7 @@ export namespace Server {
         .route("/question", QuestionRoutes())
         .route("/provider", ProviderRoutes())
         .route("/", FileRoutes())
+        .route("/tool", ToolRoutes())
         .route("/mcp", McpRoutes())
         .route("/team", TeamRoutes())
         .route("/tui", TuiRoutes())
@@ -583,7 +725,44 @@ export namespace Server {
     return result
   }
 
-  export function listen(opts: {
+  async function verifyToolEndpointConfig() {
+    await Instance.provide({
+      directory: process.cwd(),
+      init: InstanceBootstrap,
+      fn: async () => {
+        const config = await Config.get()
+        const endpoint = config.server?.toolEndpoint
+        if (!endpoint?.enabled) return
+        if (!endpoint.allowedTools?.length) {
+          throw new Error("server.toolEndpoint.enabled requires a non-empty server.toolEndpoint.allowedTools")
+        }
+        const auth = endpoint.auth ?? "api-key"
+        if (endpoint.allowSensitiveTools !== true) {
+          const blocked = endpoint.allowedTools.filter((tool: string) => isSensitiveTool(tool))
+          if (blocked.length) {
+            throw new Error(
+              `server.toolEndpoint.allowedTools contains sensitive tool(s): ${blocked.join(", ")}. Set server.toolEndpoint.allowSensitiveTools=true to explicitly override.`,
+            )
+          }
+        }
+        if (auth === "api-key" && !Flag.OPENCODE_TOOL_ENDPOINT_API_KEY) {
+          throw new Error(
+            "server.toolEndpoint.enabled with api-key auth requires OPENCODE_TOOL_ENDPOINT_API_KEY to be set",
+          )
+        }
+        if (auth === "plugin") {
+          const hasExternalHttpHook = await Plugin.hasExternal("http.request")
+          if (!hasExternalHttpHook) {
+            throw new Error(
+              "server.toolEndpoint.auth=plugin requires at least one configured external plugin with an http.request hook",
+            )
+          }
+        }
+      },
+    })
+  }
+
+  export async function listen(opts: {
     port: number
     hostname: string
     unix?: string
@@ -591,6 +770,7 @@ export namespace Server {
     mdnsDomain?: string
     cors?: string[]
   }) {
+    await verifyToolEndpointConfig()
     _corsWhitelist = opts.cors ?? []
 
     const args = {

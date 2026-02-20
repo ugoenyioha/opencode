@@ -251,16 +251,30 @@ export namespace Config {
     await Promise.all(deps)
   }
 
+  function pluginPackageName(dependencies: Record<string, string>) {
+    const configured = process.env["OPENCODE_PLUGIN_PACKAGE"]
+    if (configured) return configured
+    if (dependencies["@uenyioha/opencode-plugin"]) return "@uenyioha/opencode-plugin"
+    return "@opencode-ai/plugin"
+  }
+
+  function pluginTargetVersion() {
+    if (Installation.isLocal()) return "*"
+    return Installation.VERSION.replaceAll("/", "-")
+  }
+
   export async function installDependencies(dir: string) {
     const pkg = path.join(dir, "package.json")
-    const targetVersion = Installation.isLocal() ? "*" : Installation.VERSION
+    const targetVersion = pluginTargetVersion()
 
     const json = await Bun.file(pkg)
       .json()
       .catch(() => ({}))
+    const dependencies = (json.dependencies ?? {}) as Record<string, string>
+    const packageName = pluginPackageName(dependencies)
     json.dependencies = {
-      ...json.dependencies,
-      "@opencode-ai/plugin": targetVersion,
+      ...dependencies,
+      [packageName]: targetVersion,
     }
     await Bun.write(pkg, JSON.stringify(json, null, 2))
     await new Promise((resolve) => setTimeout(resolve, 3000))
@@ -308,16 +322,17 @@ export namespace Config {
     if (!pkgExists) return true
 
     const parsed = await pkgFile.json().catch(() => null)
-    const dependencies = parsed?.dependencies ?? {}
-    const depVersion = dependencies["@opencode-ai/plugin"]
+    const dependencies = (parsed?.dependencies ?? {}) as Record<string, string>
+    const packageName = pluginPackageName(dependencies)
+    const depVersion = dependencies[packageName]
     if (!depVersion) return true
 
-    const targetVersion = Installation.isLocal() ? "latest" : Installation.VERSION
+    const targetVersion = pluginTargetVersion()
     if (targetVersion === "latest") {
-      const isOutdated = await PackageRegistry.isOutdated("@opencode-ai/plugin", depVersion, dir)
+      const isOutdated = await PackageRegistry.isOutdated(packageName, depVersion, dir)
       if (!isOutdated) return false
       log.info("Cached version is outdated, proceeding with install", {
-        pkg: "@opencode-ai/plugin",
+        pkg: packageName,
         cachedVersion: depVersion,
       })
       return true
@@ -671,6 +686,42 @@ export namespace Config {
   })
   export type Skills = z.infer<typeof Skills>
 
+  // A2A types - used by both Agent.a2a and Server.a2a
+  const A2AAuth = z.enum(["api-key", "jwt", "spiffe", "oauth2", "oidc", "plugin"])
+
+  const A2ASecurityScheme = z.discriminatedUnion("type", [
+    z.object({
+      type: z.literal("apiKey"),
+      location: z.enum(["header", "query", "cookie"]),
+      name: z.string(),
+    }),
+    z
+      .object({
+        type: z.literal("http"),
+        scheme: z.string(),
+        bearerFormat: z.string().optional(),
+        jwksUrl: z.string().optional(),
+      })
+      .catchall(z.any()),
+    z
+      .object({
+        type: z.literal("mutualTls"),
+        trustDomain: z.string().optional(),
+      })
+      .catchall(z.any()),
+    z
+      .object({
+        type: z.literal("oauth2"),
+      })
+      .catchall(z.any()),
+    z
+      .object({
+        type: z.literal("oidc"),
+        openIdConnectUrl: z.string().optional(),
+      })
+      .catchall(z.any()),
+  ])
+
   export const Agent = z
     .object({
       model: ModelId.optional(),
@@ -684,7 +735,24 @@ export namespace Config {
       tools: z.record(z.string(), z.boolean()).optional().describe("@deprecated Use 'permission' field instead"),
       disable: z.boolean().optional(),
       description: z.string().optional().describe("Description of when to use the agent"),
-      mode: z.enum(["subagent", "primary", "all"]).optional(),
+      mode: z.enum(["subagent", "primary", "all", "a2a"]).optional(),
+      a2a: z
+        .object({
+          baseUrl: z.string().optional().describe("Public base URL for this agent's A2A endpoints"),
+          version: z.string().optional().default("1.0.0").describe("Agent version for A2A card"),
+          auth: z.array(A2AAuth).optional().describe("Auth strategies for this A2A agent"),
+          skillRouting: z
+            .enum(["semantic", "metadata"])
+            .optional()
+            .default("semantic")
+            .describe("How the agent selects skills: semantic (LLM decides) or metadata (client hints)"),
+          securitySchemes: z
+            .record(z.string(), A2ASecurityScheme)
+            .optional()
+            .describe("Security schemes specific to this agent (merged with server-level schemes)"),
+        })
+        .optional()
+        .describe("A2A-specific configuration (only applies when mode: 'a2a')"),
       hidden: z
         .boolean()
         .optional()
@@ -727,6 +795,7 @@ export namespace Config {
         "permission",
         "disable",
         "tools",
+        "a2a",
       ])
 
       // Extract unknown properties into options
@@ -942,6 +1011,47 @@ export namespace Config {
       .describe("Control diff rendering style: 'auto' adapts to terminal width, 'stacked' always shows single column"),
   })
 
+  // Server-level A2A config (references A2AAuth and A2ASecurityScheme defined above)
+  const A2A = z
+    .object({
+      enabled: z.boolean().optional().describe("Enable A2A routes and agent card generation"),
+      baseUrl: z.string().optional().describe("Public base URL used in A2A supportedInterfaces"),
+      name: z.string().optional().describe("A2A agent name"),
+      description: z.string().optional().describe("A2A agent description"),
+      version: z.string().optional().describe("A2A agent version"),
+      auth: z.array(A2AAuth).optional().describe("Default A2A auth strategies for exposed skills"),
+      securitySchemes: z
+        .record(z.string(), A2ASecurityScheme)
+        .optional()
+        .describe("Named security schemes referenced by A2A routes and skills"),
+    })
+    .strict()
+
+  const CompatProvider = z
+    .object({
+      enabled: z.boolean().optional().describe("Enable provider compatibility HTTP surface"),
+      max_output_tokens: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Provider-specific max output token cap for compatibility routes"),
+    })
+    .strict()
+
+  const Compat = z
+    .object({
+      openai: CompatProvider.optional().describe("OpenAI compatibility API configuration"),
+      anthropic: CompatProvider.optional().describe("Anthropic compatibility API configuration"),
+      max_output_tokens: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Global max output token cap for compatibility routes (default: 32000)"),
+    })
+    .strict()
+
   export const Server = z
     .object({
       port: z.number().int().positive().optional().describe("Port to listen on"),
@@ -950,6 +1060,29 @@ export namespace Config {
       mdns: z.boolean().optional().describe("Enable mDNS service discovery"),
       mdnsDomain: z.string().optional().describe("Custom domain name for mDNS service (default: opencode.local)"),
       cors: z.array(z.string()).optional().describe("Additional domains to allow for CORS"),
+      allowExternalRoutes: z
+        .boolean()
+        .optional()
+        .describe("Allow external plugins to register http.route handlers (disabled by default)"),
+      toolEndpoint: z
+        .object({
+          enabled: z.boolean().optional().describe("Enable POST /tool/:toolName endpoint"),
+          auth: z
+            .enum(["api-key", "plugin"])
+            .optional()
+            .describe(
+              "Auth mode for tool endpoint. api-key requires OPENCODE_TOOL_ENDPOINT_API_KEY; plugin requires custom http.request hook",
+            ),
+          allowedTools: z.array(z.string()).optional().describe("Allowlist of tools exposed via HTTP endpoint"),
+          allowSensitiveTools: z
+            .boolean()
+            .optional()
+            .describe("Allow sensitive tools in allowlist (disabled by default)"),
+        })
+        .optional()
+        .describe("Tool endpoint configuration"),
+      a2a: A2A.optional().describe("A2A runtime configuration"),
+      compat: Compat.optional().describe("Provider compatibility HTTP configuration"),
     })
     .strict()
     .meta({

@@ -585,6 +585,41 @@ test("gets config directories", async () => {
   })
 })
 
+test("parses server compat configuration", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await writeConfig(dir, {
+        $schema: "https://opencode.ai/config.json",
+        server: {
+          compat: {
+            max_output_tokens: 32000,
+            openai: {
+              enabled: true,
+              max_output_tokens: 24000,
+            },
+            anthropic: {
+              enabled: false,
+              max_output_tokens: 28000,
+            },
+          },
+        },
+      })
+    },
+  })
+
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const config = await Config.get()
+      expect(config.server?.compat?.max_output_tokens).toBe(32000)
+      expect(config.server?.compat?.openai?.enabled).toBe(true)
+      expect(config.server?.compat?.openai?.max_output_tokens).toBe(24000)
+      expect(config.server?.compat?.anthropic?.enabled).toBe(false)
+      expect(config.server?.compat?.anthropic?.max_output_tokens).toBe(28000)
+    },
+  })
+})
+
 test("does not try to install dependencies in read-only OPENCODE_CONFIG_DIR", async () => {
   if (process.platform === "win32") return
 

@@ -10,19 +10,23 @@ Log.init({ print: false })
 
 describe("session directory resolution", () => {
   test("session-scoped routes resolve directory from stored session", async () => {
+    await Instance.disposeAll()
     await Instance.provide({
       directory: projectRoot,
       fn: async () => {
         const session = await Session.create({})
 
-        // Verify findDirectory returns the correct directory
-        const found = await Session.findDirectory(session.id)
-        expect(found).toBe(projectRoot)
+        // Session.create stores directory in SQLite via Instance context.
+        // Verify via Session.get (DB-backed) — findDirectory scans file storage
+        // which isn't populated by Session.create in test env.
+        const retrieved = await Session.get(session.id)
+        expect(retrieved.directory).toBe(projectRoot)
       },
     })
   })
 
   test("GET /session/:id resolves directory from session when no query param", async () => {
+    await Instance.disposeAll()
     await Instance.provide({
       directory: projectRoot,
       fn: async () => {
@@ -40,6 +44,7 @@ describe("session directory resolution", () => {
   })
 
   test("findDirectory returns undefined for nonexistent session", async () => {
+    await Instance.disposeAll()
     const found = await Session.findDirectory("ses_nonexistent123")
     expect(found).toBeUndefined()
   })

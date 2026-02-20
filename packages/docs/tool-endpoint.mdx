@@ -1,0 +1,86 @@
+---
+title: "Tool Endpoint"
+description: "Expose selected actions over HTTP safely"
+---
+
+## Enable it
+
+This route is disabled by default. Turn it on with `server.toolEndpoint.enabled: true` and define an explicit `allowedTools` list.
+
+---
+
+## Call it
+
+Send `POST /tool/:toolName` with JSON body `{ sessionID, args }`. `sessionID` is required, and `args` is an optional object passed to the selected tool.
+
+```bash
+curl -X POST http://localhost:4096/tool/webfetch \
+  -H 'Content-Type: application/json' \
+  -H 'X-API-Key: $OPENCODE_TOOL_ENDPOINT_API_KEY' \
+  -d '{"sessionID":"ses_123","args":{"url":"https://example.com"}}'
+```
+
+---
+
+## Configure access
+
+Use `server.toolEndpoint` in your config:
+
+```json
+{
+  "server": {
+    "toolEndpoint": {
+      "enabled": true,
+      "auth": "api-key",
+      "allowedTools": ["webfetch"],
+      "allowSensitiveTools": false
+    }
+  }
+}
+```
+
+- `enabled`: enables `POST /tool/:toolName`
+- `auth`: auth mode, defaults to `api-key`
+- `allowedTools`: allowlist of tool names exposed over HTTP
+- `allowSensitiveTools`: explicit override for sensitive tools
+
+---
+
+## Choose auth
+
+- `api-key` (default): requires `OPENCODE_TOOL_ENDPOINT_API_KEY`
+- `plugin`: requires at least one external plugin implementing `http.request`
+
+---
+
+## Handle sensitive tools
+
+Sensitive tools are blocked by default even if they appear in `allowedTools`. Set `server.toolEndpoint.allowSensitiveTools: true` to explicitly allow them.
+
+Default sensitive blocklist: `bash`, `read`, `write`, `edit`, `glob`, `grep`, `patch`, `apply_patch`.
+
+---
+
+## Implement request hook
+
+The `http.request` hook receives request metadata and can return a response before routing continues.
+
+```ts
+"http.request"?: (
+  input: {
+    method: string
+    path: string
+    headers: Record<string, string>
+    clientIP: string
+  },
+  output: {
+    response?: {
+      status: number
+      body: string
+      headers?: Record<string, string>
+    }
+  }
+) => Promise<void>
+```
+
+Set `output.response` to short-circuit and return it immediately. Leave `output.response` unset to continue normal route handling.

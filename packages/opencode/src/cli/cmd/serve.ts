@@ -12,7 +12,7 @@ export const ServeCommand = cmd({
     if (!opts.unix && !Flag.OPENCODE_SERVER_PASSWORD) {
       console.log("Warning: OPENCODE_SERVER_PASSWORD is not set; server is unsecured.")
     }
-    const server = Server.listen(opts)
+    const server = await Server.listen(opts)
     if (opts.unix) {
       console.log(`opencode server listening on unix://${opts.unix}`)
     } else {

@@ -1,4 +1,4 @@
-import type { Hooks, PluginInput, Plugin as PluginInstance } from "@opencode-ai/plugin"
+import type { Hooks, PluginInput, Plugin as PluginInstance, RouteDefinition } from "@opencode-ai/plugin"
 import { Config } from "../config/config"
 import { Bus } from "../bus"
 import { Log } from "../util/log"
@@ -12,6 +12,8 @@ import { Session } from "../session"
 import { NamedError } from "@opencode-ai/util/error"
 import { CopilotAuthPlugin } from "./copilot"
 import { gitlabAuthPlugin as GitlabAuthPlugin } from "@gitlab/opencode-gitlab-auth"
+import { HttpAuthPlugin } from "./http-auth"
+import { A2APlugin } from "./a2a"
 
 export namespace Plugin {
   const log = Log.create({ service: "plugin" })
@@ -19,7 +21,13 @@ export namespace Plugin {
   const BUILTIN: string[] = []
 
   // Built-in plugins that are directly imported (not installed from npm)
-  const INTERNAL_PLUGINS: PluginInstance[] = [CodexAuthPlugin, CopilotAuthPlugin, GitlabAuthPlugin]
+  const INTERNAL_PLUGINS: PluginInstance[] = [
+    CodexAuthPlugin,
+    CopilotAuthPlugin,
+    GitlabAuthPlugin,
+    HttpAuthPlugin,
+    A2APlugin,
+  ]
 
   const state = Instance.state(async () => {
     const client = createOpencodeClient({
@@ -29,7 +37,10 @@ export namespace Plugin {
       fetch: async (...args) => Server.App().fetch(...args),
     })
     const config = await Config.get()
-    const hooks: Hooks[] = []
+    const hooks: {
+      source: "internal" | "external"
+      hook: Hooks
+    }[] = []
     const input: PluginInput = {
       client,
       project: Instance.project,
@@ -42,7 +53,7 @@ export namespace Plugin {
     for (const plugin of INTERNAL_PLUGINS) {
       log.info("loading internal plugin", { name: plugin.name })
       const init = await plugin(input)
-      hooks.push(init)
+      hooks.push({ source: "internal", hook: init })
     }
 
     let plugins = config.plugin ?? []
@@ -88,7 +99,7 @@ export namespace Plugin {
         if (seen.has(fn)) continue
         seen.add(fn)
         const init = await fn(input)
-        hooks.push(init)
+        hooks.push({ source: "external", hook: init })
       }
     }
 
@@ -99,13 +110,13 @@ export namespace Plugin {
   })
 
   export async function trigger<
-    Name extends Exclude<keyof Required<Hooks>, "auth" | "event" | "tool">,
+    Name extends Exclude<keyof Required<Hooks>, "auth" | "event" | "tool" | "http.route">,
     Input = Parameters<Required<Hooks>[Name]>[0],
     Output = Parameters<Required<Hooks>[Name]>[1],
   >(name: Name, input: Input, output: Output): Promise<Output> {
     if (!name) return output
-    for (const hook of await state().then((x) => x.hooks)) {
-      const fn = hook[name]
+    for (const item of await state().then((x) => x.hooks)) {
+      const fn = item.hook[name]
       if (!fn) continue
       // @ts-expect-error if you feel adventurous, please fix the typing, make sure to bump the try-counter if you
       // give up.
@@ -116,18 +127,58 @@ export namespace Plugin {
   }
 
   export async function list() {
-    return state().then((x) => x.hooks)
+    return state().then((x) => x.hooks.map((item) => item.hook))
   }
 
-  export async function init() {
+  export async function has(name: keyof Hooks) {
+    for (const hook of await list()) {
+      if (hook[name]) return true
+    }
+    return false
+  }
+
+  export async function hasExternal(name: keyof Hooks) {
+    for (const item of await state().then((x) => x.hooks)) {
+      if (item.source !== "external") continue
+      if (item.hook[name]) return true
+    }
+    return false
+  }
+
+  export async function collectRoutes(allowExternal: boolean): Promise<RouteDefinition[]> {
     const hooks = await state().then((x) => x.hooks)
+    return hooks.flatMap((item) => {
+      if (!allowExternal && item.source === "external") return []
+      return item.hook["http.route"] ?? []
+    })
+  }
+
+  /**
+   * Collect routes with source info. Used by server auth middleware to
+   * restrict auth opt-out (auth: []) to internal plugins only —
+   * external plugins must not be able to punch auth holes.
+   */
+  export async function collectRoutesWithSource(
+    allowExternal: boolean,
+  ): Promise<{ source: "internal" | "external"; route: RouteDefinition }[]> {
+    const hooks = await state().then((x) => x.hooks)
+    return hooks.flatMap((item) => {
+      if (!allowExternal && item.source === "external") return []
+      return (item.hook["http.route"] ?? []).map((route) => ({ source: item.source, route }))
+    })
+  }
+
+
+
+  export async function init() {
+    const hooks = await list()
     const config = await Config.get()
     for (const hook of hooks) {
       // @ts-expect-error this is because we haven't moved plugin to sdk v2
       await hook.config?.(config)
     }
     Bus.subscribeAll(async (input) => {
-      const hooks = await state().then((x) => x.hooks)
+      const hooks = await list()
       for (const hook of hooks) {
         hook["event"]?.({
           event: input,

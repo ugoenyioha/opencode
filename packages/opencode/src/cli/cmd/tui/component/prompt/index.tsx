@@ -637,6 +637,15 @@ export function Prompt(props: PromptProps) {
       inputText.startsWith("/") &&
       iife(() => {
         const firstLine = inputText.split("\n")[0]
+        const slash = firstLine.split(" ")[0].slice(1)
+        return slash === "refresh" || slash === "reload"
+      })
+    ) {
+      command.trigger("app.refresh")
+    } else if (
+      inputText.startsWith("/") &&
+      iife(() => {
+        const firstLine = inputText.split("\n")[0]
         const command = firstLine.split(" ")[0].slice(1)
         return sync.data.command.some((x) => x.name === command)
       })

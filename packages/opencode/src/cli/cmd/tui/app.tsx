@@ -563,6 +563,24 @@ function App() {
       category: "System",
     },
     {
+      title: "Refresh workspace",
+      value: "app.refresh",
+      slash: {
+        name: "refresh",
+        aliases: ["reload"],
+      },
+      onSelect: async (dialog) => {
+        await sdk.client.instance.dispose()
+        await sync.bootstrap()
+        toast.show({
+          variant: "info",
+          message: "Workspace refreshed",
+        })
+        dialog.clear()
+      },
+      category: "System",
+    },
+    {
       title: "Edit memory",
       value: "memory.edit",
       slash: {
