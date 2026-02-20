@@ -1,0 +1,127 @@
+# HTTP Compatibility APIs
+
+OpenCode exposes OpenAI-compatible and Anthropic-compatible APIs as core server routes.
+
+## Enable routes
+
+Compatibility routes are disabled by default.
+
+Use OpenCode model IDs directly (`provider/model`), for example `opencode/gpt-5-nano`.
+
+```json
+{
+  "server": {
+    "compat": {
+      "max_output_tokens": 32000,
+      "openai": {
+        "enabled": true,
+        "max_output_tokens": 48000
+      },
+      "anthropic": {
+        "enabled": true,
+        "max_output_tokens": 40000
+      }
+    }
+  }
+}
+```
+
+`server.compat.max_output_tokens` sets the global cap for compatibility routes. Default is `32000`.
+
+`server.compat.openai.max_output_tokens` and `server.compat.anthropic.max_output_tokens` override the global cap per provider.
+
+Cap precedence per provider is:
+
+1. Provider-specific cap (`server.compat.openai.max_output_tokens` or `server.compat.anthropic.max_output_tokens`)
+2. Global compat cap (`server.compat.max_output_tokens`)
+3. Built-in default (`32000`)
+
+## OpenAI-compatible routes
+
+- `GET /v1/models`
+- `POST /v1/chat/completions`
+- `POST /v1/responses`
+
+Output token parameters:
+
+- `POST /v1/chat/completions`: `max_tokens`
+- `POST /v1/responses`: `max_output_tokens`
+
+Auth header:
+
+```http
+Authorization: Bearer <token>
+```
+
+When the server is also protected by global API-key middleware, OpenAI-compatible routes accept `x-api-key: <token>` as an alternative input and validate it against the same `OPENCODE_TOOL_ENDPOINT_API_KEY` value.
+
+Compat auth is keyed by `OPENCODE_TOOL_ENDPOINT_API_KEY`.
+Optional fallback to `OPENCODE_SERVER_PASSWORD` is disabled by default and requires `OPENCODE_COMPAT_ALLOW_SERVER_PASSWORD=true`.
+
+Example:
+
+```bash
+curl -X POST http://localhost:4096/v1/chat/completions \
+  -H 'Authorization: Bearer test-token' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "opencode/gpt-5-nano",
+    "messages": [{"role":"user","content":"hello"}]
+  }'
+```
+
+## Anthropic-compatible routes
+
+- `POST /v1/messages`
+- `POST /v1/messages/count_tokens`
+
+Output token parameter:
+
+- `POST /v1/messages`: `max_tokens`
+
+Required headers:
+
+```http
+x-api-key: <token>
+```
+
+`anthropic-version` is accepted for client compatibility but currently ignored by this compat implementation.
+
+Compat auth is keyed by `OPENCODE_TOOL_ENDPOINT_API_KEY`.
+Optional fallback to `OPENCODE_SERVER_PASSWORD` is disabled by default and requires `OPENCODE_COMPAT_ALLOW_SERVER_PASSWORD=true`.
+
+Example:
+
+```bash
+curl -X POST http://localhost:4096/v1/messages \
+  -H 'x-api-key: test-token' \
+  -H 'anthropic-version: 2023-06-01' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "opencode/gpt-5-nano",
+    "max_tokens": 256,
+    "messages": [{"role":"user","content":"hello"}]
+  }'
+```
+
+## Streaming
+
+- OpenAI streaming returns SSE chunks and ends with `data: [DONE]`.
+- OpenAI `responses` streaming emits lifecycle events (`response.created`, `response.in_progress`, output item/content part add/done events, `response.completed`).
+- Anthropic streaming returns ordered typed SSE events (`message_start` -> content events -> `message_stop`).
+- Streaming and non-stream execution enforce a server timeout of `120s`.
+
+## Request guardrails
+
+- `Content-Type` must be `application/json`.
+- Request body size is capped at `512 KB`.
+- Unknown model ids return provider-compatible `404` responses.
+
+## Current implementation scope
+
+- These endpoints are compatibility-focused and config-gated.
+- This is a compatibility subset, not full protocol parity with every OpenAI/Anthropic field.
+- Shared execution and error mapping are implemented for both providers.
+- Non-stream responses map tool output into provider-shaped tool payloads (`tool_calls`/`tool_use`).
+- `count_tokens` is deterministic and normalized, not model-tokenizer exact.
+- Multimodal/tool block fidelity is still partial and will be expanded in follow-up work.
