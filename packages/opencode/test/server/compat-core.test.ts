@@ -1073,6 +1073,36 @@ describe("compat core routes", () => {
       })
   })
 
+  test("openai model list works without pre-created instance context", async () => {
+    await using tmp = await project({
+      server: {
+        compat: {
+          openai: {
+            enabled: true,
+          },
+        },
+      },
+    })
+    await Instance.disposeAll()
+    const previous = process.env.OPENCODE_TOOL_ENDPOINT_API_KEY
+    try {
+      process.env.OPENCODE_TOOL_ENDPOINT_API_KEY = "test-token"
+      const app = Server.App()
+      const response = await app.request("/v1/models", {
+        headers: {
+          authorization: "Bearer test-token",
+          "x-opencode-directory": tmp.path,
+        },
+      })
+      expect(response.status).toBe(200)
+      const body = (await response.json()) as any
+      expect(body.object).toBe("list")
+    } finally {
+      if (previous === undefined) delete process.env.OPENCODE_TOOL_ENDPOINT_API_KEY
+      else process.env.OPENCODE_TOOL_ENDPOINT_API_KEY = previous
+    }
+  })
+
   test("openai invalid chat request returns mapped bad request", async () => {
     await using tmp = await project({
       server: {

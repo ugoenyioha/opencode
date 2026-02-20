@@ -134,8 +134,13 @@ export namespace Server {
           try {
             routeRules = (await pluginRoutes()).authRoutes
           } catch (error) {
-            log.error("failed to load route auth rules", { error })
-            return c.json({ error: "Unauthorized" }, 401)
+            const message = error instanceof Error ? error.message : String(error)
+            if (message.includes("No context found for instance")) {
+              routeRules = []
+            } else {
+              log.error("failed to load route auth rules", { error })
+              return c.json({ error: "Unauthorized" }, 401)
+            }
           }
           const ok = authorizeRequest(c.req.method, c.req.path, c.req.raw.headers, routeRules)
           if (ok) return next()
