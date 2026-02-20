@@ -283,6 +283,36 @@ describe("openai compat routes", () => {
     })
   })
 
+  test("rejects malformed json body", async () => {
+    await using tmp = await project({
+      server: {
+        compat: {
+          openai: {
+            enabled: true,
+          },
+        },
+      },
+    })
+    await Instance.disposeAll()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
+        const app = Server.App()
+        const response = await app.request("/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            authorization: "Bearer test-token",
+            "content-type": "application/json",
+            "x-opencode-directory": tmp.path,
+          },
+          body: "{",
+        })
+        expect(response.status).toBe(400)
+      },
+    })
+  })
+
   test("rejects oversized request bodies", async () => {
     await using tmp = await project({
       server: {

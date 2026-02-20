@@ -27,7 +27,15 @@ export async function parseJSONBody(req: Request, provider: CompatProvider) {
       response: parseError(provider, "rate_limit", "Request body too large"),
     }
   }
-  const json = JSON.parse(text)
+  let json: unknown
+  try {
+    json = JSON.parse(text)
+  } catch {
+    return {
+      ok: false as const,
+      response: parseError(provider, "bad_request", "Invalid request"),
+    }
+  }
   return {
     ok: true as const,
     json,

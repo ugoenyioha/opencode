@@ -37,6 +37,9 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OPENCODE_DIR="$REPO_ROOT/packages/opencode"
 PLUGIN_DIR="$REPO_ROOT/packages/plugin"
 REGISTRY="https://gitea.usableapps.local/api/packages/uenyioha/npm/"
+REGISTRY_NO_SCHEME="${REGISTRY#https://}"
+REGISTRY_NO_SCHEME="${REGISTRY_NO_SCHEME#http://}"
+NPM_TOKEN_KEY="//${REGISTRY_NO_SCHEME}:_authToken"
 
 # --- Parse flags ---
 SKIP_BUILD=false
@@ -77,6 +80,42 @@ echo "  Registry: $REGISTRY"
 echo "  Flags:    skip-build=$SKIP_BUILD with-plugin=$WITH_PLUGIN dry-run=$DRY_RUN"
 echo "========================================="
 echo ""
+
+ensure_registry_auth() {
+  echo ">>> Preflight: verifying npm auth for $REGISTRY"
+
+  if npm view opencode-ai version --registry "$REGISTRY" >/dev/null 2>&1; then
+    echo "   npm auth OK"
+    echo ""
+    return
+  fi
+
+  echo "   npm auth check failed, attempting token refresh via tea"
+  if command -v tea >/dev/null 2>&1; then
+    token="$(tea logins token 2>/dev/null || true)"
+    if [ -n "$token" ]; then
+      npm config set "$NPM_TOKEN_KEY" "$token" >/dev/null 2>&1 || true
+      if npm view opencode-ai version --registry "$REGISTRY" >/dev/null 2>&1; then
+        echo "   npm auth refreshed via tea"
+        echo ""
+        return
+      fi
+    fi
+  fi
+
+  echo "ERROR: npm auth to private registry failed." >&2
+  echo "- Ensure tea login is valid: tea logins list" >&2
+  echo "- Ensure token can be printed: tea logins token" >&2
+  echo "- Ensure ~/.npmrc has a valid token for $NPM_TOKEN_KEY" >&2
+  exit 1
+}
+
+if [ "$DRY_RUN" = false ]; then
+  ensure_registry_auth
+else
+  echo ">>> Preflight: skipped auth check in --dry-run mode"
+  echo ""
+fi
 
 # --- Step 1: Build binaries ---
 if [ "$SKIP_BUILD" = false ]; then

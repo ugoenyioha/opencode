@@ -127,7 +127,7 @@ export function OpenAICompatRoutes() {
   return new Hono()
     .get("/v1/models", async (c) => {
       if (!(await enabled())) return new Response("Not Found", { status: 404 })
-      const auth = requireOpenAIBearer(c.req.raw)
+      const auth = await requireOpenAIBearer(c.req.raw)
       if (typeof auth !== "string") return auth
 
       const models = await listModels("openai")
@@ -143,7 +143,7 @@ export function OpenAICompatRoutes() {
     })
     .post("/v1/chat/completions", async (c) => {
       if (!(await enabled())) return new Response("Not Found", { status: 404 })
-      const auth = requireOpenAIBearer(c.req.raw)
+      const auth = await requireOpenAIBearer(c.req.raw)
       if (typeof auth !== "string") return auth
 
       const body = await parseJSONBody(c.req.raw, "openai").catch(() => undefined)
@@ -224,7 +224,7 @@ export function OpenAICompatRoutes() {
     })
     .post("/v1/responses", async (c) => {
       if (!(await enabled())) return new Response("Not Found", { status: 404 })
-      const auth = requireOpenAIBearer(c.req.raw)
+      const auth = await requireOpenAIBearer(c.req.raw)
       if (typeof auth !== "string") return auth
 
       const body = await parseJSONBody(c.req.raw, "openai").catch(() => undefined)

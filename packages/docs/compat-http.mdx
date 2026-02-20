@@ -53,7 +53,16 @@ Auth header:
 Authorization: Bearer <token>
 ```
 
-When the server is also protected by global API-key middleware, OpenAI-compatible routes accept `x-api-key: <token>` as an alternative input and validate it against the same `OPENCODE_TOOL_ENDPOINT_API_KEY` value.
+OpenAI-compatible routes also accept `x-api-key: <token>` as an alternative input and validate it against `OPENCODE_TOOL_ENDPOINT_API_KEY`.
+
+If JWT env is configured, Bearer tokens are verified as JWTs:
+
+- `OPENCODE_COMPAT_JWT_JWKS_URL` for `RS256`
+- `OPENCODE_COMPAT_JWT_HS256_SECRET` for `HS256`
+- Optional claim checks: `OPENCODE_COMPAT_JWT_ISSUER`, `OPENCODE_COMPAT_JWT_AUDIENCE`
+- RS256 JWTs must include a `kid` that matches an RSA key in the JWKS document.
+
+When JWT auth is enabled, invalid Bearer tokens fail closed with `401` even if `x-api-key` is also present.
 
 Compat auth is keyed by `OPENCODE_TOOL_ENDPOINT_API_KEY`.
 Optional fallback to `OPENCODE_SERVER_PASSWORD` is disabled by default and requires `OPENCODE_COMPAT_ALLOW_SERVER_PASSWORD=true`.
@@ -87,6 +96,8 @@ x-api-key: <token>
 
 `anthropic-version` is accepted for client compatibility but currently ignored by this compat implementation.
 
+`Authorization` is ignored on Anthropic-compatible routes.
+
 Compat auth is keyed by `OPENCODE_TOOL_ENDPOINT_API_KEY`.
 Optional fallback to `OPENCODE_SERVER_PASSWORD` is disabled by default and requires `OPENCODE_COMPAT_ALLOW_SERVER_PASSWORD=true`.
 
@@ -95,7 +106,6 @@ Example:
 ```bash
 curl -X POST http://localhost:4096/v1/messages \
   -H 'x-api-key: test-token' \
-  -H 'anthropic-version: 2023-06-01' \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "opencode/gpt-5-nano",
@@ -116,6 +126,7 @@ curl -X POST http://localhost:4096/v1/messages \
 - `Content-Type` must be `application/json`.
 - Request body size is capped at `512 KB`.
 - Unknown model ids return provider-compatible `404` responses.
+- For internet-facing deployments, enforce a body-size limit at the reverse proxy/load balancer as well.
 
 ## Current implementation scope
 
