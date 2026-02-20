@@ -644,6 +644,8 @@ export const A2APlugin: Plugin = async () => {
   // Auth is handled by server-level middleware (server.ts) which checks
   // OPENCODE_TOOL_ENDPOINT_API_KEY and OPENCODE_SERVER_PASSWORD as mutually
   // exclusive auth methods. Discovery routes opt out via `auth: []`.
+  const protectedA2AAuthList = asArray(serverConfig.auth as AuthStrategy | AuthStrategy[] | undefined)
+  const protectedA2AAuth = protectedA2AAuthList.length > 0 ? protectedA2AAuthList : undefined
 
   const routes: RouteDefinition[] = [
     // Discovery: list all A2A agents (public — no auth required)
@@ -727,6 +729,7 @@ export const A2APlugin: Plugin = async () => {
     {
       method: "POST",
       path: "/a2a/:agent/message:send",
+      auth: protectedA2AAuth,
       handler: async (req, params) => {
         // Validate A2A version
         const versionErr = validateA2AVersion(req)
@@ -754,6 +757,7 @@ export const A2APlugin: Plugin = async () => {
     {
       method: "POST",
       path: "/a2a/:agent/message:stream",
+      auth: protectedA2AAuth,
       handler: async (req, params) => {
         // Validate A2A version
         const versionErr = validateA2AVersion(req)
@@ -833,6 +837,7 @@ export const A2APlugin: Plugin = async () => {
     {
       method: "GET",
       path: "/a2a/:agent/tasks/:id",
+      auth: protectedA2AAuth,
       handler: async (req, params) => {
         try {
           const agentErr = agentHandler(params)
@@ -864,6 +869,7 @@ export const A2APlugin: Plugin = async () => {
     {
       method: "GET",
       path: "/a2a/:agent/tasks",
+      auth: protectedA2AAuth,
       handler: async (req, params) => {
         try {
           const agentErr = agentHandler(params)
@@ -894,6 +900,7 @@ export const A2APlugin: Plugin = async () => {
     {
       method: "POST",
       path: "/a2a/:agent/tasks/:id:cancel",
+      auth: protectedA2AAuth,
       handler: async (req, params) => {
         try {
           const agentErr = agentHandler(params)
@@ -927,6 +934,7 @@ export const A2APlugin: Plugin = async () => {
     {
       method: "GET",
       path: "/a2a/:agent/tasks/:id:subscribe",
+      auth: protectedA2AAuth,
       handler: async (req, params) => {
         try {
           const agentErr = agentHandler(params)

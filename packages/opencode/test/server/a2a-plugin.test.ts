@@ -4,6 +4,7 @@ process.env["OPENCODE_TOOL_ENDPOINT_API_KEY"] = "test-a2a-key"
 import { afterAll, describe, expect, test } from "bun:test"
 import path from "path"
 import fs from "fs/promises"
+import { createHmac } from "crypto"
 import { Instance } from "../../src/project/instance"
 import { Server } from "../../src/server/server"
 import { Env } from "../../src/env"
@@ -15,6 +16,20 @@ import { Plugin } from "../../src/plugin"
 Log.init({ print: false })
 
 const AUTH_HEADER = { "X-API-Key": "test-a2a-key" }
+
+function encodeBase64url(input: string | Buffer) {
+  const buffer = typeof input === "string" ? Buffer.from(input, "utf8") : input
+  return buffer.toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_")
+}
+
+function signHS256(payload: Record<string, unknown>, secret: string) {
+  const header = { alg: "HS256", typ: "JWT" }
+  const encodedHeader = encodeBase64url(JSON.stringify(header))
+  const encodedPayload = encodeBase64url(JSON.stringify(payload))
+  const signingInput = `${encodedHeader}.${encodedPayload}`
+  const signature = createHmac("sha256", secret).update(signingInput, "utf8").digest()
+  return `${signingInput}.${encodeBase64url(signature)}`
+}
 
 // Clean up env var so it doesn't bleed into other test files
 afterAll(() => {
@@ -83,6 +98,59 @@ You are a container build agent.
                   name: "X-API-Key",
                 },
               },
+            },
+          },
+        }),
+      )
+    },
+  })
+}
+
+async function projectWithServerA2AAuth(enabled: boolean, auth?: ("api-key" | "jwt" | "spiffe" | "oauth2" | "oidc" | "plugin")[]) {
+  return tmpdir({
+    init: async (dir) => {
+      const skillDir = path.join(dir, ".opencode", "skills", "sidecar-preserve")
+      await fs.mkdir(skillDir, { recursive: true })
+      await Bun.write(
+        path.join(skillDir, "SKILL.md"),
+        `---
+name: sidecar-preserve
+description: Build and preserve the sidecar container image
+a2a:
+  expose: true
+  tags: ["docker", "build"]
+---
+Skill body.
+`,
+      )
+
+      const agentDir = path.join(dir, ".opencode", "agents")
+      await fs.mkdir(agentDir, { recursive: true })
+      await Bun.write(
+        path.join(agentDir, "neo-sidecar.md"),
+        `---
+name: neo-sidecar
+description: AI-powered container build and deployment agent
+mode: a2a
+skills:
+  - sidecar-preserve
+a2a:
+  baseUrl: https://example.test
+  version: "1.0.0"
+---
+You are a container build agent.
+`,
+      )
+
+      await Bun.write(
+        path.join(dir, "opencode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          server: {
+            a2a: {
+              enabled,
+              baseUrl: "https://example.test",
+              ...(auth ? { auth } : {}),
             },
           },
         }),
@@ -1010,6 +1078,146 @@ You are a public agent.
         expect(withKeyResponse.status).toBe(200)
         const body = (await withKeyResponse.json()) as any
         expect(body.tasks).toBeArray()
+      },
+    })
+  })
+
+  test("auth: server.a2a jwt enforces strict bearer semantics over x-api-key", async () => {
+    await using tmp = await projectWithServerA2AAuth(true, ["jwt"])
+    await Instance.disposeAll()
+    await Instance.provide({
+      directory: tmp.path,
+      init: async () => {
+        Env.set("ANTHROPIC_API_KEY", "test-key")
+      },
+      fn: async () => {
+        const previousSecret = process.env.OPENCODE_COMPAT_JWT_HS256_SECRET
+        const previousIssuer = process.env.OPENCODE_COMPAT_JWT_ISSUER
+        const previousAudience = process.env.OPENCODE_COMPAT_JWT_AUDIENCE
+        try {
+          Env.set("OPENCODE_COMPAT_JWT_HS256_SECRET", "a2a-jwt-secret")
+          Env.set("OPENCODE_COMPAT_JWT_ISSUER", "a2a-issuer")
+          Env.set("OPENCODE_COMPAT_JWT_AUDIENCE", "a2a-audience")
+
+          const app = Server.App()
+          const goodToken = signHS256(
+            { exp: Math.floor(Date.now() / 1000) + 120, iss: "a2a-issuer", aud: "a2a-audience" },
+            "a2a-jwt-secret",
+          )
+
+          const allowed = await app.request("/a2a/neo-sidecar/tasks", {
+            method: "GET",
+            headers: {
+              "x-opencode-directory": tmp.path,
+              authorization: `Bearer ${goodToken}`,
+            },
+          })
+          expect(allowed.status).toBe(200)
+
+          const denied = await app.request("/a2a/neo-sidecar/tasks", {
+            method: "GET",
+            headers: {
+              "x-opencode-directory": tmp.path,
+              authorization: "Bearer not-a-jwt",
+              ...AUTH_HEADER,
+            },
+          })
+          expect(denied.status).toBe(401)
+        } finally {
+          if (previousSecret === undefined) delete process.env.OPENCODE_COMPAT_JWT_HS256_SECRET
+          else process.env.OPENCODE_COMPAT_JWT_HS256_SECRET = previousSecret
+          if (previousIssuer === undefined) delete process.env.OPENCODE_COMPAT_JWT_ISSUER
+          else process.env.OPENCODE_COMPAT_JWT_ISSUER = previousIssuer
+          if (previousAudience === undefined) delete process.env.OPENCODE_COMPAT_JWT_AUDIENCE
+          else process.env.OPENCODE_COMPAT_JWT_AUDIENCE = previousAudience
+        }
+      },
+    })
+  })
+
+  test("auth: server.a2a plugin strategy is fail-closed on protected routes", async () => {
+    await using tmp = await projectWithServerA2AAuth(true, ["plugin"])
+    await Instance.disposeAll()
+    await Instance.provide({
+      directory: tmp.path,
+      init: async () => {
+        Env.set("ANTHROPIC_API_KEY", "test-key")
+      },
+      fn: async () => {
+        const app = Server.App()
+        const response = await app.request("/a2a/neo-sidecar/tasks", {
+          method: "GET",
+          headers: {
+            "x-opencode-directory": tmp.path,
+            ...AUTH_HEADER,
+          },
+        })
+        expect(response.status).toBe(401)
+        const body = (await response.json()) as any
+        expect(body.error).toBe("Unauthorized")
+      },
+    })
+  })
+
+  test("auth: empty server.a2a.auth does not make protected routes public", async () => {
+    await using tmp = await projectWithServerA2AAuth(true, [])
+    await Instance.disposeAll()
+    await Instance.provide({
+      directory: tmp.path,
+      init: async () => {
+        Env.set("ANTHROPIC_API_KEY", "test-key")
+      },
+      fn: async () => {
+        const app = Server.App()
+
+        const noAuth = await app.request("/a2a/neo-sidecar/tasks", {
+          method: "GET",
+          headers: { "x-opencode-directory": tmp.path },
+        })
+        expect(noAuth.status).toBe(401)
+
+        const withApiKey = await app.request("/a2a/neo-sidecar/tasks", {
+          method: "GET",
+          headers: {
+            "x-opencode-directory": tmp.path,
+            ...AUTH_HEADER,
+          },
+        })
+        expect(withApiKey.status).toBe(200)
+      },
+    })
+  })
+
+  test("auth: discovery routes remain public when server.a2a.auth requires jwt", async () => {
+    await using tmp = await projectWithServerA2AAuth(true, ["jwt"])
+    await Instance.disposeAll()
+    await Instance.provide({
+      directory: tmp.path,
+      init: async () => {
+        Env.set("ANTHROPIC_API_KEY", "test-key")
+      },
+      fn: async () => {
+        const app = Server.App()
+
+        const cardResponse = await app.request("/.well-known/agent-card.json", {
+          headers: { "x-opencode-directory": tmp.path },
+        })
+        expect(cardResponse.status).toBe(200)
+
+        const compatResponse = await app.request("/.well-known/a2a/agent-card", {
+          headers: { "x-opencode-directory": tmp.path },
+        })
+        expect(compatResponse.status).toBe(200)
+
+        const agentsResponse = await app.request("/.well-known/agents.json", {
+          headers: { "x-opencode-directory": tmp.path },
+        })
+        expect(agentsResponse.status).toBe(200)
+
+        const perAgentResponse = await app.request("/.well-known/agents/neo-sidecar/card.json", {
+          headers: { "x-opencode-directory": tmp.path },
+        })
+        expect(perAgentResponse.status).toBe(200)
       },
     })
   })
