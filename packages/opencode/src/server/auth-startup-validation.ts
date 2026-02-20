@@ -24,6 +24,12 @@ const SUPPORTED_INTROSPECTION_AUTH_METHODS = new Set([
 ])
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"])
 
+function normalizeToolEndpointAuth(raw: unknown): string[] {
+  if (raw === undefined) return ["api-key"]
+  if (Array.isArray(raw)) return raw
+  return [raw as string]
+}
+
 function parseList(input: string | undefined) {
   if (!input) return []
   return input
@@ -246,53 +252,77 @@ export async function validateStartupAuthConfig(context: ValidatorContext) {
   const endpoint = context.config.server?.toolEndpoint
   if (!endpoint?.enabled) return
 
-  const rawStrategy = endpoint.auth ?? "api-key"
-  if (!SUPPORTED_STRATEGIES.has(rawStrategy)) {
+  const strategies = normalizeToolEndpointAuth(endpoint.auth)
+  if (strategies.length === 0) {
     fail({
-      code: "AUTH_CONFIG_UNSUPPORTED_REF",
+      code: "AUTH_CONFIG_MISSING",
       strategy: "unknown",
       key: "server.toolEndpoint.auth",
-      reason: "unsupported_strategy_reference",
+      reason: "empty_strategy_list",
     })
+  }
+
+  const seen = new Set<string>()
+  for (const strategy of strategies) {
+    if (seen.has(strategy)) {
+      fail({
+        code: "AUTH_CONFIG_CONFLICT",
+        strategy,
+        key: "server.toolEndpoint.auth",
+        reason: "duplicate_strategy",
+      })
+    }
+    seen.add(strategy)
+
+    if (!SUPPORTED_STRATEGIES.has(strategy as StartupStrategy)) {
+      fail({
+        code: "AUTH_CONFIG_UNSUPPORTED_REF",
+        strategy: "unknown",
+        key: "server.toolEndpoint.auth",
+        reason: "unsupported_strategy_reference",
+      })
+    }
   }
 
   validateClockSkewBounds(context.getEnv)
 
-  switch (rawStrategy) {
-    case "api-key": {
-      if (!context.getApiKey()) {
-        fail({
-          code: "AUTH_CONFIG_MISSING",
-          strategy: "api-key",
-          key: "env.OPENCODE_TOOL_ENDPOINT_API_KEY",
-          reason: "required",
-        })
+  for (const strategy of strategies) {
+    switch (strategy as StartupStrategy) {
+      case "api-key": {
+        if (!context.getApiKey()) {
+          fail({
+            code: "AUTH_CONFIG_MISSING",
+            strategy: "api-key",
+            key: "env.OPENCODE_TOOL_ENDPOINT_API_KEY",
+            reason: "required",
+          })
+        }
+        break
       }
-      return
-    }
-    case "plugin": {
-      const hasExternalHttpHook = await context.hasExternalHttpHook()
-      if (!hasExternalHttpHook) {
-        fail({
-          code: "AUTH_CONFIG_MISSING",
-          strategy: "plugin",
-          key: "plugin.http.request",
-          reason: "external_hook_required",
-        })
+      case "plugin": {
+        const hasExternalHttpHook = await context.hasExternalHttpHook()
+        if (!hasExternalHttpHook) {
+          fail({
+            code: "AUTH_CONFIG_MISSING",
+            strategy: "plugin",
+            key: "plugin.http.request",
+            reason: "external_hook_required",
+          })
+        }
+        break
       }
-      return
-    }
-    case "jwt": {
-      validateJWTConfig(context.getEnv)
-      return
-    }
-    case "oidc": {
-      validateOIDCConfig(context.getEnv)
-      return
-    }
-    case "oauth2": {
-      validateOAuth2Config(context.getEnv)
-      return
+      case "jwt": {
+        validateJWTConfig(context.getEnv)
+        break
+      }
+      case "oidc": {
+        validateOIDCConfig(context.getEnv)
+        break
+      }
+      case "oauth2": {
+        validateOAuth2Config(context.getEnv)
+        break
+      }
     }
   }
 }

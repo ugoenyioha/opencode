@@ -1068,7 +1068,10 @@ export namespace Config {
         .object({
           enabled: z.boolean().optional().describe("Enable POST /tool/:toolName endpoint"),
           auth: z
-            .enum(["api-key", "plugin", "jwt", "oidc", "oauth2"])
+            .union([
+              z.enum(["api-key", "plugin", "jwt", "oidc", "oauth2"]),
+              z.array(z.enum(["api-key", "plugin", "jwt", "oidc", "oauth2"])),
+            ])
             .optional()
             .describe(
               "Auth mode for tool endpoint. api-key requires OPENCODE_TOOL_ENDPOINT_API_KEY; plugin requires custom http.request hook; jwt/oidc/oauth2 use strict bearer verification.",

@@ -64,8 +64,8 @@ export const ToolRoutes = lazy(() =>
       if (!endpoint?.enabled) {
         return c.json({ error: "Tool endpoint is disabled" }, 404)
       }
-      const auth = endpoint.auth ?? "api-key"
-      if (auth === "plugin" && !(await Plugin.hasExternal("http.request"))) {
+      const authStrategies = Array.isArray(endpoint.auth) ? endpoint.auth : [endpoint.auth ?? "api-key"]
+      if (authStrategies.includes("plugin") && !(await Plugin.hasExternal("http.request"))) {
         return c.json({ error: "Tool endpoint auth=plugin requires external plugin http.request hook" }, 503)
       }
 

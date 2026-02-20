@@ -6,7 +6,8 @@ import {
   validateStartupAuthConfig,
 } from "../../src/server/auth-startup-validation"
 
-type ToolAuth = "api-key" | "plugin" | "jwt" | "oidc" | "oauth2" | "unknown"
+type KnownToolAuth = "api-key" | "plugin" | "jwt" | "oidc" | "oauth2"
+type ToolAuth = KnownToolAuth | KnownToolAuth[] | "unknown" | string[]
 
 function config(auth: ToolAuth) {
   return {
@@ -43,6 +44,30 @@ async function expectStartupError(params: {
 }
 
 describe("startup auth config validation", () => {
+  test("auth array rejects empty strategy list", async () => {
+    await expectStartupError({
+      auth: [],
+      code: "AUTH_CONFIG_MISSING",
+      message: "AUTH_CONFIG_MISSING strategy=unknown key=server.toolEndpoint.auth reason=empty_strategy_list",
+    })
+  })
+
+  test("auth array rejects duplicate strategy entries", async () => {
+    await expectStartupError({
+      auth: ["api-key", "plugin", "api-key"],
+      code: "AUTH_CONFIG_CONFLICT",
+      message: "AUTH_CONFIG_CONFLICT strategy=api-key key=server.toolEndpoint.auth reason=duplicate_strategy",
+    })
+  })
+
+  test("auth array rejects unknown strategy entries (defensive)", async () => {
+    await expectStartupError({
+      auth: ["api-key", "unknown"],
+      code: "AUTH_CONFIG_UNSUPPORTED_REF",
+      message: "AUTH_CONFIG_UNSUPPORTED_REF strategy=unknown key=server.toolEndpoint.auth reason=unsupported_strategy_reference",
+    })
+  })
+
   test("api-key strategy fails with deterministic missing error", async () => {
     await expectStartupError({
       auth: "api-key",
@@ -96,6 +121,27 @@ describe("startup auth config validation", () => {
       auth: "unknown",
       code: "AUTH_CONFIG_UNSUPPORTED_REF",
       message: "AUTH_CONFIG_UNSUPPORTED_REF strategy=unknown key=server.toolEndpoint.auth reason=unsupported_strategy_reference",
+    })
+  })
+
+  test("array prereq checks fail deterministically in declaration order", async () => {
+    await expectStartupError({
+      auth: ["plugin", "api-key"],
+      code: "AUTH_CONFIG_MISSING",
+      message: "AUTH_CONFIG_MISSING strategy=plugin key=plugin.http.request reason=external_hook_required",
+    })
+
+    await expectStartupError({
+      auth: ["api-key", "plugin"],
+      code: "AUTH_CONFIG_MISSING",
+      message: "AUTH_CONFIG_MISSING strategy=api-key key=env.OPENCODE_TOOL_ENDPOINT_API_KEY reason=required",
+    })
+
+    await expectStartupError({
+      auth: ["jwt", "api-key"],
+      code: "AUTH_CONFIG_MISSING",
+      message:
+        "AUTH_CONFIG_MISSING strategy=jwt key=env.OPENCODE_COMPAT_JWT_JWKS_URL|env.OPENCODE_COMPAT_JWT_HS256_SECRET reason=requires_one_key_source",
     })
   })
 
@@ -159,6 +205,15 @@ describe("startup auth config validation", () => {
             OPENCODE_COMPAT_OAUTH_INTROSPECTION_AUTH_METHOD: "client_secret_post",
           })[key],
         getApiKey: () => undefined,
+        hasExternalHttpHook: async () => false,
+      }),
+    ).resolves.toBeUndefined()
+
+    await expect(
+      validateStartupAuthConfig({
+        config: config(["api-key", "jwt"]),
+        getEnv: (key) => ({ OPENCODE_COMPAT_JWT_HS256_SECRET: "hs-secret" })[key],
+        getApiKey: () => "api-key-present",
         hasExternalHttpHook: async () => false,
       }),
     ).resolves.toBeUndefined()

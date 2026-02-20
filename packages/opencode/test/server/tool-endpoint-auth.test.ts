@@ -7,10 +7,13 @@ import { Instance } from "../../src/project/instance"
 import { Server } from "../../src/server/server"
 import { Env } from "../../src/env"
 import { Log } from "../../src/util/log"
+import { evaluateAuthorization } from "../../src/server/auth-policy"
 
 Log.init({ print: false })
 
-async function project(auth: "api-key" | "plugin" | "jwt" | "oidc" | "oauth2", extra?: Record<string, unknown>) {
+type ToolAuth = "api-key" | "plugin" | "jwt" | "oidc" | "oauth2"
+
+async function project(auth: ToolAuth | ToolAuth[], extra?: Record<string, unknown>) {
   return tmpdir({
     init: async (dir) => {
       await Bun.write(
@@ -61,14 +64,20 @@ async function withEnv(vars: Record<string, string>, fn: () => Promise<void>) {
   const previous = new Map<string, string | undefined>()
   for (const [key, value] of Object.entries(vars)) {
     previous.set(key, process.env[key])
+    process.env[key] = value
     Env.set(key, value)
   }
   try {
     await fn()
   } finally {
     for (const [key, value] of previous) {
-      if (value === undefined) delete process.env[key]
-      else process.env[key] = value
+      if (value === undefined) {
+        delete process.env[key]
+        Env.remove(key)
+      } else {
+        process.env[key] = value
+        Env.set(key, value)
+      }
     }
   }
 }
@@ -107,6 +116,56 @@ async function invokeTool(
 }
 
 describe("tool endpoint auth policy", () => {
+  test("mixed auth array does not require x-api-key when jwt succeeds", async () => {
+    await using tmp = await project(["jwt", "api-key"])
+    await Instance.disposeAll()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        await withEnv(
+          {
+            OPENCODE_COMPAT_JWT_HS256_SECRET: "jwt-array-secret",
+            OPENCODE_COMPAT_JWT_ISSUER: "issuer-jwt-array",
+            OPENCODE_COMPAT_JWT_AUDIENCE: "aud-jwt-array",
+          },
+          async () => {
+            const app = Server.App()
+            const sessionID = await createSession(app, tmp.path)
+
+            const token = signHS256(
+              { exp: Math.floor(Date.now() / 1000) + 120, iss: "issuer-jwt-array", aud: "aud-jwt-array" },
+              "jwt-array-secret",
+            )
+
+            const response = await invokeTool(app, tmp.path, sessionID, {
+              authorization: `Bearer ${token}`,
+            })
+            expect(response.status).toBe(404)
+          },
+        )
+      },
+    })
+  })
+
+  test("ordered auth array allows later strategy after earlier fails", async () => {
+    const previous = process.env.OPENCODE_TOOL_ENDPOINT_API_KEY
+    try {
+      process.env.OPENCODE_TOOL_ENDPOINT_API_KEY = "ordered-api-key"
+      const decision = await evaluateAuthorization(
+        "POST",
+        "/tool/missing_tool",
+        new Headers({ "x-api-key": "ordered-api-key" }),
+        [{ method: "POST", path: "/tool/:toolName", auth: ["plugin", "api-key"] as any }],
+      )
+      expect(decision.ok).toBe(true)
+      expect(decision.strategy).toBe("api-key")
+      expect(decision.policyMode).toBe("strategies")
+    } finally {
+      if (previous === undefined) delete process.env.OPENCODE_TOOL_ENDPOINT_API_KEY
+      else process.env.OPENCODE_TOOL_ENDPOINT_API_KEY = previous
+    }
+  })
+
   test("jwt strategy authorizes valid bearer and rejects invalid bearer even with x-api-key", async () => {
     await using tmp = await project("jwt")
     await Instance.disposeAll()

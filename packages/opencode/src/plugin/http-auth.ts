@@ -8,8 +8,9 @@ export const HttpAuthPlugin: Plugin = async () => ({
     const config = await Config.get()
     const endpoint = config.server?.toolEndpoint
     if (!endpoint?.enabled) return
-    const auth = endpoint.auth ?? "api-key"
-    if (auth !== "api-key") return
+    const authStrategies = Array.isArray(endpoint.auth) ? endpoint.auth : [endpoint.auth ?? "api-key"]
+    const apiKeyOnly = authStrategies.length === 1 && authStrategies[0] === "api-key"
+    if (!apiKeyOnly) return
     const key = Flag.OPENCODE_TOOL_ENDPOINT_API_KEY
     if (!key) {
       output.response = {
