@@ -48,6 +48,7 @@ import { ToolRoutes, isSensitiveTool } from "./routes/tool"
 import { CompatRoutes } from "./compat"
 import { evaluateAuthorization, type RouteAuthRule } from "./auth-policy"
 import { emitAuthBoundary, emitAuthDecision } from "./auth-observability"
+import { validateStartupAuthConfig } from "./auth-startup-validation"
 
 // @ts-ignore This global is needed to prevent ai-sdk from logging warnings to stdout https://github.com/vercel/ai/blob/2dc67e0ef538307f21368db32d5a12345d98831b/packages/ai/src/logger/log-warnings.ts#L85
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -742,7 +743,6 @@ export namespace Server {
         if (!endpoint.allowedTools?.length) {
           throw new Error("server.toolEndpoint.enabled requires a non-empty server.toolEndpoint.allowedTools")
         }
-        const auth = endpoint.auth ?? "api-key"
         if (endpoint.allowSensitiveTools !== true) {
           const blocked = endpoint.allowedTools.filter((tool: string) => isSensitiveTool(tool))
           if (blocked.length) {
@@ -751,29 +751,13 @@ export namespace Server {
             )
           }
         }
-        switch (auth) {
-          case "api-key": {
-            if (!Flag.OPENCODE_TOOL_ENDPOINT_API_KEY) {
-              throw new Error(
-                "server.toolEndpoint.enabled with api-key auth requires OPENCODE_TOOL_ENDPOINT_API_KEY to be set",
-              )
-            }
-            break
-          }
-          case "plugin": {
-            const hasExternalHttpHook = await Plugin.hasExternal("http.request")
-            if (!hasExternalHttpHook) {
-              throw new Error(
-                "server.toolEndpoint.auth=plugin requires at least one configured external plugin with an http.request hook",
-              )
-            }
-            break
-          }
-          case "jwt":
-          case "oidc":
-          case "oauth2":
-            break
-        }
+
+        await validateStartupAuthConfig({
+          config,
+          getEnv: (key) => Env.get(key),
+          getApiKey: () => Flag.OPENCODE_TOOL_ENDPOINT_API_KEY,
+          hasExternalHttpHook: () => Plugin.hasExternal("http.request"),
+        })
       },
     })
   }
