@@ -1,7 +1,7 @@
 // Set API key for server-level auth middleware
 process.env["OPENCODE_TOOL_ENDPOINT_API_KEY"] = "test-a2a-key"
 
-import { afterAll, describe, expect, test } from "bun:test"
+import { afterAll, describe, expect, spyOn, test } from "bun:test"
 import path from "path"
 import fs from "fs/promises"
 import { createHmac } from "crypto"
@@ -12,6 +12,10 @@ import { Log } from "../../src/util/log"
 import { tmpdir } from "../fixture/fixture"
 import { Config } from "../../src/config/config"
 import { Plugin } from "../../src/plugin"
+import { Session } from "../../src/session"
+import { SessionPrompt } from "../../src/session/prompt"
+import { SessionStatus } from "../../src/session/status"
+import { Bus } from "../../src/bus"
 
 Log.init({ print: false })
 
@@ -157,6 +161,73 @@ You are a container build agent.
       )
     },
   })
+}
+
+async function projectTwoAgents(enabled: boolean) {
+  return tmpdir({
+    init: async (dir) => {
+      for (const skill of ["sidecar-preserve", "audit-skill"]) {
+        const skillDir = path.join(dir, ".opencode", "skills", skill)
+        await fs.mkdir(skillDir, { recursive: true })
+        await Bun.write(
+          path.join(skillDir, "SKILL.md"),
+          `---
+name: ${skill}
+description: Skill ${skill}
+a2a:
+  expose: true
+  tags: ["test"]
+---
+Skill body.
+`,
+        )
+      }
+
+      const agentDir = path.join(dir, ".opencode", "agents")
+      await fs.mkdir(agentDir, { recursive: true })
+      for (const [name, skill] of [
+        ["neo-sidecar", "sidecar-preserve"],
+        ["audit-agent", "audit-skill"],
+      ]) {
+        await Bun.write(
+          path.join(agentDir, `${name}.md`),
+          `---
+name: ${name}
+description: Agent ${name}
+mode: a2a
+skills:
+  - ${skill}
+a2a:
+  baseUrl: https://example.test
+---
+Agent body.
+`,
+        )
+      }
+
+      await Bun.write(
+        path.join(dir, "opencode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          server: {
+            a2a: {
+              enabled,
+              baseUrl: "https://example.test",
+            },
+          },
+        }),
+      )
+    },
+  })
+}
+
+function ssePayloads(body: string) {
+  return body
+    .split("\n")
+    .filter((line) => line.startsWith("data: "))
+    .map((line) => line.slice(6))
+    .filter((line) => line.length > 0)
+    .map((line) => JSON.parse(line) as Record<string, any>)
 }
 
 describe("a2a internal plugin", () => {
@@ -686,6 +757,7 @@ Test agent prompt.
           }),
         })
         expect(response.status).toBe(400)
+        expect(response.headers.get("A2A-Version")).toBe("1.0")
         const body = (await response.json()) as any
         expect(body.error.code).toBe(-32009) // VersionNotSupportedError
         expect(body.error.data.supportedVersions).toContain("1.0")
@@ -881,6 +953,373 @@ Test agent prompt.
         })
         // Even if the request fails for other reasons, we should get the version header
         expect(response.headers.get("A2A-Version")).toBe("1.0")
+      },
+    })
+  })
+
+  test("message:send accepts missing A2A-Version header", async () => {
+    await using tmp = await project(true)
+    await Instance.disposeAll()
+    await Instance.provide({
+      directory: tmp.path,
+      init: async () => {
+        Env.set("ANTHROPIC_API_KEY", "test-key")
+      },
+      fn: async () => {
+        const app = Server.App()
+        const response = await app.request("/a2a/neo-sidecar/message:send", {
+          method: "POST",
+          headers: {
+            "x-opencode-directory": tmp.path,
+            "content-type": "application/json",
+            ...AUTH_HEADER,
+          },
+          body: JSON.stringify({
+            message: {
+              messageId: "missing-version-ok",
+              role: "ROLE_USER",
+              parts: [{ text: "hello" }],
+            },
+          }),
+        })
+        expect(response.status).toBe(200)
+        expect(response.headers.get("A2A-Version")).toBe("1.0")
+        const body = (await response.json()) as any
+        expect(body.task).toBeDefined()
+      },
+    })
+  })
+
+  test("agent/task isolation: task endpoints return 404 for another agent task", async () => {
+    await using tmp = await projectTwoAgents(true)
+    await Instance.disposeAll()
+    await Instance.provide({
+      directory: tmp.path,
+      init: async () => {
+        Env.set("ANTHROPIC_API_KEY", "test-key")
+      },
+      fn: async () => {
+        const app = Server.App()
+        const created = await app.request("/a2a/neo-sidecar/message:send", {
+          method: "POST",
+          headers: {
+            "x-opencode-directory": tmp.path,
+            "content-type": "application/json",
+            ...AUTH_HEADER,
+          },
+          body: JSON.stringify({
+            message: {
+              messageId: "cross-agent",
+              role: "ROLE_USER",
+              parts: [{ text: "hello" }],
+            },
+          }),
+        })
+        expect(created.status).toBe(200)
+        const createdBody = (await created.json()) as any
+        const taskId = createdBody.task.id as string
+
+        const getOther = await app.request(`/a2a/audit-agent/tasks/${taskId}`, {
+          method: "GET",
+          headers: { "x-opencode-directory": tmp.path, ...AUTH_HEADER },
+        })
+        expect(getOther.status).toBe(404)
+
+        const cancelOther = await app.request(`/a2a/audit-agent/tasks/${taskId}/cancel`, {
+          method: "POST",
+          headers: { "x-opencode-directory": tmp.path, ...AUTH_HEADER },
+        })
+        expect(cancelOther.status).toBe(404)
+
+        const subscribeOther = await app.request(`/a2a/audit-agent/tasks/${taskId}/subscribe`, {
+          method: "GET",
+          headers: { "x-opencode-directory": tmp.path, ...AUTH_HEADER },
+        })
+        expect(subscribeOther.status).toBe(404)
+      },
+    })
+  })
+
+  test("message:stream emits task envelope first, then terminal status, then artifact", async () => {
+    await using tmp = await project(true)
+    await Instance.disposeAll()
+    await Instance.provide({
+      directory: tmp.path,
+      init: async () => {
+        Env.set("ANTHROPIC_API_KEY", "test-key")
+      },
+      fn: async () => {
+        const createSpy = spyOn(Session, "create").mockResolvedValue({ id: "ses-stream-1" } as any)
+        const messagesSpy = spyOn(Session, "messages").mockResolvedValue([
+          {
+            info: { role: "assistant", id: "assistant-1" },
+            parts: [{ type: "text", text: "stream output", synthetic: false }],
+          },
+        ] as any)
+        const promptSpy = spyOn(SessionPrompt, "prompt").mockResolvedValue(undefined as any)
+
+        try {
+          const app = Server.App()
+          const response = await app.request("/a2a/neo-sidecar/message/stream", {
+            method: "POST",
+            headers: {
+              "x-opencode-directory": tmp.path,
+              "content-type": "application/json",
+              ...AUTH_HEADER,
+            },
+            body: JSON.stringify({
+              message: {
+                messageId: "stream-order",
+                role: "ROLE_USER",
+                parts: [{ text: "hello" }],
+              },
+            }),
+          })
+
+          expect(response.status).toBe(200)
+          expect(response.headers.get("content-type")).toContain("text/event-stream")
+
+          setTimeout(() => {
+            SessionStatus.set("ses-stream-1", { type: "idle" })
+          }, 20)
+
+          const decoder = new TextDecoder()
+          const reader = response.body?.getReader()
+          let body = ""
+
+          if (!reader) throw new Error("Missing stream body")
+
+          const start = Date.now()
+          while (Date.now() - start < 4000) {
+            const readResult = await Promise.race([
+              reader.read().then((result) => ({ ...result, timeout: false })),
+              new Promise<{ done: false; value?: undefined; timeout: true }>((resolve) =>
+                setTimeout(() => resolve({ done: false, timeout: true }), 200),
+              ),
+            ])
+
+            if (readResult.timeout) continue
+
+            if (readResult.value) {
+              body += decoder.decode(readResult.value)
+            }
+
+            if (body.includes("artifactUpdate") || readResult.done) {
+              break
+            }
+          }
+
+          await reader.cancel()
+          const payloads = ssePayloads(body)
+          expect(payloads[0]?.task).toBeDefined()
+
+          const terminalStatusIndex = payloads.findIndex(
+            (payload) => payload.statusUpdate?.status?.state === "TASK_STATE_COMPLETED",
+          )
+          const artifactIndex = payloads.findIndex((payload) => payload.artifactUpdate)
+
+          expect(terminalStatusIndex).toBeGreaterThan(0)
+          expect(artifactIndex).toBeGreaterThan(terminalStatusIndex)
+          expect(payloads[artifactIndex]?.artifactUpdate?.append).toBe(false)
+          expect(payloads[artifactIndex]?.artifactUpdate?.lastChunk).toBe(true)
+        } finally {
+          createSpy.mockRestore()
+          messagesSpy.mockRestore()
+          promptSpy.mockRestore()
+        }
+      },
+    })
+  })
+
+  test("failed task response message is sanitized and does not leak sessionId", async () => {
+    await using tmp = await project(true)
+    await Instance.disposeAll()
+    await Instance.provide({
+      directory: tmp.path,
+      init: async () => {
+        Env.set("ANTHROPIC_API_KEY", "test-key")
+      },
+      fn: async () => {
+        const promptSpy = spyOn(SessionPrompt, "prompt").mockImplementation(async () => {
+          throw new Error("Session prompt failed\n    at SecretStack (/internal/stack) sessionId=ses-999 token=abc123")
+        })
+
+        try {
+          const app = Server.App()
+          const send = await app.request("/a2a/neo-sidecar/message:send", {
+            method: "POST",
+            headers: {
+              "x-opencode-directory": tmp.path,
+              "content-type": "application/json",
+              ...AUTH_HEADER,
+            },
+            body: JSON.stringify({
+              message: {
+                messageId: "sanitized-fail",
+                role: "ROLE_USER",
+                parts: [{ text: "hello" }],
+              },
+            }),
+          })
+          expect(send.status).toBe(200)
+          const sendBody = (await send.json()) as any
+          const taskId = sendBody.task.id as string
+
+          let failedBody: any = undefined
+          for (let i = 0; i < 40; i++) {
+            await new Promise((resolve) => setTimeout(resolve, 25))
+            const taskResponse = await app.request(`/a2a/neo-sidecar/tasks/${taskId}`, {
+              method: "GET",
+              headers: {
+                "x-opencode-directory": tmp.path,
+                ...AUTH_HEADER,
+              },
+            })
+            failedBody = await taskResponse.json()
+            if (failedBody.task?.status?.state === "TASK_STATE_FAILED") break
+          }
+
+          expect(failedBody.task.status.state).toBe("TASK_STATE_FAILED")
+          expect(failedBody.task.status.message).toBe("Session prompt failed")
+          expect(failedBody.task.status.message).not.toContain("\n")
+          expect(failedBody.task.status.message).not.toContain("at ")
+          expect(failedBody.task.status.message).not.toContain("sessionId")
+          expect(JSON.stringify(failedBody)).not.toContain("sessionId")
+        } finally {
+          promptSpy.mockRestore()
+        }
+      },
+    })
+  })
+
+  test("subscribe returns task envelope and closes immediately for terminal tasks", async () => {
+    await using tmp = await project(true)
+    await Instance.disposeAll()
+    await Instance.provide({
+      directory: tmp.path,
+      init: async () => {
+        Env.set("ANTHROPIC_API_KEY", "test-key")
+      },
+      fn: async () => {
+        const promptSpy = spyOn(SessionPrompt, "prompt").mockImplementation(async () => {
+          throw new Error("forced fail")
+        })
+
+        try {
+          const app = Server.App()
+          const send = await app.request("/a2a/neo-sidecar/message:send", {
+            method: "POST",
+            headers: {
+              "x-opencode-directory": tmp.path,
+              "content-type": "application/json",
+              ...AUTH_HEADER,
+            },
+            body: JSON.stringify({
+              message: {
+                messageId: "subscribe-terminal",
+                role: "ROLE_USER",
+                parts: [{ text: "hello" }],
+              },
+            }),
+          })
+          const sendBody = (await send.json()) as any
+          const taskId = sendBody.task.id as string
+
+          for (let i = 0; i < 40; i++) {
+            await new Promise((resolve) => setTimeout(resolve, 25))
+            const taskResponse = await app.request(`/a2a/neo-sidecar/tasks/${taskId}`, {
+              method: "GET",
+              headers: {
+                "x-opencode-directory": tmp.path,
+                ...AUTH_HEADER,
+              },
+            })
+            const body = (await taskResponse.json()) as any
+            if (body.task?.status?.state === "TASK_STATE_FAILED") break
+          }
+
+          const response = await app.request(`/a2a/neo-sidecar/tasks/${taskId}/subscribe`, {
+            method: "GET",
+            headers: {
+              "x-opencode-directory": tmp.path,
+              ...AUTH_HEADER,
+            },
+          })
+          expect(response.status).toBe(200)
+          const body = await response.text()
+          const payloads = ssePayloads(body)
+          expect(payloads).toHaveLength(1)
+          expect(payloads[0]?.task?.id).toBe(taskId)
+          expect(payloads[0]?.task?.status?.state).toBe("TASK_STATE_FAILED")
+        } finally {
+          promptSpy.mockRestore()
+        }
+      },
+    })
+  })
+
+  test("cancel is idempotent for existing tasks", async () => {
+    await using tmp = await project(true)
+    await Instance.disposeAll()
+    await Instance.provide({
+      directory: tmp.path,
+      init: async () => {
+        Env.set("ANTHROPIC_API_KEY", "test-key")
+      },
+      fn: async () => {
+        const promptSpy = spyOn(SessionPrompt, "prompt").mockImplementation(async () => {
+          await new Promise(() => {})
+        })
+        const busSpy = spyOn(Bus, "subscribe").mockImplementation(() => {
+          return () => {}
+        })
+
+        try {
+          const app = Server.App()
+          const send = await app.request("/a2a/neo-sidecar/message:send", {
+            method: "POST",
+            headers: {
+              "x-opencode-directory": tmp.path,
+              "content-type": "application/json",
+              ...AUTH_HEADER,
+            },
+            body: JSON.stringify({
+              message: {
+                messageId: "cancel-idempotent",
+                role: "ROLE_USER",
+                parts: [{ text: "hello" }],
+              },
+            }),
+          })
+          expect(send.status).toBe(200)
+          const sendBody = (await send.json()) as any
+          const taskId = sendBody.task.id as string
+
+          const cancel1 = await app.request(`/a2a/neo-sidecar/tasks/${taskId}/cancel`, {
+            method: "POST",
+            headers: {
+              "x-opencode-directory": tmp.path,
+              ...AUTH_HEADER,
+            },
+          })
+          expect(cancel1.status).toBe(200)
+          const body1 = (await cancel1.json()) as any
+          expect(body1.task.status.state).toBe("TASK_STATE_CANCELED")
+
+          const cancel2 = await app.request(`/a2a/neo-sidecar/tasks/${taskId}/cancel`, {
+            method: "POST",
+            headers: {
+              "x-opencode-directory": tmp.path,
+              ...AUTH_HEADER,
+            },
+          })
+          expect(cancel2.status).toBe(200)
+          const body2 = (await cancel2.json()) as any
+          expect(body2.task.status.state).toBe("TASK_STATE_CANCELED")
+        } finally {
+          busSpy.mockRestore()
+          promptSpy.mockRestore()
+        }
       },
     })
   })
