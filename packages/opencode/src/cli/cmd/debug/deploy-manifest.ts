@@ -7,7 +7,7 @@ import { cmd } from "../cmd"
  * Each node describes the type, supported values, and structure of
  * a config field — derived directly from the Zod schema at runtime.
  */
-interface ManifestNode {
+export interface ManifestNode {
   type: string
   required?: boolean
   default?: unknown
@@ -31,7 +31,7 @@ interface ManifestNode {
  * Handles: object, enum, array, union, discriminatedUnion (via discriminator),
  * literal, record, optional, default, nullable, pipe, and primitives.
  */
-function walkSchema(schema: unknown): ManifestNode {
+export function walkSchema(schema: unknown): ManifestNode {
   const s = schema as any
   const def = s?.def ?? s?._def
   if (!def) return { type: "unknown" }
