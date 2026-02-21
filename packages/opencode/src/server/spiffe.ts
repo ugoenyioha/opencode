@@ -1,20 +1,77 @@
 /// <reference path="./spiffe.d.ts" />
-import { createClient as createSPIFFEClient } from "spiffe"
+/**
+ * SPIFFE JWT-SVID verification via the SPIRE Workload API.
+ *
+ * NOTE ON THE `spiffe` npm PACKAGE (v0.5.0):
+ *
+ * The `spiffe` package's `createClient()` returns a client whose async
+ * methods (e.g. `validateJWTSVID()`) resolve to a `UnaryCall` envelope
+ * from `@protobuf-ts/runtime-rpc`, NOT the raw response message. The
+ * actual response lives at `result.response`, so accessing
+ * `result.spiffeId` returns `undefined`. Additionally, the `UnaryCall`
+ * envelope contains circular references through its protobuf type
+ * metadata — any attempt to `JSON.stringify` it (e.g. for logging)
+ * throws "Converting circular structure to JSON".
+ *
+ * Rather than depend on the `@protobuf-ts/runtime-rpc` `UnaryCall`
+ * wrapper semantics (which are easy to misuse), this module calls
+ * `@grpc/grpc-js` `makeUnaryRequest` directly and uses the spiffe
+ * package's protobuf types (`toBinary` / `fromBinary`) for wire
+ * serialization. This gives us a plain response object with no wrapper,
+ * no circular references, and no ambiguity about where `spiffeId` lives.
+ */
 import { Log } from "@/util/log"
 import { minimatch } from "minimatch"
 
 const log = Log.create({ service: "spiffe" })
 
-type SPIFFEVerificationResult = {
-  ok: boolean
-  spiffeId?: string
-  claims?: Record<string, unknown>
+// ---------------------------------------------------------------------------
+// Lazy-loaded gRPC + protobuf deps (avoids import errors when not in SPIFFE env)
+// ---------------------------------------------------------------------------
+
+let _grpc: typeof import("@grpc/grpc-js") | null = null
+let _protoTypes: {
+  ValidateJWTSVIDRequest: any
+  ValidateJWTSVIDResponse: any
+  Struct: any
+} | null = null
+
+async function loadGrpc() {
+  if (!_grpc) {
+    _grpc = await import("@grpc/grpc-js")
+  }
+  return _grpc
 }
 
-let clientInstance: ReturnType<typeof createSPIFFEClient> | null = null
+function loadProtoTypes() {
+  if (!_protoTypes) {
+    // Use require() to load the CJS bundle — the ESM entry point is broken
+    // (the package declares dist/index.js but only ships .mjs/.cjs; a
+    //  postinstall symlink patches this for ESM imports, but require() with
+    //  the .cjs path is more reliable for this usage).
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const spiffe = require("spiffe")
+    _protoTypes = {
+      ValidateJWTSVIDRequest: spiffe.ValidateJWTSVIDRequest,
+      ValidateJWTSVIDResponse: spiffe.ValidateJWTSVIDResponse,
+      Struct: spiffe.Struct,
+    }
+  }
+  return _protoTypes
+}
+
+// ---------------------------------------------------------------------------
+// gRPC client management
+// ---------------------------------------------------------------------------
+
+type GrpcClient = InstanceType<typeof import("@grpc/grpc-js").Client>
+
+let clientInstance: GrpcClient | null = null
+let clientEndpoint: string | null = null
 let lastError: Error | null = null
 let lastReconnectAttempt = 0
 const RECONNECT_COOLDOWN_MS = 5000
+
 const SAFE_MATCH_OPTIONS = {
   nonegate: true,
   noext: true,
@@ -23,19 +80,16 @@ const SAFE_MATCH_OPTIONS = {
 } as const
 
 /**
- * Get or create the SPIFFE Workload API client.
- * Uses SPIFFE_ENDPOINT_SOCKET env var (standard SPIFFE env var).
- * Reconnects on failure with 5s cooldown.
+ * Get or create a raw @grpc/grpc-js Client connected to the SPIRE agent socket.
+ * Reconnects on failure with a 5 s cooldown.
  */
-function getClient() {
+async function getClient(): Promise<GrpcClient> {
   const now = Date.now()
-  
-  // If we have a working client, return it
+
   if (clientInstance && !lastError) {
     return clientInstance
   }
 
-  // Rate-limit reconnection attempts
   if (lastError && now - lastReconnectAttempt < RECONNECT_COOLDOWN_MS) {
     throw lastError
   }
@@ -46,21 +100,92 @@ function getClient() {
       throw new Error("SPIFFE_ENDPOINT_SOCKET environment variable not set")
     }
 
+    const grpc = await loadGrpc()
     lastReconnectAttempt = now
-    clientInstance = createSPIFFEClient(endpoint)
+
+    // Close stale client if any
+    if (clientInstance) {
+      try {
+        clientInstance.close()
+      } catch {
+        /* ignore */
+      }
+    }
+
+    clientInstance = new grpc.Client(endpoint, grpc.credentials.createInsecure())
+    clientEndpoint = endpoint
     lastError = null
-    log.info("SPIFFE Workload API client connected", { endpoint: sanitizeEndpoint(endpoint) })
+    log.info("SPIFFE gRPC client connected", { endpoint: sanitizeEndpoint(endpoint) })
     return clientInstance
   } catch (error) {
     lastError = error instanceof Error ? error : new Error(String(error))
-    log.error("Failed to create SPIFFE client", { error: lastError.message })
+    log.error("Failed to create SPIFFE gRPC client", { error: lastError.message })
     throw lastError
   }
 }
 
+// ---------------------------------------------------------------------------
+// Raw gRPC call: ValidateJWTSVID
+// ---------------------------------------------------------------------------
+
 /**
- * Sanitize endpoint for logging (remove socket path details for security).
+ * Call SPIRE Agent's ValidateJWTSVID via raw gRPC, bypassing the buggy
+ * `spiffe` package `stackIntercept` wrapper.
  */
+async function callValidateJWTSVID(
+  audience: string,
+  svid: string,
+): Promise<{ spiffeId: string; claims: Record<string, unknown> }> {
+  const client = await getClient()
+  const grpc = await loadGrpc()
+  const proto = loadProtoTypes()
+
+  const metadata = new grpc.Metadata()
+  metadata.set("workload.spiffe.io", "true")
+
+  return new Promise((resolve, reject) => {
+    client.makeUnaryRequest<{ audience: string; svid: string }, any>(
+      "/SpiffeWorkloadAPI/ValidateJWTSVID",
+      // Serializer: protobuf binary via @protobuf-ts/runtime (no JSON involved)
+      (req) => {
+        const msg = proto.ValidateJWTSVIDRequest.create(req)
+        return Buffer.from(proto.ValidateJWTSVIDRequest.toBinary(msg))
+      },
+      // Deserializer: protobuf binary → JS object
+      (data) => {
+        return proto.ValidateJWTSVIDResponse.fromBinary(new Uint8Array(data))
+      },
+      { audience, svid },
+      metadata,
+      { deadline: Date.now() + 5000 },
+      (err, response) => {
+        if (err) return reject(err)
+        if (!response) return reject(new Error("Empty response from SPIRE agent"))
+
+        // Convert google.protobuf.Struct → plain object safely
+        let claims: Record<string, unknown> = {}
+        try {
+          if (response.claims) {
+            claims = proto.Struct.toJson(response.claims) as Record<string, unknown>
+          }
+        } catch {
+          // If Struct conversion fails, log but don't fail the whole validation
+          log.warn("Failed to convert SPIFFE claims Struct to JSON")
+        }
+
+        resolve({
+          spiffeId: response.spiffeId ?? "",
+          claims,
+        })
+      },
+    )
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
 function sanitizeEndpoint(endpoint: string): string {
   try {
     const url = new URL(endpoint)
@@ -94,7 +219,7 @@ function isSafeAllowedPattern(pattern: string): boolean {
  */
 function isAllowedSpiffeId(spiffeId: string, allowedIds?: string[]): boolean {
   if (!allowedIds || allowedIds.length === 0) return true
-  
+
   return allowedIds.some((pattern, index) => {
     const normalized = pattern.trim()
     if (!isSafeAllowedPattern(normalized)) {
@@ -111,14 +236,18 @@ function isAllowedSpiffeId(spiffeId: string, allowedIds?: string[]): boolean {
   })
 }
 
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
 /**
  * Verify a SPIFFE JWT-SVID token via delegated validation.
  * Calls the SPIRE Agent's Workload API to validate the token.
- * 
- * @param token - JWT-SVID Bearer token
- * @param audience - Required audience claim
- * @param allowedIds - Optional list of allowed SPIFFE ID glob patterns
- * @returns Verification result with spiffeId and claims if successful
+ *
+ * @param token     JWT-SVID Bearer token
+ * @param audience  Required audience claim
+ * @param allowedIds  Optional list of allowed SPIFFE ID glob patterns
+ * @returns `true` if the token is valid and the SPIFFE ID is allowed
  */
 export async function verifySPIFFE(
   token: string,
@@ -126,22 +255,9 @@ export async function verifySPIFFE(
   allowedIds?: string[],
 ): Promise<boolean> {
   try {
-    const client = getClient()
-    
-    // Call SPIRE Agent with 5s timeout
-    const timeoutMs = 5000
-    const validationPromise = client.validateJWTSVID({
-      audience,
-      svid: token,
-    })
+    const result = await callValidateJWTSVID(audience, token)
 
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error("SPIFFE validation timeout")), timeoutMs)
-    })
-
-    const result = await Promise.race([validationPromise, timeoutPromise])
-
-    if (!result?.spiffeId) {
+    if (!result.spiffeId) {
       log.warn("SPIFFE validation failed: no spiffeId in response")
       return false
     }
@@ -165,13 +281,18 @@ export async function verifySPIFFE(
     // Fail-closed: any error (network, timeout, validation failure) → deny
     const message = error instanceof Error ? error.message : String(error)
     log.warn("SPIFFE verification failed", { error: message, audience })
-    
+
     // If this was a connection error, mark client as failed for reconnection
-    if (error instanceof Error && error.message.includes("SPIFFE_ENDPOINT_SOCKET")) {
+    if (
+      error instanceof Error &&
+      (error.message.includes("SPIFFE_ENDPOINT_SOCKET") ||
+        error.message.includes("UNAVAILABLE") ||
+        error.message.includes("ECONNREFUSED"))
+    ) {
       lastError = error
       clientInstance = null
     }
-    
+
     return false
   }
 }
