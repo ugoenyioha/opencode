@@ -1,3 +1,22 @@
+# OpenCode Core — Agent Guidelines
+
+## Context Within `ai-forge` Workspace
+This is the `opencode-ng` repository, which contains the source code for the OpenCode core runtime platform. 
+It has been moved into the `ai-forge` workspace because `ai-forge` heavily modifies and relies on it during development. 
+
+- **Runtime Engine:** `opencode-ng` acts as the execution engine for all AI agents built with `ai-forge`. The `ai-forge` CLI generates configurations (`opencode.json`), skills, and plugins that are loaded and run by the `opencode` binary built from this repository.
+- **Dynamic Capabilities:** The `ai-forge` CLI relies on `opencode-ng` to self-report its available features (via the `opencode debug deploy-manifest` command). This command introspects the Zod schemas in `src/config/config.ts` to export the supported configuration surface (e.g., A2A, tool-endpoints, auth strategies, etc.).
+- **Key Directories:**
+  - `packages/opencode/`: The main application package containing the CLI, the HTTP server (`serve`), routing, and core business logic.
+  - `packages/opencode/src/config/config.ts`: The central schema definition for all configurations. Modifications to agent modes, A2A settings, or server capabilities usually start here.
+  - `packages/opencode/src/cli/cmd/debug/deploy-manifest.ts`: The command used by `ai-forge` to dynamically discover supported features.
+- **Development Workflow:**
+  - You can test modifications by running the local Bun runner: `bun run --conditions=browser ./src/index.ts <command>` from within `packages/opencode/`.
+  - When testing `ai-forge` against local changes made here, you typically run `ai-forge` with the `OPENCODE_BIN` wrapper script that points to this local instance.
+
+---
+
+## Existing OpenCode Instructions
 - To regenerate the JavaScript SDK, run `./packages/sdk/js/script/build.ts`.
 - ALWAYS USE PARALLEL TOOLS WHEN APPLICABLE.
 - The default branch in this repo is `dev`.
