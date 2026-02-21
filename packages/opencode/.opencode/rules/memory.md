@@ -1,1 +1,0 @@
-- I always prefer using PostgreSQL over MySQL for all projects. (2026-02-06)
