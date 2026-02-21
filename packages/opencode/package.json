@@ -6,6 +6,7 @@
   "license": "MIT",
   "private": true,
   "scripts": {
+    "postinstall": "test -L node_modules/spiffe/dist/index.js || ln -sf index.mjs node_modules/spiffe/dist/index.js",
     "typecheck": "tsgo --noEmit",
     "test": "bun test --timeout 30000",
     "build": "bun run script/build.ts",
