@@ -129,13 +129,13 @@ async function strategyPasses(
   if (strategy === "jwt" || strategy === "oidc" || strategy === "oauth2") {
     const token = bearerFromHeaders(headers)
     if (!token) return false
-    const ok = await verifyBearerForStrategy(strategy, token, {
+    const result = await verifyBearerForStrategy(strategy, token, {
       surface: context.surface,
       route: context.route,
       source: "centralized",
     })
-    // TODO: extract sub/principal from verified JWT claims for richer identity
-    return ok ? `${strategy}:verified` : false
+    if (!result) return false
+    return result.sub ?? `${strategy}:verified`
   }
   return false
 }

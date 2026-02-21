@@ -78,14 +78,27 @@ type JWTHeader = {
 }
 
 type JWTPayload = {
+  sub?: string
   exp?: number
   nbf?: number
   iss?: string
   aud?: string | string[]
 }
 
+/**
+ * Returned by verifyBearerForStrategy on success.
+ * Carries the `sub` claim from the verified JWT or introspection response,
+ * enabling callers to thread the authenticated principal identity through
+ * to ext_authz and audit logs.
+ */
+export type VerifiedToken = {
+  /** The `sub` claim from the token, if present. */
+  sub?: string
+}
+
 type IntrospectionResponse = {
   active?: boolean
+  sub?: string
   exp?: number
   nbf?: number
   iss?: string
@@ -257,10 +270,11 @@ async function verifyRS256Signature(parsed: ParsedJWT, jwksURL: string, context:
   }
 }
 
-async function verifyRS256JWT(parsed: ParsedJWT, jwksURL: string, context: AuthObserveContext) {
+async function verifyRS256JWT(parsed: ParsedJWT, jwksURL: string, context: AuthObserveContext): Promise<VerifiedToken | false> {
   const signatureOk = await verifyRS256Signature(parsed, jwksURL, context)
   if (!signatureOk) return false
-  return claimChecks(parsed.payload)
+  if (!claimChecks(parsed.payload)) return false
+  return { sub: parsed.payload.sub }
 }
 
 type OIDCDiscovery = {
@@ -374,7 +388,7 @@ function trimIssuerPath(input: string) {
   return parsed.toString().replace(/\/$/, "")
 }
 
-function introspectionCacheSet(key: string, value: { expiresAt: number; allowed: boolean; verifiedAt?: number; expMs?: number }) {
+function introspectionCacheSet(key: string, value: { expiresAt: number; allowed: boolean; sub?: string; verifiedAt?: number; expMs?: number }) {
   introspectionCache.set(key, value)
   if (introspectionCache.size <= INTROSPECTION_CACHE_MAX_ENTRIES) return
 
@@ -453,7 +467,7 @@ async function verifyOIDCJWTForIssuer(
   expectedAudience: string | string[] | undefined,
   context: AuthObserveContext,
   options?: { normalizeIssuerMatch?: boolean },
-) {
+): Promise<VerifiedToken | false> {
   if (parsed.header.alg === "none") return false
 
   const acceptedAlgs = acceptedOIDCAlgs()
@@ -467,10 +481,11 @@ async function verifyOIDCJWTForIssuer(
   const signatureOk = await verifyRS256Signature(parsed, jwksUrl, context)
   if (!signatureOk) return false
 
-  return claimChecksWithExpected(parsed.payload, expectedIssuer, expectedAudience, options)
+  if (!claimChecksWithExpected(parsed.payload, expectedIssuer, expectedAudience, options)) return false
+  return { sub: parsed.payload.sub }
 }
 
-async function verifyOIDCJWT(token: string, context: AuthObserveContext) {
+async function verifyOIDCJWT(token: string, context: AuthObserveContext): Promise<VerifiedToken | false> {
   const issuer = Env.get("OPENCODE_COMPAT_OIDC_ISSUER")
   if (!issuer) return false
 
@@ -495,15 +510,16 @@ async function verifyOIDCMultiIssuerJWT(token: string, context: AuthObserveConte
   const matched = parsedConfig.issuers.get(normalizeIssuer(issuerClaim))
   if (!matched) return { ok: false, issuerMatched: false }
 
-  const ok = await verifyOIDCJWTForIssuer(parsed, matched.issuer, matched.audience, context, {
+  const result = await verifyOIDCJWTForIssuer(parsed, matched.issuer, matched.audience, context, {
     normalizeIssuerMatch: true,
   })
-  return { ok, issuerMatched: true }
+  return { ok: !!result, issuerMatched: true }
 }
 
 type IntrospectionCacheEntry = {
   expiresAt: number
   allowed: boolean
+  sub?: string
   verifiedAt?: number
   expMs?: number
 }
@@ -698,15 +714,17 @@ function verifyIntrospectionClaims(payload: IntrospectionResponse) {
   return true
 }
 
-async function verifyIntrospectionToken(token: string, context: AuthObserveContext) {
+async function verifyIntrospectionToken(token: string, context: AuthObserveContext): Promise<VerifiedToken | false> {
   if (!introspectionEnabled()) return false
   const key = introspectionCacheTokenKey(token)
   const now = Date.now()
   const cached = introspectionCache.get(key)
-  if (cached && cached.expiresAt > now) return cached.allowed
+  if (cached && cached.expiresAt > now) return cached.allowed ? { sub: cached.sub } : false
 
   const staleWhileErrorMs = introspectionStaleWhileErrorMs()
   const useStaleAllow = () => canUseStaleIntrospectionAllow({ now: Date.now(), cached, staleWhileErrorMs })
+  // On stale-allow paths, return the cached sub if we have one
+  const staleResult = (): VerifiedToken => ({ sub: cached?.sub })
 
   const endpoint = Env.get("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL")!
   const clientId = Env.get("OPENCODE_COMPAT_OAUTH_CLIENT_ID")!
@@ -730,7 +748,7 @@ async function verifyIntrospectionToken(token: string, context: AuthObserveConte
   } else if (authMethod === "bearer_client_credentials") {
     const bearerTokenResult = await loadIntrospectionBearerToken(endpointUrl, clientId, clientSecret, timeoutMs)
     if (bearerTokenResult.kind !== "ok") {
-      if (bearerTokenResult.kind === "outage" && useStaleAllow()) return true
+      if (bearerTokenResult.kind === "outage" && useStaleAllow()) return staleResult()
       introspectionCacheSet(key, { expiresAt: now + JWKS_ERROR_TTL_MS, allowed: false })
       return false
     }
@@ -748,7 +766,7 @@ async function verifyIntrospectionToken(token: string, context: AuthObserveConte
       signal: AbortSignal.timeout(timeoutMs),
     })
     if (!response.ok) {
-      if (response.status >= 500 && useStaleAllow()) return true
+      if (response.status >= 500 && useStaleAllow()) return staleResult()
       introspectionCacheSet(key, { expiresAt: now + JWKS_ERROR_TTL_MS, allowed: false })
       return false
     }
@@ -761,19 +779,20 @@ async function verifyIntrospectionToken(token: string, context: AuthObserveConte
       return false
     }
 
+    const sub = typeof payload.sub === "string" ? payload.sub : undefined
     const exp = typeof payload.exp === "number" ? payload.exp * 1000 : undefined
     const successExpiry = exp ? Math.min(exp, now + INTROSPECTION_SUCCESS_TTL_MS) : now + INTROSPECTION_SUCCESS_TTL_MS
-    introspectionCacheSet(key, { expiresAt: successExpiry, allowed: true, verifiedAt: now, expMs: exp })
-    return true
+    introspectionCacheSet(key, { expiresAt: successExpiry, allowed: true, sub, verifiedAt: now, expMs: exp })
+    return { sub }
   } catch {
     verifierWarn("oauth2", "oauth_introspection_error", context)
-    if (useStaleAllow()) return true
+    if (useStaleAllow()) return staleResult()
     introspectionCacheSet(key, { expiresAt: now + JWKS_ERROR_TTL_MS, allowed: false })
     return false
   }
 }
 
-async function verifyJWT(token: string, context: AuthObserveContext) {
+async function verifyJWT(token: string, context: AuthObserveContext): Promise<VerifiedToken | false> {
   const parsed = parseJWT(token)
   if (!parsed) return false
   if (parsed.header.alg === "none") return false
@@ -793,7 +812,7 @@ export async function verifyBearerForStrategy(
   strategy: StrictBearerStrategy,
   token: string,
   context: AuthObserveContext = { surface: "server", route: "other", source: "centralized" },
-) {
+): Promise<VerifiedToken | false> {
   try {
     if (strategy === "jwt") return verifyJWT(token, context)
     if (strategy === "oidc") return verifyOIDCJWT(token, context)
@@ -820,7 +839,7 @@ function allowJwtFallbackToIntrospection(multiOIDCMode: boolean) {
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on"
 }
 
-async function verifyBearerToken(token: string, context: AuthObserveContext) {
+async function verifyBearerToken(token: string, context: AuthObserveContext): Promise<boolean> {
   const multiOIDCConfigured = Env.get("OPENCODE_COMPAT_OIDC_ISSUERS_JSON") !== undefined
   const oidcEnabled = !!Env.get("OPENCODE_COMPAT_OIDC_ISSUER") || multiOIDCConfigured
   const jwtEnabled = !!Env.get("OPENCODE_COMPAT_JWT_JWKS_URL")
@@ -833,27 +852,27 @@ async function verifyBearerToken(token: string, context: AuthObserveContext) {
         const multiResult = await verifyOIDCMultiIssuerJWT(token, context)
         if (multiResult.ok) return true
         if (multiResult.issuerMatched && introspectionOn && allowJwtFallbackToIntrospection(true)) {
-          return verifyIntrospectionToken(token, context)
+          return !!(await verifyIntrospectionToken(token, context))
         }
         return false
       }
       if (await verifyOIDCJWT(token, context)) return true
-      if (introspectionOn && allowJwtFallbackToIntrospection(false)) return verifyIntrospectionToken(token, context)
+      if (introspectionOn && allowJwtFallbackToIntrospection(false)) return !!(await verifyIntrospectionToken(token, context))
       return false
     }
     if (jwtEnabled) {
       if (await verifyJWT(token, context)) return true
-      if (introspectionOn && allowJwtFallbackToIntrospection(false)) return verifyIntrospectionToken(token, context)
+      if (introspectionOn && allowJwtFallbackToIntrospection(false)) return !!(await verifyIntrospectionToken(token, context))
       return false
     }
     if (introspectionOn) {
-      return verifyIntrospectionToken(token, context)
+      return !!(await verifyIntrospectionToken(token, context))
     }
     return authorized(token)
   }
 
   if (introspectionOn) {
-    return verifyIntrospectionToken(token, context)
+    return !!(await verifyIntrospectionToken(token, context))
   }
   if (oidcEnabled || jwtEnabled) {
     return false

@@ -809,13 +809,12 @@ export const A2APlugin: Plugin = async () => {
       // jwt, oidc, oauth2
       const token = bearerFromHeaders(headers)
       if (!token) continue
-      const ok = await verifyBearerForStrategy(strategy as StrictBearerStrategy, token, {
+      const result = await verifyBearerForStrategy(strategy as StrictBearerStrategy, token, {
         surface: "a2a",
         route: `a2a.${agentId}` as any,
         source: "centralized",
       })
-      // TODO: extract sub/principal from verified JWT claims for richer identity
-      if (ok) return { ok: true, strategy: strategy as any, principal: `${strategy}:verified` }
+      if (result) return { ok: true, strategy: strategy as any, principal: result.sub ?? `${strategy}:verified` }
     }
     return { ok: false, strategy: "none", principal: "" }
   }
@@ -972,12 +971,12 @@ export const A2APlugin: Plugin = async () => {
       // jwt, oidc, oauth2
       const token = bearerFromHeaders(headers)
       if (!token) continue
-      const ok = await verifyBearerForStrategy(strategy as StrictBearerStrategy, token, {
+      const result = await verifyBearerForStrategy(strategy as StrictBearerStrategy, token, {
         surface: "a2a",
         route: "a2a.discovery" as any,
         source: "centralized",
       })
-      if (ok) return { ok: true, strategy: strategy as any, principal: `${strategy}:verified` }
+      if (result) return { ok: true, strategy: strategy as any, principal: result.sub ?? `${strategy}:verified` }
     }
     return undefined
   }
