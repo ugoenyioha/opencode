@@ -82,6 +82,7 @@ const startEventStream = (directory: string) => {
       try {
         for await (const event of events.stream) {
           Rpc.emit("event", event as Event)
+          if ((event as Event).type === "server.instance.disposed") break
         }
       } catch (error) {
         if (signal.aborted) break

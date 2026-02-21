@@ -42,7 +42,14 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
       // Batch all event emissions so all store updates result in a single render
       batch(() => {
         for (const event of events) {
-          emitter.emit(event.type, event)
+          try {
+            emitter.emit(event.type, event)
+          } catch (error) {
+            console.error("failed to emit tui event", {
+              type: event.type,
+              error: error instanceof Error ? error.message : error,
+            })
+          }
         }
       })
     }

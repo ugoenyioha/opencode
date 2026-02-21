@@ -212,399 +212,408 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
 
     sdk.event.listen((e) => {
       const event = e.details
-      switch (event.type) {
-        case "server.instance.disposed":
-          bootstrap()
-          break
-        case "permission.replied": {
-          const requests = store.permission[event.properties.sessionID]
-          if (!requests) break
-          const match = Binary.search(requests, event.properties.requestID, (r) => r.id)
-          if (!match.found) break
-          setStore(
-            "permission",
-            event.properties.sessionID,
-            produce((draft) => {
-              draft.splice(match.index, 1)
-            }),
-          )
-          break
-        }
-
-        case "permission.asked": {
-          const request = event.properties
-          const requests = store.permission[request.sessionID]
-          if (!requests) {
-            setStore("permission", request.sessionID, [request])
+      try {
+        switch (event.type) {
+          case "server.instance.disposed":
+            bootstrap()
             break
-          }
-          const match = Binary.search(requests, request.id, (r) => r.id)
-          if (match.found) {
-            setStore("permission", request.sessionID, match.index, reconcile(request))
-            break
-          }
-          setStore(
-            "permission",
-            request.sessionID,
-            produce((draft) => {
-              draft.splice(match.index, 0, request)
-            }),
-          )
-          break
-        }
-
-        case "question.replied":
-        case "question.rejected": {
-          const requests = store.question[event.properties.sessionID]
-          if (!requests) break
-          const match = Binary.search(requests, event.properties.requestID, (r) => r.id)
-          if (!match.found) break
-          setStore(
-            "question",
-            event.properties.sessionID,
-            produce((draft) => {
-              draft.splice(match.index, 1)
-            }),
-          )
-          break
-        }
-
-        case "question.asked": {
-          const request = event.properties
-          const requests = store.question[request.sessionID]
-          if (!requests) {
-            setStore("question", request.sessionID, [request])
-            break
-          }
-          const match = Binary.search(requests, request.id, (r) => r.id)
-          if (match.found) {
-            setStore("question", request.sessionID, match.index, reconcile(request))
-            break
-          }
-          setStore(
-            "question",
-            request.sessionID,
-            produce((draft) => {
-              draft.splice(match.index, 0, request)
-            }),
-          )
-          break
-        }
-
-        case "todo.updated":
-          setStore("todo", event.properties.sessionID, event.properties.todos)
-          break
-
-        case "session.diff":
-          setStore("session_diff", event.properties.sessionID, event.properties.diff)
-          break
-
-        case "session.deleted": {
-          const id = event.properties.info.id
-          const result = Binary.search(store.session, id, (s) => s.id)
-          if (result.found) {
-            const messages = store.message[id]
+          case "permission.replied": {
+            const requests = store.permission[event.properties.sessionID]
+            if (!requests) break
+            const match = Binary.search(requests, event.properties.requestID, (r) => r.id)
+            if (!match.found) break
             setStore(
-              produce((draft) => {
-                draft.session.splice(result.index, 1)
-                if (messages) {
-                  for (const msg of messages) {
-                    if (msg?.id) delete draft.part[msg.id]
-                  }
-                }
-                delete draft.message[id]
-                delete draft.session_diff[id]
-                delete draft.todo[id]
-                delete draft.session_status[id]
-                delete draft.permission[id]
-                delete draft.question[id]
-                delete draft.team[id]
-              }),
-            )
-            fullSyncedSessions.delete(id)
-          }
-          break
-        }
-        case "session.updated": {
-          const result = Binary.search(store.session, event.properties.info.id, (s) => s.id)
-          if (result.found) {
-            setStore("session", result.index, reconcile(event.properties.info))
-            break
-          }
-          setStore(
-            "session",
-            produce((draft) => {
-              draft.splice(result.index, 0, event.properties.info)
-            }),
-          )
-          break
-        }
-
-        case "session.status": {
-          setStore("session_status", event.properties.sessionID, event.properties.status)
-          break
-        }
-
-        case "message.updated": {
-          const messages = store.message[event.properties.info.sessionID]
-          if (!messages) {
-            setStore("message", event.properties.info.sessionID, [event.properties.info])
-            break
-          }
-          const result = Binary.search(messages, event.properties.info.id, (m) => m.id)
-          if (result.found) {
-            setStore("message", event.properties.info.sessionID, result.index, reconcile(event.properties.info))
-            break
-          }
-          setStore(
-            "message",
-            event.properties.info.sessionID,
-            produce((draft) => {
-              draft.splice(result.index, 0, event.properties.info)
-            }),
-          )
-          const updated = store.message[event.properties.info.sessionID]
-          if (updated.length > 100) {
-            const oldest = updated[0]
-            batch(() => {
-              setStore(
-                "message",
-                event.properties.info.sessionID,
-                produce((draft) => {
-                  draft.shift()
-                }),
-              )
-              setStore(
-                "part",
-                produce((draft) => {
-                  delete draft[oldest.id]
-                }),
-              )
-            })
-          }
-          break
-        }
-        case "message.removed": {
-          const messages = store.message[event.properties.sessionID]
-          const result = Binary.search(messages, event.properties.messageID, (m) => m.id)
-          if (result.found) {
-            setStore(
-              "message",
+              "permission",
               event.properties.sessionID,
               produce((draft) => {
-                draft.splice(result.index, 1)
+                draft.splice(match.index, 1)
               }),
             )
-          }
-          break
-        }
-        case "message.part.updated": {
-          const parts = store.part[event.properties.part.messageID]
-          if (!parts) {
-            setStore("part", event.properties.part.messageID, [event.properties.part])
             break
           }
-          const result = Binary.search(parts, event.properties.part.id, (p) => p.id)
-          if (result.found) {
-            setStore("part", event.properties.part.messageID, result.index, reconcile(event.properties.part))
+
+          case "permission.asked": {
+            const request = event.properties
+            const requests = store.permission[request.sessionID]
+            if (!requests) {
+              setStore("permission", request.sessionID, [request])
+              break
+            }
+            const match = Binary.search(requests, request.id, (r) => r.id)
+            if (match.found) {
+              setStore("permission", request.sessionID, match.index, reconcile(request))
+              break
+            }
+            setStore(
+              "permission",
+              request.sessionID,
+              produce((draft) => {
+                draft.splice(match.index, 0, request)
+              }),
+            )
             break
           }
-          setStore(
-            "part",
-            event.properties.part.messageID,
-            produce((draft) => {
-              draft.splice(result.index, 0, event.properties.part)
-            }),
-          )
-          break
-        }
 
-        case "message.part.delta": {
-          const parts = store.part[event.properties.messageID]
-          if (!parts) break
-          const result = Binary.search(parts, event.properties.partID, (p) => p.id)
-          if (!result.found) break
-          setStore(
-            "part",
-            event.properties.messageID,
-            produce((draft) => {
-              const part = draft[result.index]
-              const field = event.properties.field as keyof typeof part
-              const existing = part[field] as string | undefined
-              ;(part[field] as string) = (existing ?? "") + event.properties.delta
-            }),
-          )
-          break
-        }
+          case "question.replied":
+          case "question.rejected": {
+            const requests = store.question[event.properties.sessionID]
+            if (!requests) break
+            const match = Binary.search(requests, event.properties.requestID, (r) => r.id)
+            if (!match.found) break
+            setStore(
+              "question",
+              event.properties.sessionID,
+              produce((draft) => {
+                draft.splice(match.index, 1)
+              }),
+            )
+            break
+          }
 
-        case "message.part.removed": {
-          const parts = store.part[event.properties.messageID]
-          const result = Binary.search(parts, event.properties.partID, (p) => p.id)
-          if (result.found)
+          case "question.asked": {
+            const request = event.properties
+            const requests = store.question[request.sessionID]
+            if (!requests) {
+              setStore("question", request.sessionID, [request])
+              break
+            }
+            const match = Binary.search(requests, request.id, (r) => r.id)
+            if (match.found) {
+              setStore("question", request.sessionID, match.index, reconcile(request))
+              break
+            }
+            setStore(
+              "question",
+              request.sessionID,
+              produce((draft) => {
+                draft.splice(match.index, 0, request)
+              }),
+            )
+            break
+          }
+
+          case "todo.updated":
+            setStore("todo", event.properties.sessionID, event.properties.todos)
+            break
+
+          case "session.diff":
+            setStore("session_diff", event.properties.sessionID, event.properties.diff)
+            break
+
+          case "session.deleted": {
+            const id = event.properties.info.id
+            const result = Binary.search(store.session, id, (s) => s.id)
+            if (result.found) {
+              const messages = store.message[id]
+              setStore(
+                produce((draft) => {
+                  draft.session.splice(result.index, 1)
+                  if (messages) {
+                    for (const msg of messages) {
+                      if (msg?.id) delete draft.part[msg.id]
+                    }
+                  }
+                  delete draft.message[id]
+                  delete draft.session_diff[id]
+                  delete draft.todo[id]
+                  delete draft.session_status[id]
+                  delete draft.permission[id]
+                  delete draft.question[id]
+                  delete draft.team[id]
+                }),
+              )
+              fullSyncedSessions.delete(id)
+            }
+            break
+          }
+          case "session.updated": {
+            const result = Binary.search(store.session, event.properties.info.id, (s) => s.id)
+            if (result.found) {
+              setStore("session", result.index, reconcile(event.properties.info))
+              break
+            }
+            setStore(
+              "session",
+              produce((draft) => {
+                draft.splice(result.index, 0, event.properties.info)
+              }),
+            )
+            break
+          }
+
+          case "session.status": {
+            setStore("session_status", event.properties.sessionID, event.properties.status)
+            break
+          }
+
+          case "message.updated": {
+            const messages = store.message[event.properties.info.sessionID]
+            if (!messages) {
+              setStore("message", event.properties.info.sessionID, [event.properties.info])
+              break
+            }
+            const result = Binary.search(messages, event.properties.info.id, (m) => m.id)
+            if (result.found) {
+              setStore("message", event.properties.info.sessionID, result.index, reconcile(event.properties.info))
+              break
+            }
+            setStore(
+              "message",
+              event.properties.info.sessionID,
+              produce((draft) => {
+                draft.splice(result.index, 0, event.properties.info)
+              }),
+            )
+            const updated = store.message[event.properties.info.sessionID]
+            if (updated.length > 100) {
+              const oldest = updated[0]
+              batch(() => {
+                setStore(
+                  "message",
+                  event.properties.info.sessionID,
+                  produce((draft) => {
+                    draft.shift()
+                  }),
+                )
+                setStore(
+                  "part",
+                  produce((draft) => {
+                    delete draft[oldest.id]
+                  }),
+                )
+              })
+            }
+            break
+          }
+          case "message.removed": {
+            const messages = store.message[event.properties.sessionID]
+            if (!messages) break
+            const result = Binary.search(messages, event.properties.messageID, (m) => m.id)
+            if (result.found) {
+              setStore(
+                "message",
+                event.properties.sessionID,
+                produce((draft) => {
+                  draft.splice(result.index, 1)
+                }),
+              )
+            }
+            break
+          }
+          case "message.part.updated": {
+            const parts = store.part[event.properties.part.messageID]
+            if (!parts) {
+              setStore("part", event.properties.part.messageID, [event.properties.part])
+              break
+            }
+            const result = Binary.search(parts, event.properties.part.id, (p) => p.id)
+            if (result.found) {
+              setStore("part", event.properties.part.messageID, result.index, reconcile(event.properties.part))
+              break
+            }
+            setStore(
+              "part",
+              event.properties.part.messageID,
+              produce((draft) => {
+                draft.splice(result.index, 0, event.properties.part)
+              }),
+            )
+            break
+          }
+
+          case "message.part.delta": {
+            const parts = store.part[event.properties.messageID]
+            if (!parts) break
+            const result = Binary.search(parts, event.properties.partID, (p) => p.id)
+            if (!result.found) break
             setStore(
               "part",
               event.properties.messageID,
               produce((draft) => {
-                draft.splice(result.index, 1)
+                const part = draft[result.index]
+                const field = event.properties.field as keyof typeof part
+                const existing = part[field] as string | undefined
+                ;(part[field] as string) = (existing ?? "") + event.properties.delta
               }),
             )
-          break
-        }
+            break
+          }
 
-        case "lsp.updated": {
-          sdk.client.lsp.status().then((x) => setStore("lsp", x.data!))
-          break
-        }
-
-        case "vcs.branch.updated": {
-          setStore("vcs", { branch: event.properties.branch })
-          break
-        }
-
-        // ---------- Custom events (not in typed Event union) ----------
-        default: {
-          const raw = event as any
-
-          // Team events arrive as raw bus events with type "team.*"
-          if (typeof raw.type !== "string" || !raw.type.startsWith("team.")) break
-
-          switch (raw.type) {
-            case "team.created": {
-              const team = raw.properties.team
-              setStore("team", team.leadSessionID, {
-                teamName: team.name,
-                role: "lead",
-                delegate: team.delegate,
-                members: team.members ?? [],
-                tasks: [],
-              })
-              break
-            }
-            case "team.member.spawned": {
-              const { teamName, member } = raw.properties
-              // Update lead's entry
-              for (const [sid, entry] of Object.entries(store.team)) {
-                const e = entry as any
-                if (e?.teamName === teamName) {
-                  setStore("team", sid, "members", (prev: any[]) => [...(prev ?? []), member])
-                }
-              }
-              // Add member's own entry
-              setStore("team", member.sessionID, {
-                teamName,
-                role: "member",
-                memberName: member.name,
-                members: [], // members don't track other members directly
-                tasks: [],
-              })
-              break
-            }
-            case "team.member.status": {
-              const { teamName, memberName, status } = raw.properties
-              for (const [sid, entry] of Object.entries(store.team)) {
-                const e = entry as any
-                if (e?.teamName === teamName && e?.members) {
-                  const idx = e.members.findIndex((m: any) => m.name === memberName)
-                  if (idx >= 0) {
-                    setStore("team", sid, "members", idx, "status", status)
-                  }
-                }
-              }
-              break
-            }
-            case "team.member.execution": {
-              const { teamName, memberName, status } = raw.properties
-              for (const [sid, entry] of Object.entries(store.team)) {
-                const e = entry as any
-                if (e?.teamName === teamName && e?.members) {
-                  const idx = e.members.findIndex((m: any) => m.name === memberName)
-                  if (idx >= 0) {
-                    setStore("team", sid, "members", idx, "execution_status", status)
-                  }
-                }
-              }
-              break
-            }
-            case "team.task.updated": {
-              const { teamName, tasks: newTasks } = raw.properties
-              for (const [sid, entry] of Object.entries(store.team)) {
-                const e = entry as any
-                if (e?.teamName === teamName) {
-                  setStore("team", sid, "tasks", reconcile(newTasks))
-                }
-              }
-              break
-            }
-            case "team.task.claimed": {
-              const { teamName, taskId, memberName } = raw.properties
-              for (const [sid, entry] of Object.entries(store.team)) {
-                const e = entry as any
-                if (e?.teamName === teamName && e?.tasks) {
-                  const idx = e.tasks.findIndex((t: any) => t.id === taskId)
-                  if (idx >= 0) {
-                    setStore("team", sid, "tasks", idx, "status", "in_progress")
-                    setStore("team", sid, "tasks", idx, "assignee", memberName)
-                  }
-                }
-              }
-              break
-            }
-            case "team.task.completed": {
-              const { teamName, task } = raw.properties
-              for (const [sid, entry] of Object.entries(store.team)) {
-                const e = entry as any
-                if (e?.teamName !== teamName || !e?.tasks) continue
-                setStore("team", sid, "tasks", mergeCompletedTask(e.tasks, task))
-              }
-              break
-            }
-            case "team.teammate.idle": {
-              const { teamName, memberName } = raw.properties
-              for (const [sid, entry] of Object.entries(store.team)) {
-                const e = entry as any
-                if (e?.teamName !== teamName || !e?.members) continue
-                setStore("team", sid, "members", applyTeammateIdle(e.members, memberName))
-              }
-              break
-            }
-            case "team.plan.approval": {
-              const { teamName, memberName, approved } = raw.properties
-              for (const [sid, entry] of Object.entries(store.team)) {
-                const e = entry as any
-                if (e?.teamName !== teamName || !e?.members) continue
-                const idx = e.members.findIndex((m: any) => m.name === memberName)
-                if (idx < 0) continue
-                setStore("team", sid, "members", idx, "planApproval", approved ? "approved" : "rejected")
-              }
-              break
-            }
-            case "team.cleaned": {
-              const { teamName } = raw.properties
+          case "message.part.removed": {
+            const parts = store.part[event.properties.messageID]
+            if (!parts) break
+            const result = Binary.search(parts, event.properties.partID, (p) => p.id)
+            if (result.found)
               setStore(
-                "team",
-                produce((draft: any) => {
-                  for (const [sid, entry] of Object.entries(draft)) {
-                    if ((entry as any)?.teamName === teamName) {
-                      delete draft[sid]
-                    }
-                  }
+                "part",
+                event.properties.messageID,
+                produce((draft) => {
+                  draft.splice(result.index, 1)
                 }),
               )
-              break
-            }
+            break
           }
 
-          const teamName =
-            typeof raw.properties?.teamName === "string"
-              ? raw.properties.teamName
-              : typeof raw.properties?.team?.name === "string"
-                ? raw.properties.team.name
-                : undefined
-          if (teamName && shouldScheduleTeamRefresh(raw.type)) {
-            scheduleTeamRefresh(teamName)
+          case "lsp.updated": {
+            sdk.client.lsp.status().then((x) => setStore("lsp", x.data!))
+            break
           }
-          break
+
+          case "vcs.branch.updated": {
+            setStore("vcs", { branch: event.properties.branch })
+            break
+          }
+
+          // ---------- Custom events (not in typed Event union) ----------
+          default: {
+            const raw = event as any
+
+            // Team events arrive as raw bus events with type "team.*"
+            if (typeof raw.type !== "string" || !raw.type.startsWith("team.")) break
+
+            switch (raw.type) {
+              case "team.created": {
+                const team = raw.properties.team
+                setStore("team", team.leadSessionID, {
+                  teamName: team.name,
+                  role: "lead",
+                  delegate: team.delegate,
+                  members: team.members ?? [],
+                  tasks: [],
+                })
+                break
+              }
+              case "team.member.spawned": {
+                const { teamName, member } = raw.properties
+                // Update lead's entry
+                for (const [sid, entry] of Object.entries(store.team)) {
+                  const e = entry as any
+                  if (e?.teamName === teamName) {
+                    setStore("team", sid, "members", (prev: any[]) => [...(prev ?? []), member])
+                  }
+                }
+                // Add member's own entry
+                setStore("team", member.sessionID, {
+                  teamName,
+                  role: "member",
+                  memberName: member.name,
+                  members: [], // members don't track other members directly
+                  tasks: [],
+                })
+                break
+              }
+              case "team.member.status": {
+                const { teamName, memberName, status } = raw.properties
+                for (const [sid, entry] of Object.entries(store.team)) {
+                  const e = entry as any
+                  if (e?.teamName === teamName && e?.members) {
+                    const idx = e.members.findIndex((m: any) => m.name === memberName)
+                    if (idx >= 0) {
+                      setStore("team", sid, "members", idx, "status", status)
+                    }
+                  }
+                }
+                break
+              }
+              case "team.member.execution": {
+                const { teamName, memberName, status } = raw.properties
+                for (const [sid, entry] of Object.entries(store.team)) {
+                  const e = entry as any
+                  if (e?.teamName === teamName && e?.members) {
+                    const idx = e.members.findIndex((m: any) => m.name === memberName)
+                    if (idx >= 0) {
+                      setStore("team", sid, "members", idx, "execution_status", status)
+                    }
+                  }
+                }
+                break
+              }
+              case "team.task.updated": {
+                const { teamName, tasks: newTasks } = raw.properties
+                for (const [sid, entry] of Object.entries(store.team)) {
+                  const e = entry as any
+                  if (e?.teamName === teamName) {
+                    setStore("team", sid, "tasks", reconcile(newTasks))
+                  }
+                }
+                break
+              }
+              case "team.task.claimed": {
+                const { teamName, taskId, memberName } = raw.properties
+                for (const [sid, entry] of Object.entries(store.team)) {
+                  const e = entry as any
+                  if (e?.teamName === teamName && e?.tasks) {
+                    const idx = e.tasks.findIndex((t: any) => t.id === taskId)
+                    if (idx >= 0) {
+                      setStore("team", sid, "tasks", idx, "status", "in_progress")
+                      setStore("team", sid, "tasks", idx, "assignee", memberName)
+                    }
+                  }
+                }
+                break
+              }
+              case "team.task.completed": {
+                const { teamName, task } = raw.properties
+                for (const [sid, entry] of Object.entries(store.team)) {
+                  const e = entry as any
+                  if (e?.teamName !== teamName || !e?.tasks) continue
+                  setStore("team", sid, "tasks", mergeCompletedTask(e.tasks, task))
+                }
+                break
+              }
+              case "team.teammate.idle": {
+                const { teamName, memberName } = raw.properties
+                for (const [sid, entry] of Object.entries(store.team)) {
+                  const e = entry as any
+                  if (e?.teamName !== teamName || !e?.members) continue
+                  setStore("team", sid, "members", applyTeammateIdle(e.members, memberName))
+                }
+                break
+              }
+              case "team.plan.approval": {
+                const { teamName, memberName, approved } = raw.properties
+                for (const [sid, entry] of Object.entries(store.team)) {
+                  const e = entry as any
+                  if (e?.teamName !== teamName || !e?.members) continue
+                  const idx = e.members.findIndex((m: any) => m.name === memberName)
+                  if (idx < 0) continue
+                  setStore("team", sid, "members", idx, "planApproval", approved ? "approved" : "rejected")
+                }
+                break
+              }
+              case "team.cleaned": {
+                const { teamName } = raw.properties
+                setStore(
+                  "team",
+                  produce((draft: any) => {
+                    for (const [sid, entry] of Object.entries(draft)) {
+                      if ((entry as any)?.teamName === teamName) {
+                        delete draft[sid]
+                      }
+                    }
+                  }),
+                )
+                break
+              }
+            }
+
+            const teamName =
+              typeof raw.properties?.teamName === "string"
+                ? raw.properties.teamName
+                : typeof raw.properties?.team?.name === "string"
+                  ? raw.properties.team.name
+                  : undefined
+            if (teamName && shouldScheduleTeamRefresh(raw.type)) {
+              scheduleTeamRefresh(teamName)
+            }
+            break
+          }
         }
+      } catch (error) {
+        Log.Default.warn("tui sync event handling failed", {
+          type: (event as any)?.type,
+          error: error instanceof Error ? error.message : String(error),
+        })
       }
     })
 
