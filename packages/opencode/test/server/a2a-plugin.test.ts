@@ -618,14 +618,17 @@ Agent prompt.
       fn: async () => {
         const app = Server.App()
 
-        // Standard path with multiple agents should return listing
+        // Standard path with multiple agents returns first agent's card (A2A spec §8.1)
         const response = await app.request("/.well-known/agent-card.json", {
           headers: { "x-opencode-directory": tmp.path },
         })
         expect(response.status).toBe(200)
         const body = (await response.json()) as any
-        expect(body.message).toContain("Multiple A2A agents")
-        expect(body.agents).toHaveLength(2)
+        // Must be a valid AgentCard (not a listing), per A2A spec §8.1
+        expect(body.name).toBeDefined()
+        expect(body.supportedInterfaces).toBeDefined()
+        expect(body.capabilities).toBeDefined()
+        expect(body.skills).toBeDefined()
 
         // Agents listing should work
         const listResponse = await app.request("/.well-known/agents.json", {

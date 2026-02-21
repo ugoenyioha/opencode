@@ -743,6 +743,12 @@ export const A2APlugin: Plugin = async () => {
   // Server-level ext_authz config (per-agent can override)
   const serverExtAuthz = (a2a as any).authz?.extAuthz as import("../server/ext-authz").ExtAuthzConfig | undefined
 
+  // Eagerly load the ext_authz module once at init time if configured,
+  // so hot-path handlers don't pay the dynamic import cost per request.
+  const extAuthzModule = serverExtAuthz
+    ? await import("../server/ext-authz")
+    : undefined
+
   const agents = await discoverA2AAgents(serverConfig)
   const byID = new Map(agents.map((agent) => [agent.id, agent]))
 
@@ -856,12 +862,14 @@ export const A2APlugin: Plugin = async () => {
     const extAuthzConfig = await resolveExtAuthzConfig(agentId)
     if (extAuthzConfig) {
       try {
-        const { checkAuthorization, requestToExtAuthzContext } = await import("../server/ext-authz")
-        const context = requestToExtAuthzContext(req, {
+        // Use eagerly-loaded module if available, fall back to dynamic import
+        // (per-agent config may enable ext_authz even when server-level is off)
+        const mod = extAuthzModule ?? await import("../server/ext-authz")
+        const context = mod.requestToExtAuthzContext(req, {
           agentId,
           authStrategy: authn.strategy,
         })
-        const decision = await checkAuthorization(extAuthzConfig, context, authn)
+        const decision = await mod.checkAuthorization(extAuthzConfig, context, authn)
 
         if (!decision.allowed) {
           log.warn("ext_authz denied request", {
@@ -923,6 +931,182 @@ export const A2APlugin: Plugin = async () => {
   /** Get the authentication result for a request (populated by agentHandler). */
   function getAuthnResult(req: Request): AuthnResult | undefined {
     return _authnResults.get(req)
+  }
+
+  /**
+   * Attempt to authenticate the caller without requiring auth.
+   * Used by discovery routes: if credentials are present and valid, return the
+   * AuthnResult; if no credentials or invalid, return undefined (not an error).
+   * Uses the server-level auth strategies since discovery is not per-agent.
+   */
+  async function tryAuthenticate(headers: Headers): Promise<AuthnResult | undefined> {
+    const strategies = asArray(serverConfig.auth as AuthStrategy | AuthStrategy[] | undefined)
+    if (strategies.length === 0) return undefined
+
+    for (const strategy of strategies) {
+      if (strategy === "api-key") {
+        if (validAPIKey(headers)) return { ok: true, strategy: "api-key", principal: "api-key" }
+        continue
+      }
+      if (strategy === "plugin") continue
+
+      if (strategy === "spiffe") {
+        const token = bearerFromHeaders(headers)
+        if (!token) continue
+        try {
+          const audience = process.env["OPENCODE_SPIFFE_AUDIENCE"]
+          if (!audience) continue
+          const allowedIds = process.env["OPENCODE_SPIFFE_ALLOWED_IDS"]?.split(",").map((s) => s.trim()).filter(Boolean)
+          const { verifySPIFFE } = await import("../server/spiffe")
+          const spiffeId = await verifySPIFFE(token, audience, allowedIds)
+          if (spiffeId) return { ok: true, strategy: "spiffe", principal: spiffeId }
+        } catch (error) {
+          log.debug("tryAuthenticate: spiffe verification failed", {
+            error: error instanceof Error ? error.message : String(error),
+          })
+          continue
+        }
+        continue
+      }
+
+      // jwt, oidc, oauth2
+      const token = bearerFromHeaders(headers)
+      if (!token) continue
+      const ok = await verifyBearerForStrategy(strategy as StrictBearerStrategy, token, {
+        surface: "a2a",
+        route: "a2a.discovery" as any,
+        source: "centralized",
+      })
+      if (ok) return { ok: true, strategy: strategy as any, principal: `${strategy}:verified` }
+    }
+    return undefined
+  }
+
+  /**
+   * Filter agents by ext_authz "view" permission.
+   *
+   * If ext_authz is not configured, all agents are visible.
+   * If ext_authz is configured but the caller is unauthenticated, no agents are
+   * visible (fail-closed — we cannot determine the caller's identity).
+   * If ext_authz is configured and the caller is authenticated, check the "view"
+   * permission for each agent and return only the visible ones.
+   *
+   * The ext_authz call uses skill="view" in context_extensions, which the adapter
+   * maps to the SpiceDB `view` permission (backed by the `viewer` relation).
+   */
+  /** Aggregate timeout for all ext_authz view checks in a single discovery request. */
+  const DISCOVERY_AUTHZ_TIMEOUT_MS = 10_000
+
+  async function filterVisibleAgents(req: Request): Promise<A2AAgent[]> {
+    // If no ext_authz configured at server level, all agents visible (backward compat)
+    if (!serverExtAuthz) return agents
+
+    // Try to authenticate the caller (optional — no credentials is not an error)
+    const authn = await tryAuthenticate(req.headers)
+
+    // If ext_authz is configured but caller is unauthenticated, fail-closed: hide all agents
+    if (!authn) {
+      log.debug("discovery: no credentials provided, hiding all agents (ext_authz configured)")
+      return []
+    }
+
+    // Check "view" permission for each agent in parallel, with aggregate timeout
+    try {
+      const mod = extAuthzModule ?? await import("../server/ext-authz")
+
+      type ViewResult = {
+        agent: A2AAgent
+        allowed: boolean
+        error?: string
+        failOpen: boolean
+        latencyMs?: number
+      }
+
+      // Inner promises never reject — errors are captured in the result
+      const checksPromise = Promise.all(
+        agents.map(async (agent): Promise<ViewResult> => {
+          const extAuthzConfig = await resolveExtAuthzConfig(agent.id) ?? serverExtAuthz!
+          const failOpen = extAuthzConfig.failOpen ?? false
+          try {
+            const context = mod.requestToExtAuthzContext(req, {
+              agentId: agent.id,
+              skill: "view",
+              authStrategy: authn.strategy,
+            })
+            const decision = await mod.checkAuthorization(extAuthzConfig, context, authn)
+            return { agent, allowed: decision.allowed, latencyMs: decision.latencyMs, failOpen }
+          } catch (err) {
+            return { agent, allowed: failOpen, error: err instanceof Error ? err.message : String(err), failOpen }
+          }
+        }),
+      )
+
+      // Aggregate timeout: if all checks don't complete within the limit, treat as failure
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("discovery authz timeout")), DISCOVERY_AUTHZ_TIMEOUT_MS),
+      )
+
+      const results = await Promise.race([checksPromise, timeoutPromise])
+
+      const visible: A2AAgent[] = []
+      for (const result of results) {
+        if (result.error) {
+          log.warn("discovery: ext_authz check failed for agent", {
+            agentId: result.agent.id,
+            error: result.error,
+            failOpen: result.failOpen,
+            allowed: result.allowed,
+          })
+        }
+        if (result.allowed) {
+          visible.push(result.agent)
+        } else if (!result.error) {
+          log.debug("discovery: agent hidden by ext_authz", {
+            agentId: result.agent.id,
+            principal: authn.principal,
+            latencyMs: result.latencyMs,
+          })
+        }
+      }
+
+      log.debug("discovery: filtered agents", {
+        total: agents.length,
+        visible: visible.length,
+        principal: authn.principal,
+      })
+
+      return visible
+    } catch (error) {
+      // ext_authz module failed to load or aggregate timeout — respect failOpen
+      const message = error instanceof Error ? error.message : String(error)
+      log.error("discovery: ext_authz error, applying failOpen policy", { error: message })
+      return (serverExtAuthz.failOpen ?? false) ? agents : []
+    }
+  }
+
+  /**
+   * Check ext_authz "view" permission for a single agent.
+   * Returns true if visible, false if hidden.
+   */
+  async function canViewAgent(req: Request, agentId: string): Promise<boolean> {
+    const extAuthzConfig = await resolveExtAuthzConfig(agentId) ?? serverExtAuthz
+    if (!extAuthzConfig) return true // No ext_authz → visible
+
+    const authn = await tryAuthenticate(req.headers)
+    if (!authn) return false // ext_authz configured, no creds → hidden
+
+    try {
+      const mod = extAuthzModule ?? await import("../server/ext-authz")
+      const context = mod.requestToExtAuthzContext(req, {
+        agentId,
+        skill: "view",
+        authStrategy: authn.strategy,
+      })
+      const decision = await mod.checkAuthorization(extAuthzConfig, context, authn)
+      return decision.allowed
+    } catch {
+      return extAuthzConfig.failOpen ?? false
+    }
   }
 
   const messageStreamHandler = async (req: Request, params: Record<string, string>) => {
@@ -1023,80 +1207,81 @@ export const A2APlugin: Plugin = async () => {
   }
 
   const routes: RouteDefinition[] = [
-    // Discovery: list all A2A agents (public — no auth required)
+    // Discovery: list A2A agents (authz-filtered when ext_authz is configured)
+    // If ext_authz is configured, only agents the caller has "view" permission on
+    // are returned. If the caller provides no credentials, an empty list is returned
+    // (fail-closed). If ext_authz is not configured, all agents are visible.
     {
       method: "GET",
       path: "/.well-known/agents.json",
       auth: [],
-      handler: async () =>
-        json({
-          agents: agents.map((a) => ({
+      handler: async (req) => {
+        const visible = await filterVisibleAgents(req)
+        return json({
+          agents: visible.map((a) => ({
             id: a.id,
             name: a.name,
             description: a.description,
             cardUrl: `/.well-known/agents/${a.id}/card.json`,
           })),
-        }),
+        })
+      },
     },
 
-    // Discovery: agent card for specific agent (public — no auth required)
+    // Discovery: agent card for specific agent (authz-filtered)
+    // Returns 404 if the agent doesn't exist OR the caller lacks "view" permission.
+    // This prevents information leakage — unauthorized callers cannot distinguish
+    // between "agent exists but I can't see it" and "agent doesn't exist".
     {
       method: "GET",
       path: "/.well-known/agents/:agent/card.json",
       auth: [],
-      handler: async (_req, params) => {
+      handler: async (req, params) => {
         const agentId = params.agent
         const agent = byID.get(agentId)
         if (!agent) return json({ error: { code: "NotFound", message: `Unknown agent: ${agentId}` } }, 404)
+
+        if (!(await canViewAgent(req, agentId))) {
+          // Return 404, not 403, to prevent information leakage
+          return json({ error: { code: "NotFound", message: `Unknown agent: ${agentId}` } }, 404)
+        }
+
         return json(generateAgentCard(agent))
       },
     },
 
-    // Standard A2A discovery: single agent card (public — no auth required)
+    // Standard A2A discovery: single agent card (authz-filtered)
     // Per spec: /.well-known/agent-card.json
     // Also support /.well-known/a2a/agent-card for client compatibility (PR #10452)
     {
       method: "GET",
       path: "/.well-known/agent-card.json",
       auth: [],
-      handler: async () => {
-        if (agents.length === 0) {
+      handler: async (req) => {
+        const visible = await filterVisibleAgents(req)
+        if (visible.length === 0) {
           return json({ error: { code: "NotFound", message: "No A2A agents configured" } }, 404)
         }
-        if (agents.length === 1) {
-          return json(generateAgentCard(agents[0]))
-        }
-        // Multiple agents: return listing with card URLs
-        return json({
-          message: "Multiple A2A agents available. Use /.well-known/agents.json for listing.",
-          agents: agents.map((a) => ({
-            id: a.id,
-            cardUrl: `/.well-known/agents/${a.id}/card.json`,
-          })),
-        })
+        // A2A spec §8.1: this endpoint MUST return an AgentCard.
+        // When multiple agents are visible, return the first one's card.
+        // Clients can use /.well-known/agents.json for the full listing.
+        return json(generateAgentCard(visible[0]))
       },
     },
 
-    // Client compatibility: /.well-known/a2a/agent-card (public — no auth required)
+    // Client compatibility: /.well-known/a2a/agent-card (authz-filtered)
     {
       method: "GET",
       path: "/.well-known/a2a/agent-card",
       auth: [],
-      handler: async () => {
-        if (agents.length === 0) {
+      handler: async (req) => {
+        const visible = await filterVisibleAgents(req)
+        if (visible.length === 0) {
           return json({ error: { code: "NotFound", message: "No A2A agents configured" } }, 404)
         }
-        if (agents.length === 1) {
-          return json(generateAgentCard(agents[0]))
-        }
-        // Multiple agents: return listing with card URLs
-        return json({
-          message: "Multiple A2A agents available. Use /.well-known/agents.json for listing.",
-          agents: agents.map((a) => ({
-            id: a.id,
-            cardUrl: `/.well-known/agents/${a.id}/card.json`,
-          })),
-        })
+        // A2A spec §8.1: this endpoint MUST return an AgentCard.
+        // When multiple agents are visible, return the first one's card.
+        return json(generateAgentCard(visible[0]))
       },
     },
 
