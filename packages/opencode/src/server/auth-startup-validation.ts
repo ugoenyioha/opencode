@@ -7,7 +7,7 @@ export type AuthConfigStartupErrorCode =
   | "AUTH_CONFIG_BOUNDS"
   | "AUTH_CONFIG_UNSUPPORTED_REF"
 
-type StartupStrategy = "api-key" | "plugin" | "jwt" | "oidc" | "oauth2"
+type StartupStrategy = "api-key" | "plugin" | "jwt" | "oidc" | "oauth2" | "spiffe"
 
 type ValidatorContext = {
   config: Config.Info
@@ -16,7 +16,7 @@ type ValidatorContext = {
   hasExternalHttpHook: () => Promise<boolean>
 }
 
-const SUPPORTED_STRATEGIES = new Set<StartupStrategy>(["api-key", "plugin", "jwt", "oidc", "oauth2"])
+const SUPPORTED_STRATEGIES = new Set<StartupStrategy>(["api-key", "plugin", "jwt", "oidc", "oauth2", "spiffe"])
 const SUPPORTED_INTROSPECTION_AUTH_METHODS = new Set([
   "client_secret_basic",
   "client_secret_post",
@@ -482,6 +482,27 @@ export async function validateStartupAuthConfig(context: ValidatorContext) {
       }
       case "oauth2": {
         validateOAuth2Config(context.getEnv)
+        break
+      }
+      case "spiffe": {
+        const endpoint = context.getEnv("SPIFFE_ENDPOINT_SOCKET")
+        if (!endpoint) {
+          fail({
+            code: "AUTH_CONFIG_MISSING",
+            strategy: "spiffe",
+            key: "env.SPIFFE_ENDPOINT_SOCKET",
+            reason: "required",
+          })
+        }
+        const audience = context.getEnv("OPENCODE_SPIFFE_AUDIENCE")
+        if (!audience) {
+          fail({
+            code: "AUTH_CONFIG_MISSING",
+            strategy: "spiffe",
+            key: "env.OPENCODE_SPIFFE_AUDIENCE",
+            reason: "required",
+          })
+        }
         break
       }
     }

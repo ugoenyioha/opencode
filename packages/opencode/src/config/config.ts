@@ -750,6 +750,17 @@ export namespace Config {
             .record(z.string(), A2ASecurityScheme)
             .optional()
             .describe("Security schemes specific to this agent (merged with server-level schemes)"),
+          spiffe: z
+            .object({
+              trustDomain: z.string().optional().describe("SPIFFE trust domain for this agent"),
+              audience: z.string().optional().describe("Override OPENCODE_SPIFFE_AUDIENCE for this agent"),
+              allowedIds: z
+                .array(z.string())
+                .optional()
+                .describe("Allowed SPIFFE ID patterns (glob) for this agent"),
+            })
+            .optional()
+            .describe("SPIFFE-specific configuration for this agent"),
         })
         .optional()
         .describe("A2A-specific configuration (only applies when mode: 'a2a')"),

@@ -1798,4 +1798,509 @@ Public agent.
       },
     })
   })
+
+  describe("SPIFFE JWT-SVID authentication", () => {
+    test("valid JWT-SVID with correct audience", async () => {
+      await using tmp = await tmpdir({
+        init: async (dir) => {
+          const skillDir = path.join(dir, ".opencode", "skills", "test-skill")
+          await fs.mkdir(skillDir, { recursive: true })
+          await Bun.write(
+            path.join(skillDir, "SKILL.md"),
+            `---
+name: test-skill
+description: Test skill
+a2a:
+  expose: true
+---
+Test skill.
+`,
+          )
+
+          const agentDir = path.join(dir, ".opencode", "agents")
+          await fs.mkdir(agentDir, { recursive: true })
+          await Bun.write(
+            path.join(agentDir, "spiffe-agent.md"),
+            `---
+name: spiffe-agent
+description: SPIFFE-protected agent
+mode: a2a
+skills:
+  - test-skill
+a2a:
+  auth: ["spiffe"]
+  spiffe:
+    audience: "test-audience"
+    allowedIds: ["spiffe://trust.domain/workload/*"]
+---
+SPIFFE agent.
+`,
+          )
+
+          await Bun.write(
+            path.join(dir, "opencode.json"),
+            JSON.stringify({
+              $schema: "https://opencode.ai/config.json",
+              server: {
+                a2a: {
+                  enabled: true,
+                  baseUrl: "https://example.test",
+                },
+              },
+            }),
+          )
+        },
+      })
+
+      await Instance.disposeAll()
+      await Instance.provide({
+        directory: tmp.path,
+        init: async () => {
+          Env.set("ANTHROPIC_API_KEY", "test-key")
+        },
+        fn: async () => {
+          const app = Server.App()
+
+          // Mock SPIFFE verification to succeed
+          const spiffeModule = await import("../../src/server/spiffe")
+          const verifySpy = spyOn(spiffeModule, "verifySPIFFE").mockImplementation(
+            async (token: string, audience: string, allowedIds?: string[]) => {
+              if (token === "valid-jwt-svid" && audience === "test-audience") {
+                return true
+              }
+              return false
+            },
+          )
+
+          // Set required env vars
+          process.env["SPIFFE_ENDPOINT_SOCKET"] = "unix:///tmp/spire-agent.sock"
+          process.env["OPENCODE_SPIFFE_AUDIENCE"] = "default-audience"
+
+          try {
+            // First check if agent exists and has correct auth config
+            const cardResponse = await app.request("/.well-known/agents/spiffe-agent/card.json", {
+              headers: { "x-opencode-directory": tmp.path },
+            })
+            expect(cardResponse.status).toBe(200)
+            const card = await cardResponse.json()
+            console.log("Agent card security:", JSON.stringify(card.securityRequirements, null, 2))
+
+            const response = await app.request("/a2a/spiffe-agent/tasks", {
+              method: "GET",
+              headers: {
+                "x-opencode-directory": tmp.path,
+                Authorization: "Bearer valid-jwt-svid",
+              },
+            })
+
+            expect(response.status).toBe(200)
+            expect(verifySpy).toHaveBeenCalledWith("valid-jwt-svid", "test-audience", ["spiffe://trust.domain/workload/*"])
+          } finally {
+            verifySpy.mockRestore()
+            delete process.env["SPIFFE_ENDPOINT_SOCKET"]
+            delete process.env["OPENCODE_SPIFFE_AUDIENCE"]
+          }
+        },
+      })
+    })
+
+    test("valid JWT-SVID with wrong audience fails", async () => {
+      await using tmp = await tmpdir({
+        init: async (dir) => {
+          const skillDir = path.join(dir, ".opencode", "skills", "test-skill")
+          await fs.mkdir(skillDir, { recursive: true })
+          await Bun.write(
+            path.join(skillDir, "SKILL.md"),
+            `---
+name: test-skill
+a2a:
+  expose: true
+---
+Test.
+`,
+          )
+
+          const agentDir = path.join(dir, ".opencode", "agents")
+          await fs.mkdir(agentDir, { recursive: true })
+          await Bun.write(
+            path.join(agentDir, "spiffe-agent.md"),
+            `---
+name: spiffe-agent
+mode: a2a
+skills: [test-skill]
+a2a:
+  auth: ["spiffe"]
+  spiffe:
+    audience: "correct-audience"
+---
+Agent.
+`,
+          )
+
+          await Bun.write(
+            path.join(dir, "opencode.json"),
+            JSON.stringify({
+              server: { a2a: { enabled: true } },
+            }),
+          )
+        },
+      })
+
+      await Instance.disposeAll()
+      await Instance.provide({
+        directory: tmp.path,
+        init: async () => {
+          Env.set("ANTHROPIC_API_KEY", "test-key")
+        },
+        fn: async () => {
+          const app = Server.App()
+
+          const spiffeModule = await import("../../src/server/spiffe")
+          const verifySpy = spyOn(spiffeModule, "verifySPIFFE").mockImplementation(
+            async (token: string, audience: string) => {
+              // Only succeeds with correct audience
+              return audience === "correct-audience" && token === "valid-token"
+            },
+          )
+
+      process.env["SPIFFE_ENDPOINT_SOCKET"] = "unix:///tmp/spire-agent.sock"
+      process.env["OPENCODE_SPIFFE_AUDIENCE"] = "default-audience"
+
+      try {
+        // Token with wrong audience
+        const response = await app.request("/a2a/spiffe-agent/tasks", {
+          method: "GET",
+          headers: {
+            "x-opencode-directory": tmp.path,
+            Authorization: "Bearer wrong-audience-token",
+          },
+        })
+
+        expect(response.status).toBe(401)
+      } finally {
+        verifySpy.mockRestore()
+        delete process.env["SPIFFE_ENDPOINT_SOCKET"]
+        delete process.env["OPENCODE_SPIFFE_AUDIENCE"]
+      }
+        },
+      })
+    })
+
+    test("no bearer token fails", async () => {
+      await using tmp = await tmpdir({
+        init: async (dir) => {
+          const skillDir = path.join(dir, ".opencode", "skills", "test-skill")
+          await fs.mkdir(skillDir, { recursive: true })
+          await Bun.write(
+            path.join(skillDir, "SKILL.md"),
+            `---
+name: test-skill
+a2a:
+  expose: true
+---
+Test.
+`,
+          )
+
+          const agentDir = path.join(dir, ".opencode", "agents")
+          await fs.mkdir(agentDir, { recursive: true })
+          await Bun.write(
+            path.join(agentDir, "spiffe-agent.md"),
+            `---
+name: spiffe-agent
+mode: a2a
+skills: [test-skill]
+a2a:
+  auth: ["spiffe"]
+---
+Agent.
+`,
+          )
+
+          await Bun.write(
+            path.join(dir, "opencode.json"),
+            JSON.stringify({
+              server: { a2a: { enabled: true } },
+            }),
+          )
+        },
+      })
+
+      await Instance.disposeAll()
+      await Instance.provide({
+        directory: tmp.path,
+        init: async () => {
+          Env.set("ANTHROPIC_API_KEY", "test-key")
+        },
+        fn: async () => {
+          const app = Server.App()
+
+          process.env["SPIFFE_ENDPOINT_SOCKET"] = "unix:///tmp/spire-agent.sock"
+          process.env["OPENCODE_SPIFFE_AUDIENCE"] = "test-audience"
+
+          try {
+            const response = await app.request("/a2a/spiffe-agent/tasks", {
+              method: "GET",
+              headers: {
+                "x-opencode-directory": tmp.path,
+                // No Authorization header
+              },
+            })
+
+            expect(response.status).toBe(401)
+          } finally {
+            delete process.env["SPIFFE_ENDPOINT_SOCKET"]
+            delete process.env["OPENCODE_SPIFFE_AUDIENCE"]
+          }
+        },
+      })
+    })
+
+    test("per-agent audience override works", async () => {
+      await using tmp = await tmpdir({
+        init: async (dir) => {
+          const skillDir = path.join(dir, ".opencode", "skills", "test-skill")
+          await fs.mkdir(skillDir, { recursive: true })
+          await Bun.write(
+            path.join(skillDir, "SKILL.md"),
+            `---
+name: test-skill
+a2a:
+  expose: true
+---
+Test.
+`,
+          )
+
+          const agentDir = path.join(dir, ".opencode", "agents")
+          await fs.mkdir(agentDir, { recursive: true })
+          await Bun.write(
+            path.join(agentDir, "spiffe-agent.md"),
+            `---
+name: spiffe-agent
+mode: a2a
+skills: [test-skill]
+a2a:
+  auth: ["spiffe"]
+  spiffe:
+    audience: "agent-specific-audience"
+---
+Agent.
+`,
+          )
+
+          await Bun.write(
+            path.join(dir, "opencode.json"),
+            JSON.stringify({
+              server: { a2a: { enabled: true } },
+            }),
+          )
+        },
+      })
+
+      await Instance.disposeAll()
+      await Instance.provide({
+        directory: tmp.path,
+        init: async () => {
+          Env.set("ANTHROPIC_API_KEY", "test-key")
+        },
+        fn: async () => {
+          const app = Server.App()
+
+          const spiffeModule = await import("../../src/server/spiffe")
+          const verifySpy = spyOn(spiffeModule, "verifySPIFFE").mockImplementation(
+            async (token: string, audience: string) => {
+              return audience === "agent-specific-audience" && token === "valid-token"
+            },
+          )
+
+          process.env["SPIFFE_ENDPOINT_SOCKET"] = "unix:///tmp/spire-agent.sock"
+          process.env["OPENCODE_SPIFFE_AUDIENCE"] = "default-global-audience"
+
+          try {
+            const response = await app.request("/a2a/spiffe-agent/tasks", {
+              method: "GET",
+              headers: {
+                "x-opencode-directory": tmp.path,
+                Authorization: "Bearer valid-token",
+              },
+            })
+
+            expect(response.status).toBe(200)
+            // Verify it used the agent-specific audience, not the global one
+            expect(verifySpy).toHaveBeenCalledWith("valid-token", "agent-specific-audience", undefined)
+          } finally {
+            verifySpy.mockRestore()
+            delete process.env["SPIFFE_ENDPOINT_SOCKET"]
+            delete process.env["OPENCODE_SPIFFE_AUDIENCE"]
+          }
+        },
+      })
+    })
+
+    test("disallowed SPIFFE ID fails", async () => {
+      await using tmp = await tmpdir({
+        init: async (dir) => {
+          const skillDir = path.join(dir, ".opencode", "skills", "test-skill")
+          await fs.mkdir(skillDir, { recursive: true })
+          await Bun.write(
+            path.join(skillDir, "SKILL.md"),
+            `---
+name: test-skill
+a2a:
+  expose: true
+---
+Test.
+`,
+          )
+
+          const agentDir = path.join(dir, ".opencode", "agents")
+          await fs.mkdir(agentDir, { recursive: true })
+          await Bun.write(
+            path.join(agentDir, "spiffe-agent.md"),
+            `---
+name: spiffe-agent
+mode: a2a
+skills: [test-skill]
+a2a:
+  auth: ["spiffe"]
+  spiffe:
+    audience: "test-audience"
+    allowedIds: ["spiffe://trust.domain/allowed/*"]
+---
+Agent.
+`,
+          )
+
+          await Bun.write(
+            path.join(dir, "opencode.json"),
+            JSON.stringify({
+              server: { a2a: { enabled: true } },
+            }),
+          )
+        },
+      })
+
+      await Instance.disposeAll()
+      await Instance.provide({
+        directory: tmp.path,
+        init: async () => {
+          Env.set("ANTHROPIC_API_KEY", "test-key")
+        },
+        fn: async () => {
+          const app = Server.App()
+
+          const spiffeModule = await import("../../src/server/spiffe")
+          const verifySpy = spyOn(spiffeModule, "verifySPIFFE").mockImplementation(
+            async (token: string, audience: string, allowedIds?: string[]) => {
+              // Simulate SPIFFE ID check failure
+              return false
+            },
+          )
+
+          process.env["SPIFFE_ENDPOINT_SOCKET"] = "unix:///tmp/spire-agent.sock"
+          process.env["OPENCODE_SPIFFE_AUDIENCE"] = "default-audience"
+
+          try {
+            const response = await app.request("/a2a/spiffe-agent/tasks", {
+              method: "GET",
+              headers: {
+                "x-opencode-directory": tmp.path,
+                Authorization: "Bearer disallowed-id-token",
+              },
+            })
+
+            expect(response.status).toBe(401)
+            expect(verifySpy).toHaveBeenCalledWith(
+              "disallowed-id-token",
+              "test-audience",
+              ["spiffe://trust.domain/allowed/*"],
+            )
+          } finally {
+            verifySpy.mockRestore()
+            delete process.env["SPIFFE_ENDPOINT_SOCKET"]
+            delete process.env["OPENCODE_SPIFFE_AUDIENCE"]
+          }
+        },
+      })
+    })
+
+    test("SPIRE Agent unavailable fails closed", async () => {
+      await using tmp = await tmpdir({
+        init: async (dir) => {
+          const skillDir = path.join(dir, ".opencode", "skills", "test-skill")
+          await fs.mkdir(skillDir, { recursive: true })
+          await Bun.write(
+            path.join(skillDir, "SKILL.md"),
+            `---
+name: test-skill
+a2a:
+  expose: true
+---
+Test.
+`,
+          )
+
+          const agentDir = path.join(dir, ".opencode", "agents")
+          await fs.mkdir(agentDir, { recursive: true })
+          await Bun.write(
+            path.join(agentDir, "spiffe-agent.md"),
+            `---
+name: spiffe-agent
+mode: a2a
+skills: [test-skill]
+a2a:
+  auth: ["spiffe"]
+---
+Agent.
+`,
+          )
+
+          await Bun.write(
+            path.join(dir, "opencode.json"),
+            JSON.stringify({
+              server: { a2a: { enabled: true } },
+            }),
+          )
+        },
+      })
+
+      await Instance.disposeAll()
+      await Instance.provide({
+        directory: tmp.path,
+        init: async () => {
+          Env.set("ANTHROPIC_API_KEY", "test-key")
+        },
+        fn: async () => {
+          const app = Server.App()
+
+          const spiffeModule = await import("../../src/server/spiffe")
+          const verifySpy = spyOn(spiffeModule, "verifySPIFFE").mockImplementation(async () => {
+            // Simulate SPIRE Agent connection failure
+            throw new Error("Connection to SPIRE Agent failed")
+          })
+
+          process.env["SPIFFE_ENDPOINT_SOCKET"] = "unix:///tmp/spire-agent.sock"
+          process.env["OPENCODE_SPIFFE_AUDIENCE"] = "test-audience"
+
+          try {
+            const response = await app.request("/a2a/spiffe-agent/tasks", {
+              method: "GET",
+              headers: {
+                "x-opencode-directory": tmp.path,
+                Authorization: "Bearer valid-token",
+              },
+            })
+
+            // Should fail closed (401) when SPIRE is unavailable
+            expect(response.status).toBe(401)
+          } finally {
+            verifySpy.mockRestore()
+            delete process.env["SPIFFE_ENDPOINT_SOCKET"]
+            delete process.env["OPENCODE_SPIFFE_AUDIENCE"]
+          }
+        },
+      })
+    })
+  })
 })

@@ -153,7 +153,7 @@ function asArray<T>(value: T | T[] | undefined): T[] {
 function strategyType(strategy: AuthStrategy) {
   if (strategy === "api-key") return "apiKey"
   if (strategy === "jwt") return "http"
-  if (strategy === "spiffe") return "mutualTls"
+  if (strategy === "spiffe") return "http"
   if (strategy === "oauth2") return "oauth2"
   if (strategy === "oidc") return "oidc"
   return "plugin"
@@ -753,6 +753,30 @@ export const A2APlugin: Plugin = async () => {
         continue
       }
       if (strategy === "plugin") continue // Enforced by plugin hooks, not here
+      
+      // SPIFFE JWT-SVID with per-agent config override
+      if (strategy === "spiffe") {
+        const token = bearerFromHeaders(headers)
+        if (!token) continue
+        
+        // Get per-agent SPIFFE config
+        const agentConfig = await Agent.get(agentId)
+        const spiffeConfig = (agentConfig?.a2a as any)?.spiffe as { trustDomain?: string; audience?: string; allowedIds?: string[] } | undefined
+        
+        // Audience: per-agent override or global env var
+        const audience = spiffeConfig?.audience ?? process.env["OPENCODE_SPIFFE_AUDIENCE"]
+        if (!audience) continue
+        
+        // Allowed IDs: per-agent override or global env var
+        const allowedIds = 
+          spiffeConfig?.allowedIds ??
+          process.env["OPENCODE_SPIFFE_ALLOWED_IDS"]?.split(",").map((s) => s.trim()).filter(Boolean)
+        
+        const { verifySPIFFE } = await import("../server/spiffe")
+        if (await verifySPIFFE(token, audience, allowedIds)) return true
+        continue
+      }
+      
       // jwt, oidc, oauth2
       const token = bearerFromHeaders(headers)
       if (!token) continue

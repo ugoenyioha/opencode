@@ -90,6 +90,16 @@ async function strategyPasses(
   // plugin auth is enforced by explicit plugin hooks (http.request).
   // Do not treat it as pre-authorized at the centralized middleware gate.
   if (strategy === "plugin") return false
+  if (strategy === "spiffe") {
+    const token = bearerFromHeaders(headers)
+    if (!token) return false
+    const audience = process.env["OPENCODE_SPIFFE_AUDIENCE"]
+    if (!audience) return false
+    const allowedIdsRaw = process.env["OPENCODE_SPIFFE_ALLOWED_IDS"]
+    const allowedIds = allowedIdsRaw?.split(",").map((s) => s.trim()).filter(Boolean)
+    const { verifySPIFFE } = await import("./spiffe")
+    return verifySPIFFE(token, audience, allowedIds)
+  }
   if (strategy === "jwt" || strategy === "oidc" || strategy === "oauth2") {
     const token = bearerFromHeaders(headers)
     if (!token) return false
@@ -116,6 +126,7 @@ function strategyLabel(strategy: AuthStrategy): AuthStrategyLabel {
   if (strategy === "jwt") return "jwt"
   if (strategy === "oidc") return "oidc"
   if (strategy === "oauth2") return "oauth2"
+  if (strategy === "spiffe") return "spiffe"
   return "plugin"
 }
 

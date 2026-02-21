@@ -7,7 +7,7 @@ export type AuthPolicyMode = "defer" | "public" | "global-default" | "strategies
 export type AuthOutcome = "allow" | "deny" | "defer"
 export type AuthSource = "centralized" | "compat" | "verifier"
 export type AuthRoute = "openai.compat" | "anthropic.compat" | "tool.endpoint" | "a2a.discovery" | "a2a.protected" | "other"
-export type AuthStrategyLabel = "api-key" | "basic" | "jwt" | "oidc" | "oauth2" | "plugin" | "none"
+export type AuthStrategyLabel = "api-key" | "basic" | "jwt" | "oidc" | "oauth2" | "spiffe" | "plugin" | "none"
 
 export type AuthReason =
   | "none"
@@ -18,6 +18,7 @@ export type AuthReason =
   | "jwt_verifier_error"
   | "oidc_discovery_error"
   | "oauth_introspection_error"
+  | "spiffe_endpoint_error"
   | "verifier_internal_error"
 
 type AuthEvent = {
