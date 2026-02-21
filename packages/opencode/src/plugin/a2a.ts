@@ -10,7 +10,9 @@ import { SessionStatus } from "@/session/status"
 import { MessageV2 } from "@/session/message-v2"
 import { Bus } from "@/bus"
 import { Instance } from "@/project/instance"
-// Auth is handled by server-level middleware in server.ts, not per-route.
+import { bearerFromHeaders, verifyBearerForStrategy, type StrictBearerStrategy } from "../server/compat/auth"
+import { validAPIKey } from "../server/auth-policy"
+// Auth is enforced per-agent in agentHandler() — agent config replaces server-level auth.
 
 const log = Log.create({ service: "a2a" })
 
@@ -734,26 +736,60 @@ export const A2APlugin: Plugin = async () => {
     skillCounts: agents.map((a) => ({ agent: a.id, skills: a.skills.length })),
   })
 
-  // Agent lookup handler
-  function agentHandler(params: Record<string, string>): Response | undefined {
-    const agentId = params.agent
-    if (!agentId) return json({ error: { code: "BadRequest", message: "Missing agent ID" } }, 400)
-    if (!byID.has(agentId)) return json({ error: { code: "NotFound", message: `Unknown agent: ${agentId}` } }, 404)
-    return undefined // Agent exists, continue to handler
+  /**
+   * Check per-agent auth strategies. Returns true if any strategy passes.
+   * Agent auth config replaces server-level auth (not additive).
+   */
+  async function checkAgentAuth(
+    strategies: AuthStrategy[],
+    headers: Headers,
+    agentId: string,
+  ): Promise<boolean> {
+    if (strategies.length === 0) return true // No auth required (public agent)
+
+    for (const strategy of strategies) {
+      if (strategy === "api-key") {
+        if (validAPIKey(headers)) return true
+        continue
+      }
+      if (strategy === "plugin") continue // Enforced by plugin hooks, not here
+      // jwt, oidc, oauth2
+      const token = bearerFromHeaders(headers)
+      if (!token) continue
+      const ok = await verifyBearerForStrategy(strategy as StrictBearerStrategy, token, {
+        surface: "a2a",
+        route: `a2a.${agentId}` as any,
+        source: "centralized",
+      })
+      if (ok) return true
+    }
+    return false
   }
 
-  // Auth is handled by server-level middleware (server.ts) which checks
-  // OPENCODE_TOOL_ENDPOINT_API_KEY and OPENCODE_SERVER_PASSWORD as mutually
-  // exclusive auth methods. Discovery routes opt out via `auth: []`.
-  const protectedA2AAuthList = asArray(serverConfig.auth as AuthStrategy | AuthStrategy[] | undefined)
-  const protectedA2AAuth = protectedA2AAuthList.length > 0 ? protectedA2AAuthList : undefined
+  /**
+   * Agent lookup and auth handler. Validates agent exists and enforces per-agent auth.
+   * Returns an error response if agent not found or auth fails, undefined if all checks pass.
+   */
+  async function agentHandler(params: Record<string, string>, req: Request): Promise<Response | undefined> {
+    const agentId = params.agent
+    if (!agentId) return json({ error: { code: "BadRequest", message: "Missing agent ID" } }, 400)
+    const agent = byID.get(agentId)
+    if (!agent) return json({ error: { code: "NotFound", message: `Unknown agent: ${agentId}` } }, 404)
+    
+    // Per-agent auth: agent config replaces server-level auth
+    if (!(await checkAgentAuth(agent.auth, req.headers, agentId))) {
+      return json({ error: { code: "Unauthorized", message: "Authentication required" } }, 401)
+    }
+    
+    return undefined // Agent exists and auth passed, continue to handler
+  }
 
   const messageStreamHandler = async (req: Request, params: Record<string, string>) => {
     // Validate A2A version
     const versionErr = validateA2AVersion(req)
     if (versionErr) return addA2AVersionHeader(versionErr)
 
-    const agentErr = agentHandler(params)
+    const agentErr = await agentHandler(params, req)
     if (agentErr) return addA2AVersionHeader(agentErr)
 
     const agentId = params.agent
@@ -784,7 +820,7 @@ export const A2APlugin: Plugin = async () => {
 
   const cancelTaskHandler = async (req: Request, params: Record<string, string>) => {
     try {
-      const agentErr = agentHandler(params)
+      const agentErr = await agentHandler(params, req)
       if (agentErr) return addA2AVersionHeader(agentErr)
 
       const taskId = params.id
@@ -811,7 +847,7 @@ export const A2APlugin: Plugin = async () => {
 
   const subscribeTaskHandler = async (req: Request, params: Record<string, string>) => {
     try {
-      const agentErr = agentHandler(params)
+      const agentErr = await agentHandler(params, req)
       if (agentErr) return addA2AVersionHeader(agentErr)
 
       const taskId = params.id
@@ -927,13 +963,13 @@ export const A2APlugin: Plugin = async () => {
     {
       method: "POST",
       path: "/a2a/:agent/message:send",
-      auth: protectedA2AAuth,
+      auth: [],
       handler: async (req, params) => {
         // Validate A2A version
         const versionErr = validateA2AVersion(req)
         if (versionErr) return addA2AVersionHeader(versionErr)
 
-        const agentErr = agentHandler(params)
+        const agentErr = await agentHandler(params, req)
         if (agentErr) return addA2AVersionHeader(agentErr)
 
         const agentId = params.agent
@@ -955,7 +991,7 @@ export const A2APlugin: Plugin = async () => {
     {
       method: "POST",
       path: "/a2a/:agent/message:stream",
-      auth: protectedA2AAuth,
+      auth: [],
       handler: messageStreamHandler,
     },
 
@@ -963,7 +999,7 @@ export const A2APlugin: Plugin = async () => {
     {
       method: "POST",
       path: "/a2a/:agent/message/stream",
-      auth: protectedA2AAuth,
+      auth: [],
       handler: messageStreamHandler,
     },
 
@@ -971,10 +1007,10 @@ export const A2APlugin: Plugin = async () => {
     {
       method: "GET",
       path: "/a2a/:agent/tasks/:id",
-      auth: protectedA2AAuth,
+      auth: [],
       handler: async (req, params) => {
         try {
-          const agentErr = agentHandler(params)
+          const agentErr = await agentHandler(params, req)
           if (agentErr) return addA2AVersionHeader(agentErr)
 
           const taskId = params.id
@@ -1003,10 +1039,10 @@ export const A2APlugin: Plugin = async () => {
     {
       method: "GET",
       path: "/a2a/:agent/tasks",
-      auth: protectedA2AAuth,
+      auth: [],
       handler: async (req, params) => {
         try {
-          const agentErr = agentHandler(params)
+          const agentErr = await agentHandler(params, req)
           if (agentErr) return addA2AVersionHeader(agentErr)
 
           const agentId = params.agent
@@ -1034,7 +1070,7 @@ export const A2APlugin: Plugin = async () => {
     {
       method: "POST",
       path: "/a2a/:agent/tasks/:id:cancel",
-      auth: protectedA2AAuth,
+      auth: [],
       handler: cancelTaskHandler,
     },
 
@@ -1042,7 +1078,7 @@ export const A2APlugin: Plugin = async () => {
     {
       method: "POST",
       path: "/a2a/:agent/tasks/:id/cancel",
-      auth: protectedA2AAuth,
+      auth: [],
       handler: cancelTaskHandler,
     },
 
@@ -1051,7 +1087,7 @@ export const A2APlugin: Plugin = async () => {
     {
       method: "GET",
       path: "/a2a/:agent/tasks/:id:subscribe",
-      auth: protectedA2AAuth,
+      auth: [],
       handler: subscribeTaskHandler,
     },
 
@@ -1059,7 +1095,7 @@ export const A2APlugin: Plugin = async () => {
     {
       method: "GET",
       path: "/a2a/:agent/tasks/:id/subscribe",
-      auth: protectedA2AAuth,
+      auth: [],
       handler: subscribeTaskHandler,
     },
   ]

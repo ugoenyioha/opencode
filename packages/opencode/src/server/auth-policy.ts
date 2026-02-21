@@ -51,7 +51,7 @@ function resolvePolicy(method: string, path: string, routeRules: RouteAuthRule[]
   return { mode: "strategies", anyOf: list }
 }
 
-function validAPIKey(headers: Headers) {
+export function validAPIKey(headers: Headers) {
   const key = process.env["OPENCODE_TOOL_ENDPOINT_API_KEY"]
   if (!key) return false
   const header = headers.get("x-api-key") ?? ""

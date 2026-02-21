@@ -1342,7 +1342,7 @@ Test agent prompt.
       },
       fn: async () => {
         const app = Server.App()
-        // No X-API-Key header — server middleware rejects
+        // No X-API-Key header — per-agent auth rejects
         const response = await app.request("/a2a/neo-sidecar/tasks", {
           method: "GET",
           headers: {
@@ -1351,7 +1351,7 @@ Test agent prompt.
         })
         expect(response.status).toBe(401)
         const body = (await response.json()) as any
-        expect(body.error).toBe("Unauthorized")
+        expect(body.error.code).toBe("Unauthorized")
       },
     })
   })
@@ -1375,7 +1375,7 @@ Test agent prompt.
         })
         expect(response.status).toBe(401)
         const body = (await response.json()) as any
-        expect(body.error).toBe("Unauthorized")
+        expect(body.error.code).toBe("Unauthorized")
       },
     })
   })
@@ -1439,7 +1439,7 @@ Test agent prompt.
     })
   })
 
-  test("auth: server-level API key protects all agents regardless of agent auth config", async () => {
+  test("auth: agent inherits server-level auth when no per-agent config", async () => {
     await using tmp = await tmpdir({
       init: async (dir) => {
         // Create skill with a2a.expose
@@ -1462,10 +1462,10 @@ Open skill body.
         const agentDir = path.join(dir, ".opencode", "agents")
         await fs.mkdir(agentDir, { recursive: true })
         await Bun.write(
-          path.join(agentDir, "open-agent.md"),
+          path.join(agentDir, "inherit-agent.md"),
           `---
-name: open-agent
-description: Public agent with no auth
+name: inherit-agent
+description: Agent that inherits server auth
 mode: a2a
 skills:
   - open-skill
@@ -1473,7 +1473,7 @@ a2a:
   baseUrl: https://example.test
   version: "1.0.0"
 ---
-You are a public agent.
+Agent without per-agent auth config.
 `,
         )
 
@@ -1485,6 +1485,7 @@ You are a public agent.
               a2a: {
                 enabled: true,
                 baseUrl: "https://example.test",
+                auth: ["api-key"],
               },
             },
           }),
@@ -1501,8 +1502,8 @@ You are a public agent.
       fn: async () => {
         const app = Server.App()
 
-        // Without API key — server middleware rejects (OPENCODE_TOOL_ENDPOINT_API_KEY is set globally)
-        const noKeyResponse = await app.request("/a2a/open-agent/tasks", {
+        // Without API key — per-agent auth inherits server auth and rejects
+        const noKeyResponse = await app.request("/a2a/inherit-agent/tasks", {
           method: "GET",
           headers: {
             "x-opencode-directory": tmp.path,
@@ -1510,8 +1511,8 @@ You are a public agent.
         })
         expect(noKeyResponse.status).toBe(401)
 
-        // With API key — server middleware passes
-        const withKeyResponse = await app.request("/a2a/open-agent/tasks", {
+        // With API key — per-agent auth passes (inherited from server)
+        const withKeyResponse = await app.request("/a2a/inherit-agent/tasks", {
           method: "GET",
           headers: {
             "x-opencode-directory": tmp.path,
@@ -1622,12 +1623,12 @@ You are a public agent.
         })
         expect(response.status).toBe(401)
         const body = (await response.json()) as any
-        expect(body.error).toBe("Unauthorized")
+        expect(body.error.code).toBe("Unauthorized")
       },
     })
   })
 
-  test("auth: empty server.a2a.auth does not make protected routes public", async () => {
+  test("auth: empty server.a2a.auth makes agents public (inherited)", async () => {
     await using tmp = await projectWithServerA2AAuth(true, [])
     await Instance.disposeAll()
     await Instance.provide({
@@ -1638,12 +1639,14 @@ You are a public agent.
       fn: async () => {
         const app = Server.App()
 
+        // Agent inherits server auth: [] (empty array = public)
         const noAuth = await app.request("/a2a/neo-sidecar/tasks", {
           method: "GET",
           headers: { "x-opencode-directory": tmp.path },
         })
-        expect(noAuth.status).toBe(401)
+        expect(noAuth.status).toBe(200)
 
+        // With API key still works (no auth required)
         const withApiKey = await app.request("/a2a/neo-sidecar/tasks", {
           method: "GET",
           headers: {
@@ -1686,6 +1689,112 @@ You are a public agent.
           headers: { "x-opencode-directory": tmp.path },
         })
         expect(perAgentResponse.status).toBe(200)
+      },
+    })
+  })
+
+  test("auth: per-agent auth config replaces server-level auth", async () => {
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        // Create skill
+        const skillDir = path.join(dir, ".opencode", "skills", "test-skill")
+        await fs.mkdir(skillDir, { recursive: true })
+        await Bun.write(
+          path.join(skillDir, "SKILL.md"),
+          `---
+name: test-skill
+description: Test skill
+a2a:
+  expose: true
+  tags: ["test"]
+---
+Skill body.
+`,
+        )
+
+        // Agent A: requires api-key explicitly
+        const agentDir = path.join(dir, ".opencode", "agents")
+        await fs.mkdir(agentDir, { recursive: true })
+        await Bun.write(
+          path.join(agentDir, "auth-agent.md"),
+          `---
+name: auth-agent
+description: Agent requiring API key
+mode: a2a
+skills:
+  - test-skill
+a2a:
+  baseUrl: https://example.test
+  auth: ["api-key"]
+---
+Agent with auth.
+`,
+        )
+
+        // Agent B: public (no auth)
+        await Bun.write(
+          path.join(agentDir, "public-agent.md"),
+          `---
+name: public-agent
+description: Public agent
+mode: a2a
+skills:
+  - test-skill
+a2a:
+  baseUrl: https://example.test
+  auth: []
+---
+Public agent.
+`,
+        )
+
+        // Server config: no server-level auth
+        await Bun.write(
+          path.join(dir, "opencode.json"),
+          JSON.stringify({
+            $schema: "https://opencode.ai/config.json",
+            server: {
+              a2a: {
+                enabled: true,
+                baseUrl: "https://example.test",
+              },
+            },
+          }),
+        )
+      },
+    })
+
+    await Instance.disposeAll()
+    await Instance.provide({
+      directory: tmp.path,
+      init: async () => {
+        Env.set("ANTHROPIC_API_KEY", "test-key")
+      },
+      fn: async () => {
+        const app = Server.App()
+
+        // auth-agent: requires API key (per-agent auth)
+        const authAgentNoKey = await app.request("/a2a/auth-agent/tasks", {
+          method: "GET",
+          headers: { "x-opencode-directory": tmp.path },
+        })
+        expect(authAgentNoKey.status).toBe(401)
+
+        const authAgentWithKey = await app.request("/a2a/auth-agent/tasks", {
+          method: "GET",
+          headers: {
+            "x-opencode-directory": tmp.path,
+            ...AUTH_HEADER,
+          },
+        })
+        expect(authAgentWithKey.status).toBe(200)
+
+        // public-agent: no auth required (auth: [])
+        const publicAgentNoKey = await app.request("/a2a/public-agent/tasks", {
+          method: "GET",
+          headers: { "x-opencode-directory": tmp.path },
+        })
+        expect(publicAgentNoKey.status).toBe(200)
       },
     })
   })
