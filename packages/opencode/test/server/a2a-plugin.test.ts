@@ -1799,7 +1799,165 @@ Public agent.
     })
   })
 
+  test("auth: per-agent auth empty array overrides server-level auth", async () => {
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        const skillDir = path.join(dir, ".opencode", "skills", "test-skill")
+        await fs.mkdir(skillDir, { recursive: true })
+        await Bun.write(
+          path.join(skillDir, "SKILL.md"),
+          `---
+name: test-skill
+description: Test skill
+a2a:
+  expose: true
+  tags: ["test"]
+---
+Skill body.
+`,
+        )
+
+        const agentDir = path.join(dir, ".opencode", "agents")
+        await fs.mkdir(agentDir, { recursive: true })
+        await Bun.write(
+          path.join(agentDir, "public-agent.md"),
+          `---
+name: public-agent
+description: Public override agent
+mode: a2a
+skills:
+  - test-skill
+a2a:
+  baseUrl: https://example.test
+  auth: []
+---
+Public override.
+`,
+        )
+
+        await Bun.write(
+          path.join(dir, "opencode.json"),
+          JSON.stringify({
+            $schema: "https://opencode.ai/config.json",
+            server: {
+              a2a: {
+                enabled: true,
+                baseUrl: "https://example.test",
+                auth: ["api-key"],
+              },
+            },
+          }),
+        )
+      },
+    })
+
+    await Instance.disposeAll()
+    await Instance.provide({
+      directory: tmp.path,
+      init: async () => {
+        Env.set("ANTHROPIC_API_KEY", "test-key")
+      },
+      fn: async () => {
+        const app = Server.App()
+
+        const noAuth = await app.request("/a2a/public-agent/tasks", {
+          method: "GET",
+          headers: { "x-opencode-directory": tmp.path },
+        })
+        expect(noAuth.status).toBe(200)
+      },
+    })
+  })
+
   describe("SPIFFE JWT-SVID authentication", () => {
+    test("agent card maps SPIFFE auth to JWT-SVID bearer scheme only", async () => {
+      await using tmp = await tmpdir({
+        init: async (dir) => {
+          const skillDir = path.join(dir, ".opencode", "skills", "test-skill")
+          await fs.mkdir(skillDir, { recursive: true })
+          await Bun.write(
+            path.join(skillDir, "SKILL.md"),
+            `---
+name: test-skill
+description: Test skill
+a2a:
+  expose: true
+  tags: ["test"]
+---
+Test skill.
+`,
+          )
+
+          const agentDir = path.join(dir, ".opencode", "agents")
+          await fs.mkdir(agentDir, { recursive: true })
+          await Bun.write(
+            path.join(agentDir, "spiffe-agent.md"),
+            `---
+name: spiffe-agent
+description: SPIFFE-protected agent
+mode: a2a
+skills:
+  - test-skill
+a2a:
+  baseUrl: https://example.test
+  auth: ["spiffe"]
+---
+SPIFFE agent.
+`,
+          )
+
+          await Bun.write(
+            path.join(dir, "opencode.json"),
+            JSON.stringify({
+              $schema: "https://opencode.ai/config.json",
+              server: {
+                a2a: {
+                  enabled: true,
+                  baseUrl: "https://example.test",
+                  securitySchemes: {
+                    jwtBearer: {
+                      type: "http",
+                      scheme: "Bearer",
+                      bearerFormat: "JWT",
+                    },
+                    spiffeBearer: {
+                      type: "http",
+                      scheme: "Bearer",
+                      bearerFormat: "JWT-SVID",
+                    },
+                  },
+                },
+              },
+            }),
+          )
+        },
+      })
+
+      await Instance.disposeAll()
+      await Instance.provide({
+        directory: tmp.path,
+        init: async () => {
+          Env.set("ANTHROPIC_API_KEY", "test-key")
+        },
+        fn: async () => {
+          const app = Server.App()
+          const response = await app.request("/.well-known/agents/spiffe-agent/card.json", {
+            headers: { "x-opencode-directory": tmp.path },
+          })
+          expect(response.status).toBe(200)
+          const body = (await response.json()) as any
+
+          expect(body.securityRequirements).toEqual([
+            {
+              schemes: {
+                spiffeBearer: { list: [] },
+              },
+            },
+          ])
+        },
+      })
+    })
+
     test("valid JWT-SVID with correct audience", async () => {
       await using tmp = await tmpdir({
         init: async (dir) => {

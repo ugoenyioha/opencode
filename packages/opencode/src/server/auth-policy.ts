@@ -97,8 +97,12 @@ async function strategyPasses(
     if (!audience) return false
     const allowedIdsRaw = process.env["OPENCODE_SPIFFE_ALLOWED_IDS"]
     const allowedIds = allowedIdsRaw?.split(",").map((s) => s.trim()).filter(Boolean)
-    const { verifySPIFFE } = await import("./spiffe")
-    return verifySPIFFE(token, audience, allowedIds)
+    try {
+      const { verifySPIFFE } = await import("./spiffe")
+      return await verifySPIFFE(token, audience, allowedIds)
+    } catch {
+      return false
+    }
   }
   if (strategy === "jwt" || strategy === "oidc" || strategy === "oauth2") {
     const token = bearerFromHeaders(headers)

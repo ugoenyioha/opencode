@@ -15,6 +15,12 @@ let clientInstance: ReturnType<typeof createSPIFFEClient> | null = null
 let lastError: Error | null = null
 let lastReconnectAttempt = 0
 const RECONNECT_COOLDOWN_MS = 5000
+const SAFE_MATCH_OPTIONS = {
+  nonegate: true,
+  noext: true,
+  nobrace: true,
+  nocomment: true,
+} as const
 
 /**
  * Get or create the SPIFFE Workload API client.
@@ -64,17 +70,42 @@ function sanitizeEndpoint(endpoint: string): string {
   }
 }
 
+function sanitizeSpiffeId(spiffeId: string): string {
+  if (!spiffeId.startsWith("spiffe://")) return "spiffe://[invalid]"
+  try {
+    const parsed = new URL(spiffeId)
+    return `spiffe://${parsed.host}/...`
+  } catch {
+    return "spiffe://[redacted]"
+  }
+}
+
+function isSafeAllowedPattern(pattern: string): boolean {
+  const normalized = pattern.trim()
+  if (!normalized.startsWith("spiffe://")) return false
+  if (normalized.includes("!")) return false
+  if (normalized.includes("(") || normalized.includes(")")) return false
+  if (normalized.includes("{") || normalized.includes("}")) return false
+  return true
+}
+
 /**
  * Check if a SPIFFE ID matches any of the allowed patterns (glob).
  */
 function isAllowedSpiffeId(spiffeId: string, allowedIds?: string[]): boolean {
   if (!allowedIds || allowedIds.length === 0) return true
   
-  return allowedIds.some((pattern) => {
+  return allowedIds.some((pattern, index) => {
+    const normalized = pattern.trim()
+    if (!isSafeAllowedPattern(normalized)) {
+      log.warn("Ignoring unsafe SPIFFE allowlist pattern", { patternIndex: index })
+      return false
+    }
+
     try {
-      return minimatch(spiffeId, pattern)
-    } catch (error) {
-      log.warn("Invalid SPIFFE ID pattern", { pattern, error })
+      return minimatch(spiffeId, normalized, SAFE_MATCH_OPTIONS)
+    } catch {
+      log.warn("Invalid SPIFFE ID allowlist pattern", { patternIndex: index })
       return false
     }
   })
@@ -118,14 +149,14 @@ export async function verifySPIFFE(
     // Check SPIFFE ID allowlist
     if (!isAllowedSpiffeId(result.spiffeId, allowedIds)) {
       log.warn("SPIFFE ID not in allowlist", {
-        spiffeId: result.spiffeId,
-        allowedPatterns: allowedIds,
+        spiffeId: sanitizeSpiffeId(result.spiffeId),
+        allowedPatternCount: allowedIds?.length ?? 0,
       })
       return false
     }
 
     log.debug("SPIFFE JWT-SVID validated", {
-      spiffeId: result.spiffeId,
+      spiffeId: sanitizeSpiffeId(result.spiffeId),
       audience,
     })
 

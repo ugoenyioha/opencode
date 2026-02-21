@@ -150,13 +150,25 @@ function asArray<T>(value: T | T[] | undefined): T[] {
   return Array.isArray(value) ? value : [value]
 }
 
-function strategyType(strategy: AuthStrategy) {
-  if (strategy === "api-key") return "apiKey"
-  if (strategy === "jwt") return "http"
-  if (strategy === "spiffe") return "http"
-  if (strategy === "oauth2") return "oauth2"
-  if (strategy === "oidc") return "oidc"
-  return "plugin"
+function schemeMatchesStrategy(
+  strategy: AuthStrategy,
+  scheme: { type: "apiKey" | "http" | "mutualTls" | "oauth2" | "oidc"; scheme?: string; bearerFormat?: string },
+) {
+  if (strategy === "plugin") return false
+  if (strategy === "api-key") return scheme.type === "apiKey"
+  if (strategy === "oauth2") return scheme.type === "oauth2"
+  if (strategy === "oidc") return scheme.type === "oidc"
+  if (strategy === "jwt") {
+    if (scheme.type !== "http") return false
+    if ((scheme.scheme ?? "").toLowerCase() !== "bearer") return false
+    return (scheme.bearerFormat ?? "").trim().toLowerCase() !== "jwt-svid"
+  }
+  if (strategy === "spiffe") {
+    if (scheme.type !== "http") return false
+    if ((scheme.scheme ?? "").toLowerCase() !== "bearer") return false
+    return (scheme.bearerFormat ?? "").trim().toLowerCase() === "jwt-svid"
+  }
+  return false
 }
 
 function json(input: unknown, status = 200) {
@@ -174,10 +186,8 @@ function securityRequirements(
 ) {
   return auth
     .flatMap((entry) => {
-      const type = strategyType(entry)
-      if (type === "plugin") return []
       return Object.entries(schemes)
-        .filter(([_, value]) => value.type === type)
+        .filter(([_, value]) => schemeMatchesStrategy(entry, value))
         .map(([name]) => ({
           schemes: {
             [name]: { list: [] },
@@ -359,9 +369,10 @@ async function discoverA2AAgents(serverConfig: {
       description: agent.description ?? `A2A agent: ${id}`,
       version: a2aConfig.version ?? "1.0.0",
       baseUrl: (a2aConfig.baseUrl ?? serverConfig.baseUrl ?? "http://localhost:4096").replace(/\/$/, ""),
-      auth: asArray(a2aConfig.auth as AuthStrategy | AuthStrategy[] | undefined).length
-        ? asArray(a2aConfig.auth as AuthStrategy | AuthStrategy[] | undefined)
-        : asArray(serverConfig.auth as AuthStrategy | AuthStrategy[] | undefined),
+      auth:
+        (a2aConfig.auth as AuthStrategy | AuthStrategy[] | undefined) !== undefined
+          ? asArray(a2aConfig.auth as AuthStrategy | AuthStrategy[] | undefined)
+          : asArray(serverConfig.auth as AuthStrategy | AuthStrategy[] | undefined),
       skillRouting: (a2aConfig.skillRouting as "semantic" | "metadata") ?? "semantic",
       securitySchemes,
       skills,
