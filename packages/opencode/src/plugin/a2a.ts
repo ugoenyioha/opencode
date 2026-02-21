@@ -996,6 +996,30 @@ export const A2APlugin: Plugin = async () => {
   /** Aggregate timeout for all ext_authz view checks in a single discovery request. */
   const DISCOVERY_AUTHZ_TIMEOUT_MS = 10_000
 
+  /**
+   * Minimum response time for discovery endpoints when ext_authz is configured.
+   * Pads responses to a constant floor to prevent timing side channels that
+   * could reveal the total agent count to unauthorized callers.
+   * Set to 0 to disable (or via OPENCODE_DISCOVERY_MIN_LATENCY_MS env var).
+   */
+  const DISCOVERY_MIN_LATENCY_MS = parseInt(
+    process.env.OPENCODE_DISCOVERY_MIN_LATENCY_MS ?? "150",
+    10,
+  )
+
+  /** Pad execution to a constant time floor. Eliminates timing side channels. */
+  async function withConstantTime<T>(startTime: number, fn: () => Promise<T>): Promise<T> {
+    const result = await fn()
+    if (DISCOVERY_MIN_LATENCY_MS > 0) {
+      const elapsed = Date.now() - startTime
+      const remaining = DISCOVERY_MIN_LATENCY_MS - elapsed
+      if (remaining > 0) {
+        await new Promise((resolve) => setTimeout(resolve, remaining))
+      }
+    }
+    return result
+  }
+
   // -----------------------------------------------------------------------
   // Discovery authz cache: short-TTL in-memory cache keyed on
   // (principal, agentId, permission). Reduces repeated ext_authz calls when
@@ -1043,6 +1067,8 @@ export const A2APlugin: Plugin = async () => {
     // If no ext_authz configured at server level, all agents visible (backward compat)
     if (!serverExtAuthz) return agents
 
+    const startTime = Date.now()
+    return withConstantTime(startTime, async () => {
     // Try to authenticate the caller (optional — no credentials is not an error)
     const authn = await tryAuthenticate(req.headers)
 
@@ -1204,6 +1230,7 @@ export const A2APlugin: Plugin = async () => {
       log.error("discovery: ext_authz error, applying failOpen policy", { error: message })
       return (serverExtAuthz.failOpen ?? false) ? agents : []
     }
+    }) // end withConstantTime
   }
 
   /**
