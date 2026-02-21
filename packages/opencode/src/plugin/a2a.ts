@@ -996,6 +996,49 @@ export const A2APlugin: Plugin = async () => {
   /** Aggregate timeout for all ext_authz view checks in a single discovery request. */
   const DISCOVERY_AUTHZ_TIMEOUT_MS = 10_000
 
+  // -----------------------------------------------------------------------
+  // Discovery authz cache: short-TTL in-memory cache keyed on
+  // (principal, agentId, permission). Reduces repeated ext_authz calls when
+  // multiple discovery endpoints are hit in quick succession (e.g. listing
+  // followed by individual card requests).
+  // -----------------------------------------------------------------------
+  const DISCOVERY_CACHE_TTL_MS = 30_000 // 30 seconds
+  const DISCOVERY_CACHE_MAX_SIZE = 1000
+
+  type CacheEntry = { allowed: boolean; expiresAt: number }
+  const discoveryCache = new Map<string, CacheEntry>()
+
+  function cacheKey(principal: string, agentId: string, permission: string): string {
+    return `${principal}\0${agentId}\0${permission}`
+  }
+
+  function cacheGet(principal: string, agentId: string, permission: string): boolean | undefined {
+    const key = cacheKey(principal, agentId, permission)
+    const entry = discoveryCache.get(key)
+    if (!entry) return undefined
+    if (Date.now() > entry.expiresAt) {
+      discoveryCache.delete(key)
+      return undefined
+    }
+    return entry.allowed
+  }
+
+  function cacheSet(principal: string, agentId: string, permission: string, allowed: boolean): void {
+    // Simple eviction: if cache is full, clear it (entries are short-lived anyway)
+    if (discoveryCache.size >= DISCOVERY_CACHE_MAX_SIZE) {
+      const now = Date.now()
+      for (const [k, v] of discoveryCache) {
+        if (now > v.expiresAt) discoveryCache.delete(k)
+      }
+      // If still full after expiry sweep, clear entirely
+      if (discoveryCache.size >= DISCOVERY_CACHE_MAX_SIZE) discoveryCache.clear()
+    }
+    discoveryCache.set(cacheKey(principal, agentId, permission), {
+      allowed,
+      expiresAt: Date.now() + DISCOVERY_CACHE_TTL_MS,
+    })
+  }
+
   async function filterVisibleAgents(req: Request): Promise<A2AAgent[]> {
     // If no ext_authz configured at server level, all agents visible (backward compat)
     if (!serverExtAuthz) return agents
@@ -1009,10 +1052,88 @@ export const A2APlugin: Plugin = async () => {
       return []
     }
 
-    // Check "view" permission for each agent in parallel, with aggregate timeout
+    // Check "view" permission for each agent. First check cache, then try
+    // batch for uncached agents (single RPC), fall back to parallel individual checks.
     try {
       const mod = extAuthzModule ?? await import("../server/ext-authz")
+      const principal = authn.principal
 
+      // --- Phase 1: Check cache for all agents ---
+      const cached: A2AAgent[] = []
+      const uncached: A2AAgent[] = []
+      for (const agent of agents) {
+        const hit = cacheGet(principal, agent.id, "view")
+        if (hit !== undefined) {
+          if (hit) cached.push(agent)
+          // hit === false means cached deny — skip agent
+        } else {
+          uncached.push(agent)
+        }
+      }
+
+      // If all agents were cached, return immediately
+      if (uncached.length === 0) {
+        log.debug("discovery: all agents resolved from cache", {
+          total: agents.length,
+          visible: cached.length,
+          principal,
+        })
+        return cached
+      }
+
+      // --- Phase 2: Attempt batch check for uncached agents ---
+      const allUseServerConfig = uncached.every((a) => !(a as any).a2a?.authz?.extAuthz)
+      let batchResolved = false
+
+      if (allUseServerConfig && mod.batchCheckAuthorization) {
+        try {
+          const items = uncached.map((a) => ({ agentId: a.id, permission: "view" }))
+
+          const batchPromise = mod.batchCheckAuthorization(serverExtAuthz, principal, items)
+          const timeoutPromise = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("batch discovery authz timeout")), DISCOVERY_AUTHZ_TIMEOUT_MS),
+          )
+
+          const batchResults = await Promise.race([batchPromise, timeoutPromise])
+
+          const resultMap = new Map(batchResults.map((r: any) => [r.agentId, r]))
+          const failOpen = serverExtAuthz.failOpen ?? false
+
+          for (const agent of uncached) {
+            const result = resultMap.get(agent.id)
+            if (!result) {
+              if (failOpen) cached.push(agent)
+              else log.warn("discovery: batch missing result for agent", { agentId: agent.id })
+              continue
+            }
+            if (result.error) {
+              log.warn("discovery: batch check error for agent", { agentId: agent.id, error: result.error, failOpen })
+              if (failOpen) cached.push(agent)
+              // Don't cache errors
+            } else {
+              cacheSet(principal, agent.id, "view", result.allowed)
+              if (result.allowed) cached.push(agent)
+            }
+          }
+
+          batchResolved = true
+          log.debug("discovery: batch-filtered agents", {
+            total: agents.length,
+            fromCache: agents.length - uncached.length,
+            batchChecked: uncached.length,
+            visible: cached.length,
+            principal,
+          })
+        } catch (batchErr) {
+          log.debug("discovery: batch authz unavailable, falling back to individual checks", {
+            error: batchErr instanceof Error ? batchErr.message : String(batchErr),
+          })
+        }
+      }
+
+      if (batchResolved) return cached
+
+      // --- Phase 3: Fall back to parallel individual checks ---
       type ViewResult = {
         agent: A2AAgent
         allowed: boolean
@@ -1021,9 +1142,8 @@ export const A2APlugin: Plugin = async () => {
         latencyMs?: number
       }
 
-      // Inner promises never reject — errors are captured in the result
       const checksPromise = Promise.all(
-        agents.map(async (agent): Promise<ViewResult> => {
+        uncached.map(async (agent): Promise<ViewResult> => {
           const extAuthzConfig = await resolveExtAuthzConfig(agent.id) ?? serverExtAuthz!
           const failOpen = extAuthzConfig.failOpen ?? false
           try {
@@ -1040,14 +1160,12 @@ export const A2APlugin: Plugin = async () => {
         }),
       )
 
-      // Aggregate timeout: if all checks don't complete within the limit, treat as failure
       const timeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error("discovery authz timeout")), DISCOVERY_AUTHZ_TIMEOUT_MS),
       )
 
       const results = await Promise.race([checksPromise, timeoutPromise])
 
-      const visible: A2AAgent[] = []
       for (const result of results) {
         if (result.error) {
           log.warn("discovery: ext_authz check failed for agent", {
@@ -1056,13 +1174,16 @@ export const A2APlugin: Plugin = async () => {
             failOpen: result.failOpen,
             allowed: result.allowed,
           })
+          // Don't cache errors
+        } else {
+          cacheSet(principal, result.agent.id, "view", result.allowed)
         }
         if (result.allowed) {
-          visible.push(result.agent)
+          cached.push(result.agent)
         } else if (!result.error) {
           log.debug("discovery: agent hidden by ext_authz", {
             agentId: result.agent.id,
-            principal: authn.principal,
+            principal,
             latencyMs: result.latencyMs,
           })
         }
@@ -1070,11 +1191,13 @@ export const A2APlugin: Plugin = async () => {
 
       log.debug("discovery: filtered agents", {
         total: agents.length,
-        visible: visible.length,
-        principal: authn.principal,
+        fromCache: agents.length - uncached.length,
+        checked: uncached.length,
+        visible: cached.length,
+        principal,
       })
 
-      return visible
+      return cached
     } catch (error) {
       // ext_authz module failed to load or aggregate timeout — respect failOpen
       const message = error instanceof Error ? error.message : String(error)
@@ -1094,6 +1217,10 @@ export const A2APlugin: Plugin = async () => {
     const authn = await tryAuthenticate(req.headers)
     if (!authn) return false // ext_authz configured, no creds → hidden
 
+    // Check cache first
+    const hit = cacheGet(authn.principal, agentId, "view")
+    if (hit !== undefined) return hit
+
     try {
       const mod = extAuthzModule ?? await import("../server/ext-authz")
       const context = mod.requestToExtAuthzContext(req, {
@@ -1102,8 +1229,10 @@ export const A2APlugin: Plugin = async () => {
         authStrategy: authn.strategy,
       })
       const decision = await mod.checkAuthorization(extAuthzConfig, context, authn)
+      cacheSet(authn.principal, agentId, "view", decision.allowed)
       return decision.allowed
     } catch {
+      // Don't cache errors
       return extAuthzConfig.failOpen ?? false
     }
   }

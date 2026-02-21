@@ -45,6 +45,14 @@ export type ExtAuthzConfig = {
   }
   /** Static key-value pairs added to CheckRequest.attributes.context_extensions. */
   contextExtensions?: Record<string, string>
+  /**
+   * Optional endpoint for opencode.authz.v1.BatchAuthorizationService.
+   * When set, discovery uses a single BatchCheck RPC instead of N individual
+   * ext_authz Check calls. Falls back to parallel individual checks on error.
+   * If unset, defaults to the same endpoint as `endpoint` (the adapter serves
+   * both services on the same port).
+   */
+  batchEndpoint?: string
 }
 
 export type ExtAuthzDecision = {
@@ -61,6 +69,19 @@ export type ExtAuthzDecision = {
   dynamicMetadata?: Record<string, unknown>
   /** Time taken for the ext_authz call in milliseconds. */
   latencyMs: number
+}
+
+export type BatchCheckItem = {
+  /** The agent ID to check. */
+  agentId: string
+  /** The permission to check (e.g. "view", "invoke"). */
+  permission: string
+}
+
+export type BatchCheckResult = {
+  agentId: string
+  allowed: boolean
+  error?: string
 }
 
 export type ExtAuthzRequestContext = {
@@ -522,6 +543,196 @@ function sanitizeEndpoint(endpoint: string): string {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Batch authorization: opencode.authz.v1.BatchAuthorizationService/BatchCheck
+// ---------------------------------------------------------------------------
+
+const BATCH_AUTHZ_PROTO = `syntax = "proto3";
+package opencode.authz.v1;
+service BatchAuthorizationService { rpc BatchCheck(BatchCheckRequest) returns (BatchCheckResponse) {} }
+message BatchCheckRequest { string principal = 1; repeated BatchCheckItemMsg items = 2; }
+message BatchCheckItemMsg { string agent_id = 1; string permission = 2; }
+message BatchCheckResponse { repeated BatchCheckResultMsg results = 1; }
+message BatchCheckResultMsg { string agent_id = 1; bool allowed = 2; string error = 3; }
+`
+
+let _batchServiceDef: any = null
+const batchClients = new Map<string, {
+  client: any
+  lastError: Error | null
+  lastReconnectAttempt: number
+}>()
+
+async function loadBatchProto() {
+  if (_batchServiceDef) return _batchServiceDef
+
+  if (!_protoLoader) {
+    _protoLoader = await import("@grpc/proto-loader")
+  }
+
+  const protoDir = getProtoDir()
+  const batchProtoPath = path.join(protoDir, "batch_authz.proto")
+  fs.writeFileSync(batchProtoPath, BATCH_AUTHZ_PROTO)
+
+  const packageDefinition = await _protoLoader.load(batchProtoPath, {
+    keepCase: false,
+    longs: Number,
+    enums: Number,
+    defaults: true,
+    oneofs: true,
+    includeDirs: [protoDir],
+  })
+
+  const grpc = await loadGrpc()
+  const protoDescriptor = grpc.loadPackageDefinition(packageDefinition) as any
+  _batchServiceDef = protoDescriptor.opencode.authz.v1.BatchAuthorizationService
+
+  return _batchServiceDef
+}
+
+async function getBatchClient(config: ExtAuthzConfig): Promise<any> {
+  const endpoint = config.batchEndpoint ?? config.endpoint
+  const entry = batchClients.get(endpoint)
+  const now = Date.now()
+
+  if (entry?.client && !entry.lastError) {
+    return entry.client
+  }
+
+  if (entry?.lastError && now - entry.lastReconnectAttempt < RECONNECT_COOLDOWN_MS) {
+    throw entry.lastError
+  }
+
+  const grpc = await loadGrpc()
+  const ServiceConstructor = await loadBatchProto()
+
+  let target = endpoint
+  if (target.startsWith("grpc://")) {
+    target = target.slice("grpc://".length)
+  }
+
+  if (entry?.client) {
+    try { entry.client.close() } catch { /* ignore */ }
+  }
+
+  try {
+    const isInsecure =
+      target.startsWith("localhost") ||
+      target.startsWith("127.0.0.1") ||
+      target.startsWith("[::1]") ||
+      target.includes("://localhost")
+
+    const creds = isInsecure
+      ? grpc.credentials.createInsecure()
+      : grpc.credentials.createSsl()
+
+    const client = new ServiceConstructor(target, creds)
+
+    batchClients.set(endpoint, {
+      client,
+      lastError: null,
+      lastReconnectAttempt: now,
+    })
+
+    log.info("batch authz gRPC client connected", { endpoint: sanitizeEndpoint(endpoint) })
+    return client
+  } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error))
+    batchClients.set(endpoint, {
+      client: null as any,
+      lastError: err,
+      lastReconnectAttempt: now,
+    })
+    throw err
+  }
+}
+
+/**
+ * Batch-check authorization for multiple agent/permission pairs in a single
+ * RPC call. Requires the adapter to implement
+ * opencode.authz.v1.BatchAuthorizationService/BatchCheck.
+ *
+ * Falls back gracefully: callers should catch errors and use individual checks.
+ *
+ * @param config   ext_authz configuration (batchEndpoint defaults to endpoint)
+ * @param principal  The authenticated caller identity
+ * @param items    Agent/permission pairs to check
+ * @returns Array of results in the same order as items
+ */
+export async function batchCheckAuthorization(
+  config: ExtAuthzConfig,
+  principal: string,
+  items: BatchCheckItem[],
+): Promise<BatchCheckResult[]> {
+  const startTime = Date.now()
+  const timeout = parseTimeoutMs(config.timeout) * 2 // double timeout for batch
+
+  try {
+    const client = await getBatchClient(config)
+
+    const request = {
+      principal,
+      items: items.map((item) => ({
+        agentId: item.agentId,
+        permission: item.permission,
+      })),
+    }
+
+    const response = await new Promise<any>((resolve, reject) => {
+      client.batchCheck(
+        request,
+        { deadline: Date.now() + timeout },
+        (err: Error | null, response: any) => {
+          if (err) return reject(err)
+          resolve(response)
+        },
+      )
+    })
+
+    const latencyMs = Date.now() - startTime
+    const results: BatchCheckResult[] = (response.results ?? []).map((r: any) => ({
+      agentId: r.agentId ?? "",
+      allowed: r.allowed ?? false,
+      error: r.error || undefined,
+    }))
+
+    log.debug("batch authz completed", {
+      principal: principal.slice(0, 30),
+      itemCount: items.length,
+      allowed: results.filter((r) => r.allowed).length,
+      latencyMs,
+    })
+
+    return results
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+
+    // Mark client as failed for reconnection
+    if (
+      error instanceof Error &&
+      (message.includes("UNAVAILABLE") ||
+        message.includes("ECONNREFUSED") ||
+        message.includes("DEADLINE_EXCEEDED") ||
+        message.includes("UNIMPLEMENTED"))
+    ) {
+      const endpoint = config.batchEndpoint ?? config.endpoint
+      const entry = batchClients.get(endpoint)
+      if (entry) {
+        entry.lastError = error
+      }
+    }
+
+    log.warn("batch authz call failed", {
+      error: message,
+      endpoint: sanitizeEndpoint(config.batchEndpoint ?? config.endpoint),
+      latencyMs: Date.now() - startTime,
+      itemCount: items.length,
+    })
+
+    throw error // Let caller fall back to individual checks
+  }
+}
+
 /**
  * Close all ext_authz gRPC clients. Call this on shutdown.
  */
@@ -534,6 +745,14 @@ export function closeAllClients(): void {
     }
   }
   clients.clear()
+  for (const [endpoint, entry] of batchClients) {
+    try {
+      entry.client?.close()
+    } catch {
+      /* ignore */
+    }
+  }
+  batchClients.clear()
   log.info("ext_authz: all gRPC clients closed")
 }
 

@@ -709,6 +709,10 @@ export namespace Config {
         .record(z.string(), z.string())
         .optional()
         .describe("Static key-value pairs added to CheckRequest.attributes.context_extensions"),
+      batchEndpoint: z
+        .string()
+        .optional()
+        .describe("Optional: gRPC endpoint for opencode.authz.v1.BatchAuthorizationService. Enables batch discovery authz. Defaults to endpoint if unset."),
     })
     .strict()
 
