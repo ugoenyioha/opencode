@@ -79,8 +79,15 @@ const startEventStream = (directory: string) => {
         continue
       }
 
-      for await (const event of events.stream) {
-        Rpc.emit("event", event as Event)
+      try {
+        for await (const event of events.stream) {
+          Rpc.emit("event", event as Event)
+        }
+      } catch (error) {
+        if (signal.aborted) break
+        Log.Default.warn("event stream iteration failed, reconnecting", {
+          error: error instanceof Error ? error.message : error,
+        })
       }
 
       if (!signal.aborted) {

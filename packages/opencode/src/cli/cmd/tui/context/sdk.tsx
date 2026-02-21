@@ -79,8 +79,12 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
           },
         )
 
-        for await (const event of events.stream) {
-          handleEvent(event)
+        try {
+          for await (const event of events.stream) {
+            handleEvent(event)
+          }
+        } catch {
+          if (abort.signal.aborted) break
         }
 
         // Flush any remaining events
