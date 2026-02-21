@@ -1812,6 +1812,7 @@ name: test-skill
 description: Test skill
 a2a:
   expose: true
+  tags: ["test"]
 ---
 Test skill.
 `,
@@ -1828,10 +1829,13 @@ mode: a2a
 skills:
   - test-skill
 a2a:
+  baseUrl: https://example.test
+  version: "1.0.0"
   auth: ["spiffe"]
   spiffe:
-    audience: "test-audience"
-    allowedIds: ["spiffe://trust.domain/workload/*"]
+    audience: test-audience
+    allowedIds:
+      - spiffe://trust.domain/workload/*
 ---
 SPIFFE agent.
 `,
@@ -1877,14 +1881,6 @@ SPIFFE agent.
           process.env["OPENCODE_SPIFFE_AUDIENCE"] = "default-audience"
 
           try {
-            // First check if agent exists and has correct auth config
-            const cardResponse = await app.request("/.well-known/agents/spiffe-agent/card.json", {
-              headers: { "x-opencode-directory": tmp.path },
-            })
-            expect(cardResponse.status).toBe(200)
-            const card = await cardResponse.json()
-            console.log("Agent card security:", JSON.stringify(card.securityRequirements, null, 2))
-
             const response = await app.request("/a2a/spiffe-agent/tasks", {
               method: "GET",
               headers: {
@@ -1913,8 +1909,10 @@ SPIFFE agent.
             path.join(skillDir, "SKILL.md"),
             `---
 name: test-skill
+description: Test skill
 a2a:
   expose: true
+  tags: ["test"]
 ---
 Test.
 `,
@@ -1929,6 +1927,7 @@ name: spiffe-agent
 mode: a2a
 skills: [test-skill]
 a2a:
+  baseUrl: https://example.test
   auth: ["spiffe"]
   spiffe:
     audience: "correct-audience"
@@ -1995,8 +1994,10 @@ Agent.
             path.join(skillDir, "SKILL.md"),
             `---
 name: test-skill
+description: Test skill
 a2a:
   expose: true
+  tags: ["test"]
 ---
 Test.
 `,
@@ -2011,6 +2012,7 @@ name: spiffe-agent
 mode: a2a
 skills: [test-skill]
 a2a:
+  baseUrl: https://example.test
   auth: ["spiffe"]
 ---
 Agent.
@@ -2065,8 +2067,10 @@ Agent.
             path.join(skillDir, "SKILL.md"),
             `---
 name: test-skill
+description: Test skill
 a2a:
   expose: true
+  tags: ["test"]
 ---
 Test.
 `,
@@ -2081,6 +2085,7 @@ name: spiffe-agent
 mode: a2a
 skills: [test-skill]
 a2a:
+  baseUrl: https://example.test
   auth: ["spiffe"]
   spiffe:
     audience: "agent-specific-audience"
@@ -2115,7 +2120,7 @@ Agent.
           )
 
           process.env["SPIFFE_ENDPOINT_SOCKET"] = "unix:///tmp/spire-agent.sock"
-          process.env["OPENCODE_SPIFFE_AUDIENCE"] = "default-global-audience"
+          process.env["OPENCODE_SPIFFE_AUDIENCE"] = "default-audience"
 
           try {
             const response = await app.request("/a2a/spiffe-agent/tasks", {
@@ -2147,8 +2152,10 @@ Agent.
             path.join(skillDir, "SKILL.md"),
             `---
 name: test-skill
+description: Test skill
 a2a:
   expose: true
+  tags: ["test"]
 ---
 Test.
 `,
@@ -2163,6 +2170,7 @@ name: spiffe-agent
 mode: a2a
 skills: [test-skill]
 a2a:
+  baseUrl: https://example.test
   auth: ["spiffe"]
   spiffe:
     audience: "test-audience"
@@ -2234,8 +2242,10 @@ Agent.
             path.join(skillDir, "SKILL.md"),
             `---
 name: test-skill
+description: Test skill
 a2a:
   expose: true
+  tags: ["test"]
 ---
 Test.
 `,
@@ -2250,6 +2260,7 @@ name: spiffe-agent
 mode: a2a
 skills: [test-skill]
 a2a:
+  baseUrl: https://example.test
   auth: ["spiffe"]
 ---
 Agent.

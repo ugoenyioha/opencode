@@ -759,21 +759,27 @@ export const A2APlugin: Plugin = async () => {
         const token = bearerFromHeaders(headers)
         if (!token) continue
         
-        // Get per-agent SPIFFE config
-        const agentConfig = await Agent.get(agentId)
-        const spiffeConfig = (agentConfig?.a2a as any)?.spiffe as { trustDomain?: string; audience?: string; allowedIds?: string[] } | undefined
-        
-        // Audience: per-agent override or global env var
-        const audience = spiffeConfig?.audience ?? process.env["OPENCODE_SPIFFE_AUDIENCE"]
-        if (!audience) continue
-        
-        // Allowed IDs: per-agent override or global env var
-        const allowedIds = 
-          spiffeConfig?.allowedIds ??
-          process.env["OPENCODE_SPIFFE_ALLOWED_IDS"]?.split(",").map((s) => s.trim()).filter(Boolean)
-        
-        const { verifySPIFFE } = await import("../server/spiffe")
-        if (await verifySPIFFE(token, audience, allowedIds)) return true
+        try {
+          // Get per-agent SPIFFE config
+          const agentConfig = await Agent.get(agentId)
+          const spiffeConfig = (agentConfig?.a2a as any)?.spiffe as { trustDomain?: string; audience?: string; allowedIds?: string[] } | undefined
+          
+          // Audience: per-agent override or global env var
+          const audience = spiffeConfig?.audience ?? process.env["OPENCODE_SPIFFE_AUDIENCE"]
+          if (!audience) continue
+          
+          // Allowed IDs: per-agent override or global env var
+          const allowedIds = 
+            spiffeConfig?.allowedIds ??
+            process.env["OPENCODE_SPIFFE_ALLOWED_IDS"]?.split(",").map((s) => s.trim()).filter(Boolean)
+          
+          const { verifySPIFFE } = await import("../server/spiffe")
+          if (await verifySPIFFE(token, audience, allowedIds)) return true
+        } catch (error) {
+          // SPIFFE verification errors should fail closed (deny auth)
+          // This includes SPIRE Agent unavailability, validation failures, etc.
+          continue
+        }
         continue
       }
       
