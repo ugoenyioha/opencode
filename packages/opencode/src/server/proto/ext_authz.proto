@@ -1,0 +1,246 @@
+// Self-contained Envoy ext_authz v3 proto for OpenCode.
+//
+// This file defines the subset of envoy.service.auth.v3 types needed to
+// implement an ext_authz gRPC client.  It is wire-compatible with any
+// standard ext_authz server (OPA, SpiceDB, Cedar, custom) because it uses
+// the same package name and field numbers as the canonical Envoy protos.
+//
+// We vendor a flattened copy rather than importing the full Envoy proto
+// dependency tree (~25 files) because:
+//   1. We only need CheckRequest / CheckResponse / AttributeContext.
+//   2. @grpc/proto-loader resolves all types from a single file cleanly.
+//   3. Fewer moving parts = simpler build & fewer supply-chain deps.
+//
+// Source reference:
+//   https://github.com/envoyproxy/envoy/blob/main/api/envoy/service/auth/v3/external_auth.proto
+//   https://github.com/envoyproxy/envoy/blob/main/api/envoy/service/auth/v3/attribute_context.proto
+
+syntax = "proto3";
+
+package envoy.service.auth.v3;
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+import "google/rpc/status.proto";
+
+// ---------------------------------------------------------------------------
+// Authorization service
+// ---------------------------------------------------------------------------
+
+service Authorization {
+  // Performs authorization check based on the attributes associated with the
+  // incoming request, and returns status OK or not OK.
+  rpc Check(CheckRequest) returns (CheckResponse) {}
+}
+
+// ---------------------------------------------------------------------------
+// CheckRequest
+// ---------------------------------------------------------------------------
+
+message CheckRequest {
+  AttributeContext attributes = 1;
+}
+
+// ---------------------------------------------------------------------------
+// AttributeContext — describes the request being authorized
+// ---------------------------------------------------------------------------
+
+message AttributeContext {
+  // Describes a network peer (source or destination).
+  message Peer {
+    // Address of the peer (flattened — we use string instead of full Address).
+    // For our use-case, we populate this as "<ip>:<port>" or socket path.
+    Address address = 1;
+
+    // Canonical service name of the peer.
+    string service = 2;
+
+    // Labels (pod labels, VM tags, etc.).
+    map<string, string> labels = 3;
+
+    // Authenticated identity (e.g. SPIFFE ID, service account).
+    string principal = 4;
+
+    // X.509 certificate (PEM, URL-encoded) — optional.
+    string certificate = 5;
+  }
+
+  message Request {
+    // Timestamp when the proxy received the first byte.
+    google.protobuf.Timestamp time = 1;
+
+    // HTTP request attributes.
+    HttpRequest http = 2;
+  }
+
+  message HttpRequest {
+    // X-Request-ID or equivalent.
+    string id = 1;
+
+    // HTTP method (GET, POST, …).
+    string method = 2;
+
+    // Request headers (all lower-cased keys).
+    map<string, string> headers = 3;
+
+    // URL path including query string (no decoding).
+    string path = 4;
+
+    // Host / :authority header.
+    string host = 5;
+
+    // URL scheme (http / https).
+    string scheme = 6;
+
+    // Query string (deprecated in Envoy, included for compatibility).
+    string query = 7;
+
+    // Fragment (not sent in HTTP, always empty).
+    string fragment = 8;
+
+    // Request size in bytes (-1 if unknown).
+    int64 size = 9;
+
+    // Protocol version (HTTP/1.1, HTTP/2, etc.).
+    string protocol = 10;
+
+    // Request body (string).
+    string body = 11;
+
+    // Request body (bytes) — used when pack_as_bytes is true.
+    bytes raw_body = 12;
+  }
+
+  message TLSSession {
+    string sni = 1;
+  }
+
+  // Source peer (the caller).
+  Peer source = 1;
+
+  // Destination peer (this service).
+  Peer destination = 2;
+
+  // The HTTP request.
+  Request request = 4;
+
+  // Opaque key-value pairs for passing extra context to the authz server.
+  // This is where OpenCode puts agent name, skill, session ID, auth strategy, etc.
+  map<string, string> context_extensions = 10;
+
+  // Dynamic metadata (Struct).
+  //
+  // Note: Envoy uses config.core.v3.Metadata here (a wrapper around
+  // map<string, Struct>). We use Struct directly for simplicity — the
+  // ext_authz server should handle both.
+  google.protobuf.Struct metadata_context = 11;
+
+  // Route metadata.
+  google.protobuf.Struct route_metadata_context = 13;
+
+  // TLS session info.
+  TLSSession tls_session = 12;
+}
+
+// ---------------------------------------------------------------------------
+// Address (flattened from envoy.config.core.v3.Address)
+// ---------------------------------------------------------------------------
+
+message Address {
+  oneof address {
+    SocketAddress socket_address = 1;
+    Pipe pipe = 3;
+  }
+}
+
+message SocketAddress {
+  enum Protocol {
+    TCP = 0;
+    UDP = 1;
+  }
+  Protocol protocol = 1;
+  string address = 2;
+  oneof port_specifier {
+    uint32 port_value = 4;
+    string named_port = 5;
+  }
+  string resolver_name = 6;
+  string ipv4_compat = 7;
+}
+
+message Pipe {
+  string path = 1;
+  uint32 mode = 2;
+}
+
+// ---------------------------------------------------------------------------
+// CheckResponse
+// ---------------------------------------------------------------------------
+
+message CheckResponse {
+  // Status OK (code 0) allows the request.
+  // Any other code denies it.
+  google.rpc.Status status = 1;
+
+  oneof http_response {
+    DeniedHttpResponse denied_response = 2;
+    OkHttpResponse ok_response = 3;
+    // error_response uses the same DeniedHttpResponse shape (field 5).
+    DeniedHttpResponse error_response = 5;
+  }
+
+  // Dynamic metadata to pass downstream.
+  google.protobuf.Struct dynamic_metadata = 4;
+}
+
+// ---------------------------------------------------------------------------
+// DeniedHttpResponse / OkHttpResponse
+// ---------------------------------------------------------------------------
+
+message DeniedHttpResponse {
+  HttpStatus status = 1;
+  repeated HeaderValueOption headers = 2;
+  string body = 3;
+}
+
+message OkHttpResponse {
+  repeated HeaderValueOption headers = 2;
+  repeated string headers_to_remove = 5;
+  repeated HeaderValueOption response_headers_to_add = 6;
+  repeated QueryParameter query_parameters_to_set = 7;
+  repeated string query_parameters_to_remove = 8;
+}
+
+// ---------------------------------------------------------------------------
+// Supporting types (flattened from envoy.type.v3 / envoy.config.core.v3)
+// ---------------------------------------------------------------------------
+
+message HttpStatus {
+  // Standard HTTP status code enum.
+  // We use int32 for simplicity — the real Envoy proto uses an enum with all
+  // HTTP status codes.  The wire format is identical (varint).
+  int32 code = 1;
+}
+
+message HeaderValueOption {
+  HeaderValue header = 1;
+  // When true, append to existing header. When false, overwrite.
+  google.protobuf.BoolValue append = 2;
+  bool append_action = 3;
+  bool keep_empty_value = 4;
+}
+
+message HeaderValue {
+  string key = 1;
+  string value = 2;
+  bytes raw_value = 3;
+}
+
+message QueryParameter {
+  string key = 1;
+  string value = 2;
+}
+
+// google.protobuf.BoolValue (used by HeaderValueOption.append) is resolved
+// from google/protobuf/wrappers.proto which is imported at the top of this file.

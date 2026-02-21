@@ -11,7 +11,8 @@ import { MessageV2 } from "@/session/message-v2"
 import { Bus } from "@/bus"
 import { Instance } from "@/project/instance"
 import { bearerFromHeaders, verifyBearerForStrategy, type StrictBearerStrategy } from "../server/compat/auth"
-import { validAPIKey } from "../server/auth-policy"
+import { validAPIKey, type AuthnResult } from "../server/auth-policy"
+import { emitAuthDecision } from "../server/auth-observability"
 // Auth is enforced per-agent in agentHandler() — agent config replaces server-level auth.
 
 const log = Log.create({ service: "a2a" })
@@ -739,6 +740,9 @@ export const A2APlugin: Plugin = async () => {
     securitySchemes: a2a.securitySchemes,
   }
 
+  // Server-level ext_authz config (per-agent can override)
+  const serverExtAuthz = (a2a as any).authz?.extAuthz as import("../server/ext-authz").ExtAuthzConfig | undefined
+
   const agents = await discoverA2AAgents(serverConfig)
   const byID = new Map(agents.map((agent) => [agent.id, agent]))
 
@@ -748,19 +752,20 @@ export const A2APlugin: Plugin = async () => {
   })
 
   /**
-   * Check per-agent auth strategies. Returns true if any strategy passes.
-   * Agent auth config replaces server-level auth (not additive).
+   * Check per-agent auth strategies. Returns the authentication result including
+   * the caller's principal identity. Agent auth config replaces server-level auth
+   * (not additive).
    */
   async function checkAgentAuth(
     strategies: AuthStrategy[],
     headers: Headers,
     agentId: string,
-  ): Promise<boolean> {
-    if (strategies.length === 0) return true // No auth required (public agent)
+  ): Promise<AuthnResult> {
+    if (strategies.length === 0) return { ok: true, strategy: "none", principal: "" } // No auth required (public agent)
 
     for (const strategy of strategies) {
       if (strategy === "api-key") {
-        if (validAPIKey(headers)) return true
+        if (validAPIKey(headers)) return { ok: true, strategy: "api-key", principal: "api-key" }
         continue
       }
       if (strategy === "plugin") continue // Enforced by plugin hooks, not here
@@ -785,7 +790,8 @@ export const A2APlugin: Plugin = async () => {
             process.env["OPENCODE_SPIFFE_ALLOWED_IDS"]?.split(",").map((s) => s.trim()).filter(Boolean)
           
           const { verifySPIFFE } = await import("../server/spiffe")
-          if (await verifySPIFFE(token, audience, allowedIds)) return true
+          const spiffeId = await verifySPIFFE(token, audience, allowedIds)
+          if (spiffeId) return { ok: true, strategy: "spiffe", principal: spiffeId }
         } catch (error) {
           // SPIFFE verification errors should fail closed (deny auth)
           // This includes SPIRE Agent unavailability, validation failures, etc.
@@ -802,27 +808,121 @@ export const A2APlugin: Plugin = async () => {
         route: `a2a.${agentId}` as any,
         source: "centralized",
       })
-      if (ok) return true
+      // TODO: extract sub/principal from verified JWT claims for richer identity
+      if (ok) return { ok: true, strategy: strategy as any, principal: `${strategy}:verified` }
     }
-    return false
+    return { ok: false, strategy: "none", principal: "" }
   }
 
   /**
-   * Agent lookup and auth handler. Validates agent exists and enforces per-agent auth.
-   * Returns an error response if agent not found or auth fails, undefined if all checks pass.
+   * Resolve the ext_authz config for an agent: per-agent override > server-level > none.
    */
+  async function resolveExtAuthzConfig(agentId: string): Promise<import("../server/ext-authz").ExtAuthzConfig | undefined> {
+    try {
+      const agentConfig = await Agent.get(agentId)
+      const perAgentAuthz = (agentConfig?.a2a as any)?.authz?.extAuthz
+      if (perAgentAuthz) return perAgentAuthz
+    } catch {
+      // Fall through to server-level
+    }
+    return serverExtAuthz
+  }
+
+  /**
+   * Agent lookup and auth handler. Validates agent exists and enforces per-agent auth,
+   * then runs ext_authz if configured.
+   * Returns an error response if agent not found or auth/authz fails.
+   * On success returns `undefined` and attaches the `AuthnResult` to the request
+   * via the `_authnResult` map so downstream handlers can access the caller identity.
+   */
+  const _authnResults = new WeakMap<Request, AuthnResult>()
+
   async function agentHandler(params: Record<string, string>, req: Request): Promise<Response | undefined> {
     const agentId = params.agent
     if (!agentId) return json({ error: { code: "BadRequest", message: "Missing agent ID" } }, 400)
     const agent = byID.get(agentId)
     if (!agent) return json({ error: { code: "NotFound", message: `Unknown agent: ${agentId}` } }, 404)
     
-    // Per-agent auth: agent config replaces server-level auth
-    if (!(await checkAgentAuth(agent.auth, req.headers, agentId))) {
+    // Step 1: Authentication (who are you?)
+    const authn = await checkAgentAuth(agent.auth, req.headers, agentId)
+    if (!authn.ok) {
       return json({ error: { code: "Unauthorized", message: "Authentication required" } }, 401)
     }
     
-    return undefined // Agent exists and auth passed, continue to handler
+    // Stash the authn result so ext_authz and handlers can access the caller identity
+    _authnResults.set(req, authn)
+
+    // Step 2: Authorization via ext_authz (are you allowed to do this?)
+    const extAuthzConfig = await resolveExtAuthzConfig(agentId)
+    if (extAuthzConfig) {
+      try {
+        const { checkAuthorization, requestToExtAuthzContext } = await import("../server/ext-authz")
+        const context = requestToExtAuthzContext(req, {
+          agentId,
+          authStrategy: authn.strategy,
+        })
+        const decision = await checkAuthorization(extAuthzConfig, context, authn)
+
+        if (!decision.allowed) {
+          log.warn("ext_authz denied request", {
+            agentId,
+            principal: authn.principal,
+            reason: decision.reason,
+            latencyMs: decision.latencyMs,
+          })
+          emitAuthDecision({
+            surface: "a2a",
+            route: "a2a.protected",
+            outcome: "deny",
+            strategy: "ext_authz",
+            reason: decision.reason.includes("timeout") ? "ext_authz_timeout" : "ext_authz_denied",
+          })
+          const statusCode = decision.statusCode >= 400 && decision.statusCode < 600 ? decision.statusCode : 403
+          return json(
+            { error: { code: "Forbidden", message: decision.reason || "Authorization denied" } },
+            statusCode,
+          )
+        }
+
+        emitAuthDecision({
+          surface: "a2a",
+          route: "a2a.protected",
+          outcome: "allow",
+          strategy: "ext_authz",
+          reason: "none",
+        })
+
+        log.debug("ext_authz allowed request", {
+          agentId,
+          principal: authn.principal,
+          latencyMs: decision.latencyMs,
+        })
+      } catch (error) {
+        // ext_authz module failed to load or unexpected error
+        const message = error instanceof Error ? error.message : String(error)
+        log.error("ext_authz unexpected error", { error: message, agentId })
+        
+        emitAuthDecision({
+          surface: "a2a",
+          route: "a2a.protected",
+          outcome: extAuthzConfig.failOpen ? "allow" : "deny",
+          strategy: "ext_authz",
+          reason: "ext_authz_error",
+        })
+
+        // Fail-closed unless failOpen is configured
+        if (!extAuthzConfig.failOpen) {
+          return json({ error: { code: "InternalError", message: "Authorization service unavailable" } }, 503)
+        }
+      }
+    }
+
+    return undefined // Agent exists, auth+authz passed, continue to handler
+  }
+
+  /** Get the authentication result for a request (populated by agentHandler). */
+  function getAuthnResult(req: Request): AuthnResult | undefined {
+    return _authnResults.get(req)
   }
 
   const messageStreamHandler = async (req: Request, params: Record<string, string>) => {

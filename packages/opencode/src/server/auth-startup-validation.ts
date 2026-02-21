@@ -507,4 +507,91 @@ export async function validateStartupAuthConfig(context: ValidatorContext) {
       }
     }
   }
+
+  // Validate ext_authz config (server-level)
+  validateExtAuthzConfig(context.config)
+}
+
+// ---------------------------------------------------------------------------
+// ext_authz startup validation
+// ---------------------------------------------------------------------------
+
+function validateExtAuthzConfig(config: Config.Info) {
+  const extAuthzConfigs: Array<{ path: string; config: any }> = []
+
+  // Server-level ext_authz
+  const serverExtAuthz = (config.server?.a2a as any)?.authz?.extAuthz
+  if (serverExtAuthz) {
+    extAuthzConfigs.push({ path: "server.a2a.authz.extAuthz", config: serverExtAuthz })
+  }
+
+  // Per-agent ext_authz
+  if (config.agent) {
+    for (const [agentName, agentConfig] of Object.entries(config.agent)) {
+      const agentExtAuthz = ((agentConfig as any)?.a2a as any)?.authz?.extAuthz
+      if (agentExtAuthz) {
+        extAuthzConfigs.push({ path: `agent.${agentName}.a2a.authz.extAuthz`, config: agentExtAuthz })
+      }
+    }
+  }
+
+  for (const { path, config: extConfig } of extAuthzConfigs) {
+    // endpoint is required
+    if (!extConfig.endpoint || typeof extConfig.endpoint !== "string") {
+      fail({
+        code: "AUTH_CONFIG_MISSING",
+        strategy: "ext_authz" as any,
+        key: `${path}.endpoint`,
+        reason: "required",
+      })
+    }
+
+    // Validate endpoint format
+    const endpoint = extConfig.endpoint as string
+    if (!endpoint.startsWith("grpc://") && !endpoint.startsWith("dns:///") && !endpoint.includes(":")) {
+      fail({
+        code: "AUTH_CONFIG_INVALID_URL",
+        strategy: "ext_authz" as any,
+        key: `${path}.endpoint`,
+        reason: "invalid_endpoint_format",
+      })
+    }
+
+    // Validate timeout bounds (if specified as number)
+    const timeout = extConfig.timeout
+    if (typeof timeout === "number") {
+      if (timeout < 10 || timeout > 30000) {
+        fail({
+          code: "AUTH_CONFIG_BOUNDS",
+          strategy: "ext_authz" as any,
+          key: `${path}.timeout`,
+          reason: "timeout_out_of_range_10_30000ms",
+        })
+      }
+    } else if (typeof timeout === "string") {
+      // Parse "500ms" or "2s" format
+      const match = timeout.match(/^(\d+)(ms|s)$/)
+      if (!match) {
+        fail({
+          code: "AUTH_CONFIG_INVALID_URL",
+          strategy: "ext_authz" as any,
+          key: `${path}.timeout`,
+          reason: "invalid_timeout_format",
+        })
+      }
+    }
+
+    // Validate withRequestBody.maxBytes bounds
+    if (extConfig.withRequestBody?.maxBytes !== undefined) {
+      const maxBytes = extConfig.withRequestBody.maxBytes
+      if (typeof maxBytes !== "number" || maxBytes < 0 || maxBytes > 1024 * 1024) {
+        fail({
+          code: "AUTH_CONFIG_BOUNDS",
+          strategy: "ext_authz" as any,
+          key: `${path}.withRequestBody.maxBytes`,
+          reason: "max_bytes_out_of_range_0_1MB",
+        })
+      }
+    }
+  }
 }

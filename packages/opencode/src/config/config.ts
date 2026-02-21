@@ -689,6 +689,29 @@ export namespace Config {
   // A2A types - used by both Agent.a2a and Server.a2a
   const A2AAuth = z.enum(["api-key", "jwt", "spiffe", "oauth2", "oidc", "plugin"])
 
+  // ext_authz config schema (Envoy-compatible external authorization)
+  const ExtAuthzConfig = z
+    .object({
+      endpoint: z.string().describe("gRPC endpoint (e.g. grpc://opa:9191, dns:///opa.svc.cluster.local:9191)"),
+      timeout: z
+        .union([z.number().int().positive(), z.string()])
+        .optional()
+        .describe("Timeout for ext_authz calls (number in ms or string like '500ms')"),
+      failOpen: z.boolean().optional().default(false).describe("Allow requests when ext_authz server is unreachable (default: false)"),
+      withRequestBody: z
+        .object({
+          maxBytes: z.number().int().positive().optional().describe("Max request body bytes to forward"),
+          allowPartial: z.boolean().optional().describe("Allow partial body if body exceeds maxBytes"),
+        })
+        .optional()
+        .describe("Optional: forward request body to the authz server"),
+      contextExtensions: z
+        .record(z.string(), z.string())
+        .optional()
+        .describe("Static key-value pairs added to CheckRequest.attributes.context_extensions"),
+    })
+    .strict()
+
   const A2ASecurityScheme = z.discriminatedUnion("type", [
     z.object({
       type: z.literal("apiKey"),
@@ -761,6 +784,12 @@ export namespace Config {
             })
             .optional()
             .describe("SPIFFE-specific configuration for this agent"),
+          authz: z
+            .object({
+              extAuthz: ExtAuthzConfig.optional().describe("Per-agent ext_authz override (inherits from server.a2a.authz if not set)"),
+            })
+            .optional()
+            .describe("Per-agent authorization config (overrides server.a2a.authz)"),
         })
         .optional()
         .describe("A2A-specific configuration (only applies when mode: 'a2a')"),
@@ -1022,7 +1051,7 @@ export namespace Config {
       .describe("Control diff rendering style: 'auto' adapts to terminal width, 'stacked' always shows single column"),
   })
 
-  // Server-level A2A config (references A2AAuth and A2ASecurityScheme defined above)
+  // Server-level A2A config (references A2AAuth, A2ASecurityScheme, ExtAuthzConfig defined above)
   const A2A = z
     .object({
       enabled: z.boolean().optional().describe("Enable A2A routes and agent card generation"),
@@ -1035,6 +1064,12 @@ export namespace Config {
         .record(z.string(), A2ASecurityScheme)
         .optional()
         .describe("Named security schemes referenced by A2A routes and skills"),
+      authz: z
+        .object({
+          extAuthz: ExtAuthzConfig.optional().describe("Envoy-compatible ext_authz gRPC authorization"),
+        })
+        .optional()
+        .describe("Authorization config (runs after authentication). Mirrors Envoy filter chain model."),
     })
     .strict()
 

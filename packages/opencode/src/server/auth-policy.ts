@@ -16,6 +16,18 @@ type AuthPolicy =
   | { mode: "global-default" }
   | { mode: "strategies"; anyOf: AuthStrategy[] }
 
+/**
+ * Result of authentication: identifies the caller.
+ * `principal` is the authenticated identity string (e.g. SPIFFE ID, JWT sub,
+ * service account). Empty when auth is not applicable or not resolved.
+ */
+export type AuthnResult = {
+  ok: boolean
+  strategy: AuthStrategyLabel
+  /** The authenticated identity — empty when auth is not required or failed. */
+  principal: string
+}
+
 export type AuthorizationDecision = {
   ok: boolean
   policyMode: AuthPolicy["mode"]
@@ -23,6 +35,8 @@ export type AuthorizationDecision = {
   surface: ReturnType<typeof surfaceFromRoute>
   strategy: AuthStrategyLabel
   reason: AuthReason
+  /** Authenticated caller identity (SPIFFE ID, JWT sub, etc.). */
+  principal: string
 }
 
 function pathMatches(reqPath: string, pattern: string): boolean {
@@ -81,12 +95,20 @@ function validBasicAuth(headers: Headers) {
   }
 }
 
+/**
+ * Evaluate a single auth strategy.
+ * Returns the authenticated principal string on success, or `false` on failure.
+ * The principal is a human-readable identifier:
+ *   - "api-key" for API key auth (no identity beyond "has the key")
+ *   - SPIFFE ID (e.g. "spiffe://trust-domain/ns/foo/sa/bar") for SPIFFE
+ *   - JWT subject for jwt/oidc/oauth2
+ */
 async function strategyPasses(
   strategy: AuthStrategy,
   headers: Headers,
   context: { surface: ReturnType<typeof surfaceFromRoute>; route: AuthRoute },
-) {
-  if (strategy === "api-key") return validAPIKey(headers)
+): Promise<string | false> {
+  if (strategy === "api-key") return validAPIKey(headers) ? "api-key" : false
   // plugin auth is enforced by explicit plugin hooks (http.request).
   // Do not treat it as pre-authorized at the centralized middleware gate.
   if (strategy === "plugin") return false
@@ -107,11 +129,13 @@ async function strategyPasses(
   if (strategy === "jwt" || strategy === "oidc" || strategy === "oauth2") {
     const token = bearerFromHeaders(headers)
     if (!token) return false
-    return verifyBearerForStrategy(strategy, token, {
+    const ok = await verifyBearerForStrategy(strategy, token, {
       surface: context.surface,
       route: context.route,
       source: "centralized",
     })
+    // TODO: extract sub/principal from verified JWT claims for richer identity
+    return ok ? `${strategy}:verified` : false
   }
   return false
 }
@@ -152,6 +176,7 @@ export async function evaluateAuthorization(
       surface,
       strategy: "none",
       reason: "none",
+      principal: "",
     }
   }
 
@@ -163,6 +188,7 @@ export async function evaluateAuthorization(
       surface,
       strategy: "none",
       reason: "none",
+      principal: "",
     }
   }
 
@@ -179,12 +205,13 @@ export async function evaluateAuthorization(
       surface,
       strategy: byApiKey ? "api-key" : byBasic ? "basic" : "none",
       reason: ok ? "none" : hasApiKey ? "invalid_api_key" : "invalid_basic_auth",
+      principal: byApiKey ? "api-key" : byBasic ? "basic" : "",
     }
   }
 
   for (const strategy of policy.anyOf) {
-    const passed = await strategyPasses(strategy, headers, { surface, route })
-    if (passed) {
+    const principal = await strategyPasses(strategy, headers, { surface, route })
+    if (principal !== false) {
       return {
         ok: true,
         policyMode: "strategies",
@@ -192,6 +219,7 @@ export async function evaluateAuthorization(
         surface,
         strategy: strategyLabel(strategy),
         reason: "none",
+        principal,
       }
     }
   }
@@ -203,6 +231,7 @@ export async function evaluateAuthorization(
     surface,
     strategy: "none",
     reason: "invalid_token",
+    principal: "",
   }
 }
 

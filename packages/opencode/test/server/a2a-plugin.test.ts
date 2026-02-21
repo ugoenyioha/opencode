@@ -2028,7 +2028,7 @@ SPIFFE agent.
           const verifySpy = spyOn(spiffeModule, "verifySPIFFE").mockImplementation(
             async (token: string, audience: string, allowedIds?: string[]) => {
               if (token === "valid-jwt-svid" && audience === "test-audience") {
-                return true
+                return "spiffe://trust.domain/workload/test"
               }
               return false
             },
@@ -2115,8 +2115,11 @@ Agent.
           const spiffeModule = await import("../../src/server/spiffe")
           const verifySpy = spyOn(spiffeModule, "verifySPIFFE").mockImplementation(
             async (token: string, audience: string) => {
-              // Only succeeds with correct audience
-              return audience === "correct-audience" && token === "valid-token"
+              // Only succeeds with correct audience — returns SPIFFE ID or false
+              if (audience === "correct-audience" && token === "valid-token") {
+                return "spiffe://trust.domain/workload/test"
+              }
+              return false
             },
           )
 
@@ -2273,7 +2276,10 @@ Agent.
           const spiffeModule = await import("../../src/server/spiffe")
           const verifySpy = spyOn(spiffeModule, "verifySPIFFE").mockImplementation(
             async (token: string, audience: string) => {
-              return audience === "agent-specific-audience" && token === "valid-token"
+              if (audience === "agent-specific-audience" && token === "valid-token") {
+                return "spiffe://trust.domain/workload/test"
+              }
+              return false
             },
           )
 

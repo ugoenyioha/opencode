@@ -247,13 +247,15 @@ function isAllowedSpiffeId(spiffeId: string, allowedIds?: string[]): boolean {
  * @param token     JWT-SVID Bearer token
  * @param audience  Required audience claim
  * @param allowedIds  Optional list of allowed SPIFFE ID glob patterns
- * @returns `true` if the token is valid and the SPIFFE ID is allowed
+ * @returns The authenticated SPIFFE ID string on success, or `false` on failure.
+ *          Returning the SPIFFE ID (rather than boolean) allows the auth pipeline
+ *          to thread the caller's identity into ext_authz and observability.
  */
 export async function verifySPIFFE(
   token: string,
   audience: string,
   allowedIds?: string[],
-): Promise<boolean> {
+): Promise<string | false> {
   try {
     const result = await callValidateJWTSVID(audience, token)
 
@@ -276,7 +278,7 @@ export async function verifySPIFFE(
       audience,
     })
 
-    return true
+    return result.spiffeId
   } catch (error) {
     // Fail-closed: any error (network, timeout, validation failure) → deny
     const message = error instanceof Error ? error.message : String(error)
