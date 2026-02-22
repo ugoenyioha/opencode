@@ -510,6 +510,52 @@ export async function validateStartupAuthConfig(context: ValidatorContext) {
 
   // Validate ext_authz config (server-level)
   validateExtAuthzConfig(context.config)
+
+  // Validate A2A api-key auth config
+  validateA2AApiKeyConfig(context)
+}
+
+function normalizeA2AAuth(raw: unknown): string[] {
+  if (raw === undefined) return []
+  if (Array.isArray(raw)) return raw
+  return [raw as string]
+}
+
+function validateA2AApiKeyConfig(context: ValidatorContext) {
+  const a2a = context.config.server?.a2a
+  if (!a2a?.enabled) return
+
+  // Check server-level A2A auth
+  const serverAuth = normalizeA2AAuth((a2a as any).auth)
+  if (serverAuth.includes("api-key")) {
+    if (!context.getEnv("OPENCODE_A2A_API_KEY")) {
+      fail({
+        code: "AUTH_CONFIG_MISSING",
+        strategy: "api-key",
+        key: "env.OPENCODE_A2A_API_KEY",
+        reason: "required",
+      })
+    }
+  }
+
+  // Check per-agent A2A auth
+  if (context.config.agent) {
+    for (const [agentName, agentConfig] of Object.entries(context.config.agent)) {
+      const agentA2A = (agentConfig as any)?.a2a
+      if (!agentA2A) continue
+      const agentAuth = normalizeA2AAuth(agentA2A.auth)
+      if (agentAuth.includes("api-key")) {
+        if (!context.getEnv("OPENCODE_A2A_API_KEY")) {
+          fail({
+            code: "AUTH_CONFIG_MISSING",
+            strategy: "api-key",
+            key: "env.OPENCODE_A2A_API_KEY",
+            reason: "required",
+          })
+        }
+      }
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

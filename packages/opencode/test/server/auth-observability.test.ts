@@ -81,7 +81,7 @@ Agent body.
                 apiKey: {
                   type: "apiKey",
                   location: "header",
-                  name: "X-API-Key",
+                  name: "X-A2A-Key",
                 },
               },
             },

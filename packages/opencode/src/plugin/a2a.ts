@@ -11,7 +11,7 @@ import { MessageV2 } from "@/session/message-v2"
 import { Bus } from "@/bus"
 import { Instance } from "@/project/instance"
 import { bearerFromHeaders, verifyBearerForStrategy, type StrictBearerStrategy } from "../server/compat/auth"
-import { validAPIKey, type AuthnResult } from "../server/auth-policy"
+import { validA2AApiKey, type AuthnResult } from "../server/auth-policy"
 import { emitAuthDecision } from "../server/auth-observability"
 // Auth is enforced per-agent in agentHandler() — agent config replaces server-level auth.
 
@@ -771,7 +771,7 @@ export const A2APlugin: Plugin = async () => {
 
     for (const strategy of strategies) {
       if (strategy === "api-key") {
-        if (validAPIKey(headers)) return { ok: true, strategy: "api-key", principal: "api-key" }
+        if (validA2AApiKey(headers)) return { ok: true, strategy: "api-key", principal: "api-key" }
         continue
       }
       if (strategy === "plugin") continue // Enforced by plugin hooks, not here
@@ -944,7 +944,7 @@ export const A2APlugin: Plugin = async () => {
 
     for (const strategy of strategies) {
       if (strategy === "api-key") {
-        if (validAPIKey(headers)) return { ok: true, strategy: "api-key", principal: "api-key" }
+        if (validA2AApiKey(headers)) return { ok: true, strategy: "api-key", principal: "api-key" }
         continue
       }
       if (strategy === "plugin") continue
