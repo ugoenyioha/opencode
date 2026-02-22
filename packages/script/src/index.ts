@@ -32,7 +32,12 @@ const IS_PREVIEW = CHANNEL !== "latest"
 
 const VERSION = await (async () => {
   if (env.OPENCODE_VERSION) return env.OPENCODE_VERSION
-  if (IS_PREVIEW) return `0.0.0-${CHANNEL}-${new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "")}`
+  if (IS_PREVIEW) {
+    const timestamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "")
+    const hash = await $`git rev-parse --short=9 HEAD`.text().then((x) => x.trim()).catch(() => "unknown")
+    const dirty = await $`git diff --quiet HEAD`.then(() => "").catch(() => "-dirty")
+    return `0.0.0-${CHANNEL}-${timestamp}-${hash}${dirty}`
+  }
   const version = await fetch("https://registry.npmjs.org/opencode-ai/latest")
     .then((res) => {
       if (!res.ok) throw new Error(res.statusText)

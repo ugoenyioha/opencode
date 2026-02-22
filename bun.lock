@@ -330,6 +330,7 @@
         "open": "10.1.2",
         "opentui-spinner": "0.0.6",
         "partial-json": "0.1.7",
+        "protobufjs": "7.5.4",
         "remeda": "catalog:",
         "solid-js": "catalog:",
         "spiffe": "0.5.0",
@@ -502,10 +503,10 @@
     },
   },
   "trustedDependencies": [
-    "protobufjs",
+    "tree-sitter-bash",
     "esbuild",
     "web-tree-sitter",
-    "tree-sitter-bash",
+    "protobufjs",
   ],
   "patchedDependencies": {
     "@openrouter/ai-sdk-provider@1.5.4": "patches/@openrouter%2Fai-sdk-provider@1.5.4.patch",
