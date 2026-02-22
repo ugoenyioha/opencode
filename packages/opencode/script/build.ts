@@ -169,7 +169,9 @@ for (const item of targets) {
   const workerRelativePath = path.relative(dir, parserWorker).replaceAll("\\", "/")
 
   await Bun.build({
-    conditions: ["browser"],
+    // Linux binaries are used for server/container runtime where grpc-js must
+    // resolve Node's http2 implementation (not browser polyfills).
+    conditions: item.os === "linux" ? ["node"] : ["browser"],
     tsconfig: "./tsconfig.json",
     plugins: [solidPlugin],
     sourcemap: "external",

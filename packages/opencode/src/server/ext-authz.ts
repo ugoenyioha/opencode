@@ -6,9 +6,8 @@
  * Cedar adapters, custom servers).
  *
  * Design decisions:
- *   - Uses @grpc/proto-loader to load a self-contained proto at runtime
- *     (no codegen, no 25-file dependency tree).
- *   - Lazy-loads gRPC + proto deps to avoid import errors when ext_authz
+ *   - Uses static protobuf codecs (no runtime proto-loader/protobuf file I/O).
+ *   - Lazy-loads gRPC deps to avoid import errors when ext_authz
  *     is not configured.
  *   - Client lifecycle: create-on-first-use, reconnect on failure with cooldown.
  *   - Fail-closed by default (configurable via `failOpen`).
@@ -20,9 +19,7 @@
  */
 
 import { Log } from "@/util/log"
-import path from "path"
-import fs from "fs"
-import os from "os"
+import protobuf from "protobufjs"
 import type { AuthnResult } from "./auth-policy"
 
 const log = Log.create({ service: "ext-authz" })
@@ -114,99 +111,254 @@ export type ExtAuthzRequestContext = {
 }
 
 // ---------------------------------------------------------------------------
-// Lazy-loaded gRPC + proto-loader deps
+// Lazy-loaded gRPC deps + static protobuf codec (no runtime proto-loader)
 // ---------------------------------------------------------------------------
 
 let _grpc: typeof import("@grpc/grpc-js") | null = null
-let _protoLoader: typeof import("@grpc/proto-loader") | null = null
 let _authzServiceDef: any = null
 
 async function loadGrpc() {
-  if (!_grpc) {
-    _grpc = await import("@grpc/grpc-js")
-  }
+  if (!_grpc) _grpc = await import("@grpc/grpc-js")
   return _grpc
 }
 
-// Embedded proto contents — ensures the proto files are available even in
-// compiled binaries (Bun.build compile) where __dirname doesn't resolve
-// to the source tree.
-const EXT_AUTHZ_PROTO = `syntax = "proto3";
-package envoy.service.auth.v3;
-import "google/protobuf/struct.proto";
-import "google/protobuf/timestamp.proto";
-import "google/protobuf/wrappers.proto";
-import "google/rpc/status.proto";
-service Authorization { rpc Check(CheckRequest) returns (CheckResponse) {} }
-message CheckRequest { AttributeContext attributes = 1; }
-message AttributeContext {
-  message Peer { Address address = 1; string service = 2; map<string, string> labels = 3; string principal = 4; string certificate = 5; }
-  message Request { google.protobuf.Timestamp time = 1; HttpRequest http = 2; }
-  message HttpRequest { string id = 1; string method = 2; map<string, string> headers = 3; string path = 4; string host = 5; string scheme = 6; string query = 7; string fragment = 8; int64 size = 9; string protocol = 10; string body = 11; bytes raw_body = 12; }
-  message TLSSession { string sni = 1; }
-  Peer source = 1; Peer destination = 2; Request request = 4; map<string, string> context_extensions = 10;
-  google.protobuf.Struct metadata_context = 11; google.protobuf.Struct route_metadata_context = 13; TLSSession tls_session = 12;
+const encodeMap = (w: protobuf.Writer, field: number, map: Record<string, string>) => {
+  for (const [k, v] of Object.entries(map)) {
+    w.uint32((field << 3) | 2).fork().uint32(10).string(k).uint32(18).string(v).ldelim()
+  }
 }
-message Address { oneof address { SocketAddress socket_address = 1; Pipe pipe = 3; } }
-message SocketAddress { enum Protocol { TCP = 0; UDP = 1; } Protocol protocol = 1; string address = 2; oneof port_specifier { uint32 port_value = 4; string named_port = 5; } string resolver_name = 6; string ipv4_compat = 7; }
-message Pipe { string path = 1; uint32 mode = 2; }
-message CheckResponse { google.rpc.Status status = 1; oneof http_response { DeniedHttpResponse denied_response = 2; OkHttpResponse ok_response = 3; DeniedHttpResponse error_response = 5; } google.protobuf.Struct dynamic_metadata = 4; }
-message DeniedHttpResponse { HttpStatus status = 1; repeated HeaderValueOption headers = 2; string body = 3; }
-message OkHttpResponse { repeated HeaderValueOption headers = 2; repeated string headers_to_remove = 5; repeated HeaderValueOption response_headers_to_add = 6; repeated QueryParameter query_parameters_to_set = 7; repeated string query_parameters_to_remove = 8; }
-message HttpStatus { int32 code = 1; }
-message HeaderValueOption { HeaderValue header = 1; google.protobuf.BoolValue append = 2; bool append_action = 3; bool keep_empty_value = 4; }
-message HeaderValue { string key = 1; string value = 2; bytes raw_value = 3; }
-message QueryParameter { string key = 1; string value = 2; }
-`
 
-const GOOGLE_RPC_STATUS_PROTO = `syntax = "proto3";
-package google.rpc;
-import "google/protobuf/any.proto";
-message Status { int32 code = 1; string message = 2; repeated google.protobuf.Any details = 3; }
-`
-
-let _protoDir: string | null = null
-
-/**
- * Stage embedded proto files to a temp directory so @grpc/proto-loader can
- * resolve them. The directory is reused across calls and cleaned up on exit.
- */
-function getProtoDir(): string {
-  if (_protoDir) return _protoDir
-  _protoDir = fs.mkdtempSync(path.join(os.tmpdir(), "opencode-ext-authz-"))
-  const googleRpcDir = path.join(_protoDir, "google", "rpc")
-  fs.mkdirSync(googleRpcDir, { recursive: true })
-  fs.writeFileSync(path.join(_protoDir, "ext_authz.proto"), EXT_AUTHZ_PROTO)
-  fs.writeFileSync(path.join(googleRpcDir, "status.proto"), GOOGLE_RPC_STATUS_PROTO)
-  return _protoDir
+const encodeCheckRequest = (input: any) => {
+  const w = protobuf.Writer.create()
+  const a = input?.attributes
+  if (!a) return w.finish()
+  w.uint32(10).fork()
+  const source = a.source
+  if (source) {
+    w.uint32(10).fork()
+    if (source.service) w.uint32(18).string(source.service)
+    if (source.principal) w.uint32(34).string(source.principal)
+    w.ldelim()
+  }
+  const destination = a.destination
+  if (destination) {
+    w.uint32(18).fork()
+    if (destination.service) w.uint32(18).string(destination.service)
+    w.ldelim()
+  }
+  const req = a.request?.http
+  if (req) {
+    w.uint32(34).fork().uint32(18).fork()
+    if (req.id) w.uint32(10).string(req.id)
+    if (req.method) w.uint32(18).string(req.method)
+    if (req.headers) encodeMap(w, 3, req.headers)
+    if (req.path) w.uint32(34).string(req.path)
+    if (req.host) w.uint32(42).string(req.host)
+    if (req.scheme) w.uint32(50).string(req.scheme)
+    if (req.protocol) w.uint32(82).string(req.protocol)
+    if (typeof req.size === "number") w.uint32(72).int64(req.size)
+    if (req.body) w.uint32(90).string(req.body)
+    w.ldelim().ldelim()
+  }
+  if (a.contextExtensions) encodeMap(w, 10, a.contextExtensions)
+  w.ldelim()
+  return w.finish()
 }
+
+const decodeStatus = (r: protobuf.Reader) => {
+  const end = r.uint32() + r.pos
+  const out: any = { code: 0, message: "" }
+  while (r.pos < end) {
+    const tag = r.uint32()
+    if ((tag >>> 3) === 1) {
+      out.code = r.int32()
+      continue
+    }
+    if ((tag >>> 3) === 2) {
+      out.message = r.string()
+      continue
+    }
+    r.skipType(tag & 7)
+  }
+  return out
+}
+
+const decodeHeaderValue = (r: protobuf.Reader) => {
+  const end = r.uint32() + r.pos
+  const out: any = { key: "", value: "" }
+  while (r.pos < end) {
+    const tag = r.uint32()
+    if ((tag >>> 3) === 1) {
+      out.key = r.string()
+      continue
+    }
+    if ((tag >>> 3) === 2) {
+      out.value = r.string()
+      continue
+    }
+    r.skipType(tag & 7)
+  }
+  return out
+}
+
+const decodeHeaderValueOption = (r: protobuf.Reader) => {
+  const end = r.uint32() + r.pos
+  const out: any = {}
+  while (r.pos < end) {
+    const tag = r.uint32()
+    if ((tag >>> 3) === 1) {
+      out.header = decodeHeaderValue(r)
+      continue
+    }
+    r.skipType(tag & 7)
+  }
+  return out
+}
+
+const decodeOkResponse = (r: protobuf.Reader) => {
+  const end = r.uint32() + r.pos
+  const out: any = { headers: [], headersToRemove: [] }
+  while (r.pos < end) {
+    const tag = r.uint32()
+    if ((tag >>> 3) === 2) {
+      out.headers.push(decodeHeaderValueOption(r))
+      continue
+    }
+    if ((tag >>> 3) === 5) {
+      out.headersToRemove.push(r.string())
+      continue
+    }
+    r.skipType(tag & 7)
+  }
+  return out
+}
+
+const decodeDeniedResponse = (r: protobuf.Reader) => {
+  const end = r.uint32() + r.pos
+  const out: any = {}
+  while (r.pos < end) {
+    const tag = r.uint32()
+    if ((tag >>> 3) === 1) {
+      const statusEnd = r.uint32() + r.pos
+      const status: any = { code: 0 }
+      while (r.pos < statusEnd) {
+        const statusTag = r.uint32()
+        if ((statusTag >>> 3) === 1) {
+          status.code = r.int32()
+          continue
+        }
+        r.skipType(statusTag & 7)
+      }
+      out.status = status
+      continue
+    }
+    if ((tag >>> 3) === 3) {
+      out.body = r.string()
+      continue
+    }
+    r.skipType(tag & 7)
+  }
+  return out
+}
+
+const decodeCheckResponse = (bytes: Uint8Array) => {
+  const r = protobuf.Reader.create(bytes)
+  const out: any = {}
+  while (r.pos < r.len) {
+    const tag = r.uint32()
+    if ((tag >>> 3) === 1) {
+      out.status = decodeStatus(r)
+      continue
+    }
+    if ((tag >>> 3) === 2) {
+      out.deniedResponse = decodeDeniedResponse(r)
+      continue
+    }
+    if ((tag >>> 3) === 3) {
+      out.okResponse = decodeOkResponse(r)
+      continue
+    }
+    if ((tag >>> 3) === 4) {
+      // dynamic_metadata (google.protobuf.Struct). We do not need full Struct
+      // decoding for policy decisions; preserve a truthy placeholder so callers
+      // can observe metadata presence.
+      r.skipType(2)
+      out.dynamicMetadata = {}
+      continue
+    }
+    if ((tag >>> 3) === 5) {
+      out.deniedResponse = decodeDeniedResponse(r)
+      continue
+    }
+    r.skipType(tag & 7)
+  }
+  return out
+}
+
+const encodeBatchCheckRequest = (input: any) => {
+  const w = protobuf.Writer.create()
+  if (input?.principal) w.uint32(10).string(input.principal)
+  for (const item of input?.items ?? []) {
+    w.uint32(18).fork()
+    if (item.agentId) w.uint32(10).string(item.agentId)
+    if (item.permission) w.uint32(18).string(item.permission)
+    w.ldelim()
+  }
+  return w.finish()
+}
+
+const decodeBatchCheckResponse = (bytes: Uint8Array) => {
+  const r = protobuf.Reader.create(bytes)
+  const out: any = { results: [] }
+  while (r.pos < r.len) {
+    const tag = r.uint32()
+    if ((tag >>> 3) !== 1) {
+      r.skipType(tag & 7)
+      continue
+    }
+    const end = r.uint32() + r.pos
+    const result: any = { agentId: "", allowed: false, error: "" }
+    while (r.pos < end) {
+      const inner = r.uint32()
+      if ((inner >>> 3) === 1) {
+        result.agentId = r.string()
+        continue
+      }
+      if ((inner >>> 3) === 2) {
+        result.allowed = r.bool()
+        continue
+      }
+      if ((inner >>> 3) === 3) {
+        result.error = r.string()
+        continue
+      }
+      r.skipType(inner & 7)
+    }
+    out.results.push(result)
+  }
+  return out
+}
+
+const encodeEmpty = () => Buffer.alloc(0)
+const decodeEmpty = () => ({})
 
 async function loadProto() {
   if (_authzServiceDef) return _authzServiceDef
-
-  if (!_protoLoader) {
-    _protoLoader = await import("@grpc/proto-loader")
-  }
-
-  const protoDir = getProtoDir()
-  const PROTO_PATH = path.join(protoDir, "ext_authz.proto")
-
-  const packageDefinition = await _protoLoader.load(PROTO_PATH, {
-    keepCase: false, // Convert to camelCase
-    longs: Number,
-    enums: Number,
-    defaults: true,
-    oneofs: true,
-    includeDirs: [
-      protoDir,
-      // proto-loader resolves google/protobuf/* from protobufjs
-    ],
-  })
-
   const grpc = await loadGrpc()
-  const protoDescriptor = grpc.loadPackageDefinition(packageDefinition) as any
-  _authzServiceDef = protoDescriptor.envoy.service.auth.v3.Authorization
-
+  _authzServiceDef = grpc.makeGenericClientConstructor(
+    {
+      check: {
+        path: "/envoy.service.auth.v3.Authorization/Check",
+        requestStream: false,
+        responseStream: false,
+        requestSerialize: (v: any) => Buffer.from(encodeCheckRequest(v)),
+        requestDeserialize: decodeEmpty,
+        responseSerialize: encodeEmpty,
+        responseDeserialize: (b: Buffer) => decodeCheckResponse(new Uint8Array(b)),
+      },
+    },
+    "Authorization",
+  )
   return _authzServiceDef
 }
 
@@ -214,8 +366,8 @@ async function loadProto() {
 // Client management
 // ---------------------------------------------------------------------------
 
-// Dynamic gRPC client from proto-loader — use `any` because method signatures
-// are generated at runtime from the .proto file, not known at compile time.
+// Dynamic gRPC client constructor — use `any` because method signatures
+// are attached by makeGenericClientConstructor at runtime.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AuthzClient = any
 
@@ -243,13 +395,8 @@ async function getClient(config: ExtAuthzConfig): Promise<AuthzClient> {
   const grpc = await loadGrpc()
   const ServiceConstructor = await loadProto()
 
-  // Parse endpoint: "grpc://host:port" → "host:port"
-  let target = endpoint
-  if (target.startsWith("grpc://")) {
-    target = target.slice("grpc://".length)
-  } else if (target.startsWith("dns:///")) {
-    // Keep dns:/// prefix — gRPC understands it natively
-  }
+  const parsed = parseGrpcEndpoint(endpoint)
+  const target = parsed.target
 
   // Close stale client if any
   if (entry?.client) {
@@ -261,14 +408,12 @@ async function getClient(config: ExtAuthzConfig): Promise<AuthzClient> {
   }
 
   try {
-    // Determine credentials: TLS by default, insecure for localhost/plaintext
-    const isInsecure =
-      target.startsWith("localhost") ||
-      target.startsWith("127.0.0.1") ||
-      target.startsWith("[::1]") ||
-      target.includes("://localhost")
-
-    const creds = isInsecure
+    // Prefer explicit transport by endpoint scheme to avoid brittle assumptions.
+    // - grpc://host:port  -> insecure
+    // - grpcs://host:port -> TLS
+    // - dns:///...        -> insecure (in-cluster resolver target)
+    // - localhost/loopback/unix -> insecure
+    const creds = parsed.insecure
       ? grpc.credentials.createInsecure()
       : grpc.credentials.createSsl()
 
@@ -289,7 +434,10 @@ async function getClient(config: ExtAuthzConfig): Promise<AuthzClient> {
       lastError: err,
       lastReconnectAttempt: now,
     })
-    log.error("Failed to create ext_authz gRPC client", { error: err.message })
+    log.error("Failed to create ext_authz gRPC client", {
+      error: err.message,
+      stack: err.stack,
+    })
     throw err
   }
 }
@@ -336,6 +484,7 @@ export async function checkAuthorization(
   } catch (error) {
     const latencyMs = Date.now() - startTime
     const message = error instanceof Error ? error.message : String(error)
+    const stack = error instanceof Error ? error.stack : undefined
 
     // Mark client as failed for reconnection on connection errors
     if (
@@ -352,6 +501,7 @@ export async function checkAuthorization(
 
     log.warn("ext_authz call failed", {
       error: message,
+      stack,
       endpoint: sanitizeEndpoint(config.endpoint),
       latencyMs,
       failOpen: config.failOpen ?? false,
@@ -543,18 +693,48 @@ function sanitizeEndpoint(endpoint: string): string {
   }
 }
 
+function parseGrpcEndpoint(endpoint: string): { target: string, insecure: boolean } {
+  if (endpoint.startsWith("grpc://")) {
+    return {
+      target: endpoint.slice("grpc://".length),
+      insecure: true,
+    }
+  }
+
+  if (endpoint.startsWith("grpcs://")) {
+    return {
+      target: endpoint.slice("grpcs://".length),
+      insecure: false,
+    }
+  }
+
+  if (endpoint.startsWith("dns:///")) {
+    return {
+      target: endpoint,
+      insecure: true,
+    }
+  }
+
+  if (endpoint.startsWith("unix://") || endpoint.startsWith("unix:")) {
+    return {
+      target: endpoint,
+      insecure: true,
+    }
+  }
+
+  return {
+    target: endpoint,
+    insecure:
+      endpoint.startsWith("localhost") ||
+      endpoint.startsWith("127.0.0.1") ||
+      endpoint.startsWith("[::1]") ||
+      endpoint.includes("://localhost"),
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Batch authorization: opencode.authz.v1.BatchAuthorizationService/BatchCheck
 // ---------------------------------------------------------------------------
-
-const BATCH_AUTHZ_PROTO = `syntax = "proto3";
-package opencode.authz.v1;
-service BatchAuthorizationService { rpc BatchCheck(BatchCheckRequest) returns (BatchCheckResponse) {} }
-message BatchCheckRequest { string principal = 1; repeated BatchCheckItemMsg items = 2; }
-message BatchCheckItemMsg { string agent_id = 1; string permission = 2; }
-message BatchCheckResponse { repeated BatchCheckResultMsg results = 1; }
-message BatchCheckResultMsg { string agent_id = 1; bool allowed = 2; string error = 3; }
-`
 
 let _batchServiceDef: any = null
 const batchClients = new Map<string, {
@@ -565,27 +745,21 @@ const batchClients = new Map<string, {
 
 async function loadBatchProto() {
   if (_batchServiceDef) return _batchServiceDef
-
-  if (!_protoLoader) {
-    _protoLoader = await import("@grpc/proto-loader")
-  }
-
-  const protoDir = getProtoDir()
-  const batchProtoPath = path.join(protoDir, "batch_authz.proto")
-  fs.writeFileSync(batchProtoPath, BATCH_AUTHZ_PROTO)
-
-  const packageDefinition = await _protoLoader.load(batchProtoPath, {
-    keepCase: false,
-    longs: Number,
-    enums: Number,
-    defaults: true,
-    oneofs: true,
-    includeDirs: [protoDir],
-  })
-
   const grpc = await loadGrpc()
-  const protoDescriptor = grpc.loadPackageDefinition(packageDefinition) as any
-  _batchServiceDef = protoDescriptor.opencode.authz.v1.BatchAuthorizationService
+  _batchServiceDef = grpc.makeGenericClientConstructor(
+    {
+      batchCheck: {
+        path: "/opencode.authz.v1.BatchAuthorizationService/BatchCheck",
+        requestStream: false,
+        responseStream: false,
+        requestSerialize: (v: any) => Buffer.from(encodeBatchCheckRequest(v)),
+        requestDeserialize: decodeEmpty,
+        responseSerialize: encodeEmpty,
+        responseDeserialize: (b: Buffer) => decodeBatchCheckResponse(new Uint8Array(b)),
+      },
+    },
+    "BatchAuthorizationService",
+  )
 
   return _batchServiceDef
 }
@@ -606,23 +780,15 @@ async function getBatchClient(config: ExtAuthzConfig): Promise<any> {
   const grpc = await loadGrpc()
   const ServiceConstructor = await loadBatchProto()
 
-  let target = endpoint
-  if (target.startsWith("grpc://")) {
-    target = target.slice("grpc://".length)
-  }
+  const parsed = parseGrpcEndpoint(endpoint)
+  const target = parsed.target
 
   if (entry?.client) {
     try { entry.client.close() } catch { /* ignore */ }
   }
 
   try {
-    const isInsecure =
-      target.startsWith("localhost") ||
-      target.startsWith("127.0.0.1") ||
-      target.startsWith("[::1]") ||
-      target.includes("://localhost")
-
-    const creds = isInsecure
+    const creds = parsed.insecure
       ? grpc.credentials.createInsecure()
       : grpc.credentials.createSsl()
 
@@ -642,6 +808,10 @@ async function getBatchClient(config: ExtAuthzConfig): Promise<any> {
       client: null as any,
       lastError: err,
       lastReconnectAttempt: now,
+    })
+    log.error("Failed to create batch authz gRPC client", {
+      error: err.message,
+      stack: err.stack,
     })
     throw err
   }
@@ -706,6 +876,7 @@ export async function batchCheckAuthorization(
     return results
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
+    const stack = error instanceof Error ? error.stack : undefined
 
     // Mark client as failed for reconnection
     if (
@@ -724,6 +895,7 @@ export async function batchCheckAuthorization(
 
     log.warn("batch authz call failed", {
       error: message,
+      stack,
       endpoint: sanitizeEndpoint(config.batchEndpoint ?? config.endpoint),
       latencyMs: Date.now() - startTime,
       itemCount: items.length,
