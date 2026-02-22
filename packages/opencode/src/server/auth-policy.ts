@@ -75,6 +75,16 @@ export function validAPIKey(headers: Headers) {
   return timingSafeEqual(a, b)
 }
 
+export function validA2AApiKey(headers: Headers) {
+  const key = process.env["OPENCODE_A2A_API_KEY"]
+  if (!key) return false
+  const header = headers.get("x-a2a-key") ?? ""
+  const a = Buffer.from(header, "utf8")
+  const b = Buffer.from(key, "utf8")
+  if (a.length !== b.length) return false
+  return timingSafeEqual(a, b)
+}
+
 function validBasicAuth(headers: Headers) {
   const password = Flag.OPENCODE_SERVER_PASSWORD
   if (!password) return false

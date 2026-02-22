@@ -1,5 +1,5 @@
-// Set API key for server-level auth middleware
-process.env["OPENCODE_TOOL_ENDPOINT_API_KEY"] = "test-a2a-key"
+// Set API key for A2A auth middleware
+process.env["OPENCODE_A2A_API_KEY"] = "test-a2a-key"
 
 import { afterAll, describe, expect, spyOn, test } from "bun:test"
 import path from "path"
@@ -20,7 +20,7 @@ import { Bus } from "../../src/bus"
 
 Log.init({ print: false })
 
-const AUTH_HEADER = { "X-API-Key": "test-a2a-key" }
+const AUTH_HEADER = { "X-A2A-Key": "test-a2a-key" }
 
 function encodeBase64url(input: string | Buffer) {
   const buffer = typeof input === "string" ? Buffer.from(input, "utf8") : input
@@ -41,7 +41,7 @@ function signRS256(payload: Record<string, unknown>, privateKey: string, kid: st
 
 // Clean up env var so it doesn't bleed into other test files
 afterAll(() => {
-  delete process.env["OPENCODE_TOOL_ENDPOINT_API_KEY"]
+  delete process.env["OPENCODE_A2A_API_KEY"]
 })
 
 /**
@@ -103,7 +103,7 @@ You are a container build agent.
                 apiKey: {
                   type: "apiKey",
                   location: "header",
-                  name: "X-API-Key",
+                  name: "X-A2A-Key",
                 },
               },
             },
@@ -1345,7 +1345,7 @@ Test agent prompt.
       },
       fn: async () => {
         const app = Server.App()
-        // No X-API-Key header — per-agent auth rejects
+        // No X-A2A-Key header — per-agent auth rejects
         const response = await app.request("/a2a/neo-sidecar/tasks", {
           method: "GET",
           headers: {
@@ -1373,7 +1373,7 @@ Test agent prompt.
           method: "GET",
           headers: {
             "x-opencode-directory": tmp.path,
-            "X-API-Key": "wrong-key",
+            "X-A2A-Key": "wrong-key",
           },
         })
         expect(response.status).toBe(401)

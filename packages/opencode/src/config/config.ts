@@ -1124,7 +1124,7 @@ export namespace Config {
             ])
             .optional()
             .describe(
-              "Auth mode for tool endpoint. api-key requires OPENCODE_TOOL_ENDPOINT_API_KEY; plugin requires custom http.request hook; jwt/oidc/oauth2 use strict bearer verification.",
+              "Auth mode for tool endpoint. api-key requires OPENCODE_TOOL_ENDPOINT_API_KEY (X-API-Key header). For A2A endpoints, api-key uses OPENCODE_A2A_API_KEY (X-A2A-Key header). plugin requires custom http.request hook; jwt/oidc/oauth2 use strict bearer verification.",
             ),
           allowedTools: z.array(z.string()).optional().describe("Allowlist of tools exposed via HTTP endpoint"),
           allowSensitiveTools: z
