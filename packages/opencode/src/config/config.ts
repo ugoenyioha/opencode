@@ -733,6 +733,21 @@ export namespace Config {
     })
     .strict()
 
+  const PluginAuthzConfig = z
+    .object({
+      id: z.string().describe("ID of the authz plugin to invoke"),
+      policy: z.record(z.string(), z.any()).describe("Policy configuration passed to the plugin"),
+    })
+    .strict()
+
+  const AuthzConfig = z
+    .object({
+      provider: z.enum(["ext_authz", "plugin"]).optional().describe("Authorization provider"),
+      extAuthz: ExtAuthzConfig.optional().describe("Envoy-compatible ext_authz gRPC authorization"),
+      plugin: PluginAuthzConfig.optional().describe("Plugin-based authorization configuration"),
+    })
+    .strict()
+
   const A2ASecurityScheme = z.discriminatedUnion("type", [
     z.object({
       type: z.literal("apiKey"),
@@ -802,14 +817,7 @@ export namespace Config {
             })
             .optional()
             .describe("SPIFFE-specific configuration for this agent"),
-          authz: z
-            .object({
-              extAuthz: ExtAuthzConfig.optional().describe(
-                "Per-agent ext_authz override (inherits from server.a2a.authz if not set)",
-              ),
-            })
-            .optional()
-            .describe("Per-agent authorization config (overrides server.a2a.authz)"),
+          authz: AuthzConfig.optional().describe("Per-agent authorization config (overrides server.a2a.authz)"),
         })
         .optional()
         .describe("A2A-specific configuration (only applies when mode: 'a2a')"),
@@ -1084,12 +1092,9 @@ export namespace Config {
         .record(z.string(), A2ASecurityScheme)
         .optional()
         .describe("Named security schemes referenced by A2A routes and skills"),
-      authz: z
-        .object({
-          extAuthz: ExtAuthzConfig.optional().describe("Envoy-compatible ext_authz gRPC authorization"),
-        })
-        .optional()
-        .describe("Authorization config (runs after authentication). Mirrors Envoy filter chain model."),
+      authz: AuthzConfig.optional().describe(
+        "Authorization config (runs after authentication). Mirrors Envoy filter chain model.",
+      ),
     })
     .strict()
 

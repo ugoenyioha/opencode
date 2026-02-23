@@ -1,4 +1,4 @@
-import type { Hooks, Plugin, RouteDefinition, AuthStrategy } from "@opencode-ai/plugin"
+import type { Hooks, Plugin, RouteDefinition, AuthStrategy, A2AAuthzDecision } from "@opencode-ai/plugin"
 import { Config } from "@/config/config"
 import { ConfigMarkdown } from "@/config/markdown"
 import { Skill } from "@/skill/skill"
@@ -10,9 +10,11 @@ import { SessionStatus } from "@/session/status"
 import { MessageV2 } from "@/session/message-v2"
 import { Bus } from "@/bus"
 import { Instance } from "@/project/instance"
+import { Plugin as Plugins } from "@/plugin"
 import { bearerFromHeaders, verifyBearerForStrategy, type StrictBearerStrategy } from "../server/compat/auth"
 import { validA2AApiKey, type AuthnResult } from "../server/auth-policy"
 import { emitAuthDecision } from "../server/auth-observability"
+import { mapA2AAuthzStatus } from "../server/authz-status"
 // Auth is enforced per-agent in agentHandler() — agent config replaces server-level auth.
 
 const log = Log.create({ service: "a2a" })
@@ -179,6 +181,27 @@ function json(input: unknown, status = 200) {
       "content-type": JSON_MIME,
     },
   })
+}
+
+function sanitizeHeaders(headers: Headers) {
+  const output: Record<string, string> = {}
+  for (const [key, value] of headers.entries()) {
+    const lower = key.toLowerCase()
+    if (lower === "authorization" || lower === "x-a2a-key") {
+      output[key] = "[redacted]"
+      continue
+    }
+    output[key] = value
+  }
+  return output
+}
+
+function parsePath(url: string) {
+  try {
+    return new URL(url).pathname
+  } catch {
+    return url
+  }
 }
 
 function securityRequirements(
@@ -740,8 +763,29 @@ export const A2APlugin: Plugin = async () => {
     securitySchemes: a2a.securitySchemes,
   }
 
-  // Server-level ext_authz config (per-agent can override)
-  const serverExtAuthz = (a2a as any).authz?.extAuthz as import("../server/ext-authz").ExtAuthzConfig | undefined
+  const serverAuthz = (a2a as any).authz as
+    | {
+        provider?: "ext_authz" | "plugin"
+        extAuthz?: import("../server/ext-authz").ExtAuthzConfig
+        plugin?: {
+          id: string
+          policy: Record<string, unknown>
+        }
+      }
+    | undefined
+
+  const serverExtAuthz =
+    serverAuthz?.provider === "plugin"
+      ? undefined
+      : (serverAuthz?.extAuthz as import("../server/ext-authz").ExtAuthzConfig | undefined)
+
+  const serverPluginAuthz =
+    serverAuthz?.provider === "plugin" && serverAuthz.plugin?.id
+      ? {
+          id: serverAuthz.plugin.id,
+          policy: serverAuthz.plugin.policy ?? {},
+        }
+      : undefined
 
   // Eagerly load the ext_authz module once at init time if configured,
   // so hot-path handlers don't pay the dynamic import cost per request.
@@ -822,15 +866,119 @@ export const A2APlugin: Plugin = async () => {
   /**
    * Resolve the ext_authz config for an agent: per-agent override > server-level > none.
    */
-  async function resolveExtAuthzConfig(agentId: string): Promise<import("../server/ext-authz").ExtAuthzConfig | undefined> {
+  async function resolveAuthzConfig(agentId: string): Promise<
+    | {
+        provider: "ext_authz"
+        extAuthz: import("../server/ext-authz").ExtAuthzConfig
+      }
+    | {
+        provider: "plugin"
+        plugin: {
+          id: string
+          policy: Record<string, unknown>
+        }
+      }
+    | undefined
+  > {
     try {
       const agentConfig = await Agent.get(agentId)
-      const perAgentAuthz = (agentConfig?.a2a as any)?.authz?.extAuthz
-      if (perAgentAuthz) return perAgentAuthz
+      const perAgentAuthz = (agentConfig?.a2a as any)?.authz as
+        | {
+            provider?: "ext_authz" | "plugin"
+            extAuthz?: import("../server/ext-authz").ExtAuthzConfig
+            plugin?: {
+              id: string
+              policy: Record<string, unknown>
+            }
+          }
+        | undefined
+      if (perAgentAuthz?.provider === "plugin" && perAgentAuthz.plugin) {
+        return {
+          provider: "plugin",
+          plugin: {
+            id: perAgentAuthz.plugin.id,
+            policy: perAgentAuthz.plugin.policy,
+          },
+        }
+      }
+      if (perAgentAuthz?.provider === "ext_authz" && perAgentAuthz.extAuthz) {
+        return {
+          provider: "ext_authz",
+          extAuthz: perAgentAuthz.extAuthz,
+        }
+      }
+      if (!perAgentAuthz?.provider && perAgentAuthz?.extAuthz) {
+        return {
+          provider: "ext_authz",
+          extAuthz: perAgentAuthz.extAuthz,
+        }
+      }
     } catch {
       // Fall through to server-level
     }
-    return serverExtAuthz
+    if (serverPluginAuthz) {
+      return {
+        provider: "plugin",
+        plugin: {
+          id: serverPluginAuthz.id,
+          policy: serverPluginAuthz.policy,
+        },
+      }
+    }
+    if (serverExtAuthz) {
+      return {
+        provider: "ext_authz",
+        extAuthz: serverExtAuthz,
+      }
+    }
+    return undefined
+  }
+
+  async function runPluginAuthz(
+    req: Request,
+    agentId: string,
+    authn: AuthnResult,
+    action: "invoke" | "view",
+    pluginAuthz: { id: string; policy: Record<string, unknown> },
+  ): Promise<A2AAuthzDecision | undefined> {
+    const { fetchLocalWorkloadIdentity } = await import("../server/spiffe")
+    const workload_principal = (await fetchLocalWorkloadIdentity()) || undefined
+
+    const input = {
+      agent: agentId,
+      action,
+      method: req.method,
+      path: parsePath(req.url),
+      headers: sanitizeHeaders(req.headers),
+      strategy: authn.strategy,
+      principal: authn.principal,
+      user_principal: authn.principal,
+      workload_principal,
+      plugin: {
+        id: pluginAuthz.id,
+        policy: pluginAuthz.policy,
+      },
+    }
+
+    try {
+      const output = await Plugins.trigger("a2a.authz", input, { decision: undefined as A2AAuthzDecision | undefined })
+      if (!output.decision) return undefined
+      if (typeof output.decision.allow !== "boolean") {
+        return {
+          allow: false,
+          reason: "a2a_authz_malformed_decision",
+          status_code: 403,
+        }
+      }
+      return output.decision
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return {
+        allow: false,
+        reason: `a2a_authz_hook_error: ${message}`,
+        status_code: 403,
+      }
+    }
   }
 
   /**
@@ -857,9 +1005,10 @@ export const A2APlugin: Plugin = async () => {
     // Stash the authn result so ext_authz and handlers can access the caller identity
     _authnResults.set(req, authn)
 
-    // Step 2: Authorization via ext_authz (are you allowed to do this?)
-    const extAuthzConfig = await resolveExtAuthzConfig(agentId)
-    if (extAuthzConfig) {
+    // Step 2: Authorization (ext_authz or plugin)
+    const authzConfig = await resolveAuthzConfig(agentId)
+    if (authzConfig?.provider === "ext_authz") {
+      const extAuthzConfig = authzConfig.extAuthz
       try {
         // Use eagerly-loaded module if available, fall back to dynamic import
         // (per-agent config may enable ext_authz even when server-level is off)
@@ -884,7 +1033,7 @@ export const A2APlugin: Plugin = async () => {
             strategy: "ext_authz",
             reason: decision.reason.includes("timeout") ? "ext_authz_timeout" : "ext_authz_denied",
           })
-          const statusCode = decision.statusCode >= 400 && decision.statusCode < 600 ? decision.statusCode : 403
+          const statusCode = mapA2AAuthzStatus(decision.statusCode, true)
           return json(
             { error: { code: "Forbidden", message: decision.reason || "Authorization denied" } },
             statusCode,
@@ -919,8 +1068,16 @@ export const A2APlugin: Plugin = async () => {
 
         // Fail-closed unless failOpen is configured
         if (!extAuthzConfig.failOpen) {
-          return json({ error: { code: "InternalError", message: "Authorization service unavailable" } }, 503)
+          return json({ error: { code: "Forbidden", message: "Authorization denied" } }, 403)
         }
+      }
+    }
+
+    if (authzConfig?.provider === "plugin") {
+      const decision = await runPluginAuthz(req, agentId, authn, "invoke", authzConfig.plugin)
+      if (decision && !decision.allow) {
+        const statusCode = mapA2AAuthzStatus(decision.status_code, true)
+        return json({ error: { code: "Forbidden", message: decision.reason || "Authorization denied" } }, statusCode)
       }
     }
 
@@ -1064,8 +1221,16 @@ export const A2APlugin: Plugin = async () => {
   }
 
   async function filterVisibleAgents(req: Request): Promise<A2AAgent[]> {
-    // If no ext_authz configured at server level, all agents visible (backward compat)
-    if (!serverExtAuthz) return agents
+    if (!serverExtAuthz && !serverPluginAuthz) return agents
+
+    if (serverPluginAuthz) {
+      const authn = await tryAuthenticate(req.headers)
+      if (!authn) return []
+      const visible = await Promise.all(
+        agents.map(async (agent) => ((await canViewAgent(req, agent.id)) ? agent : undefined)),
+      )
+      return visible.filter((item): item is A2AAgent => !!item)
+    }
 
     const startTime = Date.now()
     return withConstantTime(startTime, async () => {
@@ -1111,7 +1276,7 @@ export const A2APlugin: Plugin = async () => {
       const allUseServerConfig = uncached.every((a) => !(a as any).a2a?.authz?.extAuthz)
       let batchResolved = false
 
-      if (allUseServerConfig && mod.batchCheckAuthorization) {
+      if (allUseServerConfig && mod.batchCheckAuthorization && serverExtAuthz) {
         try {
           const items = uncached.map((a) => ({ agentId: a.id, permission: "view" }))
 
@@ -1123,7 +1288,7 @@ export const A2APlugin: Plugin = async () => {
           const batchResults = await Promise.race([batchPromise, timeoutPromise])
 
           const resultMap = new Map(batchResults.map((r: any) => [r.agentId, r]))
-          const failOpen = serverExtAuthz.failOpen ?? false
+          const failOpen = serverExtAuthz?.failOpen ?? false
 
           for (const agent of uncached) {
             const result = resultMap.get(agent.id)
@@ -1170,7 +1335,8 @@ export const A2APlugin: Plugin = async () => {
 
       const checksPromise = Promise.all(
         uncached.map(async (agent): Promise<ViewResult> => {
-          const extAuthzConfig = await resolveExtAuthzConfig(agent.id) ?? serverExtAuthz!
+          const agentAuthz = await resolveAuthzConfig(agent.id)
+          const extAuthzConfig = (agentAuthz?.provider === "ext_authz" ? agentAuthz.extAuthz : undefined) ?? serverExtAuthz!
           const failOpen = extAuthzConfig.failOpen ?? false
           try {
             const context = mod.requestToExtAuthzContext(req, {
@@ -1228,7 +1394,7 @@ export const A2APlugin: Plugin = async () => {
       // ext_authz module failed to load or aggregate timeout — respect failOpen
       const message = error instanceof Error ? error.message : String(error)
       log.error("discovery: ext_authz error, applying failOpen policy", { error: message })
-      return (serverExtAuthz.failOpen ?? false) ? agents : []
+      return (serverExtAuthz?.failOpen ?? false) ? agents : []
     }
     }) // end withConstantTime
   }
@@ -1238,11 +1404,19 @@ export const A2APlugin: Plugin = async () => {
    * Returns true if visible, false if hidden.
    */
   async function canViewAgent(req: Request, agentId: string): Promise<boolean> {
-    const extAuthzConfig = await resolveExtAuthzConfig(agentId) ?? serverExtAuthz
-    if (!extAuthzConfig) return true // No ext_authz → visible
+    const authzConfig = await resolveAuthzConfig(agentId)
+    if (!authzConfig) return true
 
     const authn = await tryAuthenticate(req.headers)
-    if (!authn) return false // ext_authz configured, no creds → hidden
+    if (!authn) return false
+
+    if (authzConfig.provider === "plugin") {
+      const decision = await runPluginAuthz(req, agentId, authn, "view", authzConfig.plugin)
+      if (!decision) return true
+      return decision.allow
+    }
+
+    const extAuthzConfig = authzConfig.extAuthz
 
     // Check cache first
     const hit = cacheGet(authn.principal, agentId, "view")
