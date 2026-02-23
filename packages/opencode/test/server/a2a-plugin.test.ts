@@ -2481,4 +2481,341 @@ Agent.
       })
     })
   })
+
+  describe("a2a.authz plugin hook", () => {
+    // Project fixture: server-level plugin authz enabled, no real plugin file needed
+    // (hook is intercepted via spyOn(Plugin, "trigger"))
+    async function projectWithPluginAuthz() {
+      return tmpdir({
+        init: async (dir) => {
+          const skillDir = path.join(dir, ".opencode", "skills", "sidecar-preserve")
+          await fs.mkdir(skillDir, { recursive: true })
+          await Bun.write(
+            path.join(skillDir, "SKILL.md"),
+            `---
+name: sidecar-preserve
+description: Build and preserve the sidecar container image
+a2a:
+  expose: true
+  tags: ["docker", "build"]
+---
+Skill body.
+`,
+          )
+
+          const agentDir = path.join(dir, ".opencode", "agents")
+          await fs.mkdir(agentDir, { recursive: true })
+          await Bun.write(
+            path.join(agentDir, "neo-sidecar.md"),
+            `---
+name: neo-sidecar
+description: AI-powered container build and deployment agent
+mode: a2a
+skills:
+  - sidecar-preserve
+a2a:
+  baseUrl: https://example.test
+  auth: ["api-key"]
+---
+You are a container build agent.
+`,
+          )
+
+          await Bun.write(
+            path.join(dir, "opencode.json"),
+            JSON.stringify({
+              $schema: "https://opencode.ai/config.json",
+              server: {
+                a2a: {
+                  enabled: true,
+                  baseUrl: "https://example.test",
+                  auth: ["api-key"],
+                  authz: {
+                    provider: "plugin",
+                    plugin: {
+                      id: "test-authz",
+                      policy: { realm: "test" },
+                    },
+                  },
+                },
+              },
+            }),
+          )
+        },
+      })
+    }
+
+    test("deny decision returns 403", async () => {
+      await using tmp = await projectWithPluginAuthz()
+      await Instance.disposeAll()
+      await Instance.provide({
+        directory: tmp.path,
+        init: async () => {
+          Env.set("ANTHROPIC_API_KEY", "test-key")
+        },
+        fn: async () => {
+          const spy = spyOn(Plugin, "trigger").mockImplementation(async (name: any, _input: any, output: any) => {
+            if (name === "a2a.authz") output.decision = { allow: false, reason: "policy_denied" }
+            return output
+          })
+          try {
+            const app = Server.App()
+            const response = await app.request("/a2a/neo-sidecar/tasks", {
+              method: "GET",
+              headers: { "x-opencode-directory": tmp.path, ...AUTH_HEADER },
+            })
+            expect(response.status).toBe(403)
+            const body = (await response.json()) as any
+            expect(body.error.code).toBe("Forbidden")
+          } finally {
+            spy.mockRestore()
+          }
+        },
+      })
+    }, 10000)
+
+    test("deny status_code 401 is normalized to 403 after authentication", async () => {
+      await using tmp = await projectWithPluginAuthz()
+      await Instance.disposeAll()
+      await Instance.provide({
+        directory: tmp.path,
+        init: async () => {
+          Env.set("ANTHROPIC_API_KEY", "test-key")
+        },
+        fn: async () => {
+          const spy = spyOn(Plugin, "trigger").mockImplementation(async (name: any, _input: any, output: any) => {
+            if (name === "a2a.authz") output.decision = { allow: false, status_code: 401, reason: "bad_token" }
+            return output
+          })
+          try {
+            const app = Server.App()
+            const response = await app.request("/a2a/neo-sidecar/tasks", {
+              method: "GET",
+              headers: { "x-opencode-directory": tmp.path, ...AUTH_HEADER },
+            })
+            expect(response.status).toBe(403)
+          } finally {
+            spy.mockRestore()
+          }
+        },
+      })
+    }, 10000)
+
+    test("hook throw fails closed with 403", async () => {
+      await using tmp = await projectWithPluginAuthz()
+      await Instance.disposeAll()
+      await Instance.provide({
+        directory: tmp.path,
+        init: async () => {
+          Env.set("ANTHROPIC_API_KEY", "test-key")
+        },
+        fn: async () => {
+          const spy = spyOn(Plugin, "trigger").mockImplementation(async (name: any, _input: any, output: any) => {
+            if (name === "a2a.authz") throw new Error("authz hook failed")
+            return output
+          })
+          try {
+            const app = Server.App()
+            const response = await app.request("/a2a/neo-sidecar/tasks", {
+              method: "GET",
+              headers: { "x-opencode-directory": tmp.path, ...AUTH_HEADER },
+            })
+            expect(response.status).toBe(403)
+          } finally {
+            spy.mockRestore()
+          }
+        },
+      })
+    }, 10000)
+
+    test("allow decision passes request through", async () => {
+      await using tmp = await projectWithPluginAuthz()
+      await Instance.disposeAll()
+      await Instance.provide({
+        directory: tmp.path,
+        init: async () => {
+          Env.set("ANTHROPIC_API_KEY", "test-key")
+        },
+        fn: async () => {
+          const spy = spyOn(Plugin, "trigger").mockImplementation(async (name: any, _input: any, output: any) => {
+            if (name === "a2a.authz") output.decision = { allow: true }
+            return output
+          })
+          try {
+            const app = Server.App()
+            const response = await app.request("/a2a/neo-sidecar/tasks", {
+              method: "GET",
+              headers: { "x-opencode-directory": tmp.path, ...AUTH_HEADER },
+            })
+            expect(response.status).not.toBe(403)
+            expect(response.status).not.toBe(401)
+          } finally {
+            spy.mockRestore()
+          }
+        },
+      })
+    }, 10000)
+
+    test("abstain (undefined decision) passes request through", async () => {
+      await using tmp = await projectWithPluginAuthz()
+      await Instance.disposeAll()
+      await Instance.provide({
+        directory: tmp.path,
+        init: async () => {
+          Env.set("ANTHROPIC_API_KEY", "test-key")
+        },
+        fn: async () => {
+          const spy = spyOn(Plugin, "trigger").mockImplementation(async (_name: any, _input: any, output: any) => {
+            // leave output.decision undefined — abstain
+            return output
+          })
+          try {
+            const app = Server.App()
+            const response = await app.request("/a2a/neo-sidecar/tasks", {
+              method: "GET",
+              headers: { "x-opencode-directory": tmp.path, ...AUTH_HEADER },
+            })
+            expect(response.status).not.toBe(403)
+            expect(response.status).not.toBe(401)
+          } finally {
+            spy.mockRestore()
+          }
+        },
+      })
+    }, 10000)
+
+    test("view deny hides agent from discovery listing", async () => {
+      await using tmp = await projectWithPluginAuthz()
+      await Instance.disposeAll()
+      await Instance.provide({
+        directory: tmp.path,
+        init: async () => {
+          Env.set("ANTHROPIC_API_KEY", "test-key")
+        },
+        fn: async () => {
+          const spy = spyOn(Plugin, "trigger").mockImplementation(async (name: any, input: any, output: any) => {
+            if (name === "a2a.authz" && input.action === "view")
+              output.decision = { allow: false, reason: "view_denied" }
+            return output
+          })
+          try {
+            const app = Server.App()
+            const response = await app.request("/.well-known/agents.json", {
+              headers: { "x-opencode-directory": tmp.path, ...AUTH_HEADER },
+            })
+            expect(response.status).toBe(200)
+            const body = (await response.json()) as any
+            expect(body.agents).toHaveLength(0)
+          } finally {
+            spy.mockRestore()
+          }
+        },
+      })
+    }, 10000)
+
+    test("view deny returns 404 on per-agent card endpoint", async () => {
+      await using tmp = await projectWithPluginAuthz()
+      await Instance.disposeAll()
+      await Instance.provide({
+        directory: tmp.path,
+        init: async () => {
+          Env.set("ANTHROPIC_API_KEY", "test-key")
+        },
+        fn: async () => {
+          const spy = spyOn(Plugin, "trigger").mockImplementation(async (name: any, input: any, output: any) => {
+            if (name === "a2a.authz" && input.action === "view")
+              output.decision = { allow: false, reason: "view_denied" }
+            return output
+          })
+          try {
+            const app = Server.App()
+            const response = await app.request("/.well-known/agents/neo-sidecar/card.json", {
+              headers: { "x-opencode-directory": tmp.path, ...AUTH_HEADER },
+            })
+            // 404 not 403: prevents information leakage about agent existence
+            expect(response.status).toBe(404)
+          } finally {
+            spy.mockRestore()
+          }
+        },
+      })
+    }, 10000)
+
+    test("hook receives correct input fields", async () => {
+      await using tmp = await projectWithPluginAuthz()
+      await Instance.disposeAll()
+      await Instance.provide({
+        directory: tmp.path,
+        init: async () => {
+          Env.set("ANTHROPIC_API_KEY", "test-key")
+        },
+        fn: async () => {
+          let captured: any
+          const spy = spyOn(Plugin, "trigger").mockImplementation(async (name: any, input: any, output: any) => {
+            if (name === "a2a.authz") {
+              captured = input
+              output.decision = { allow: true }
+            }
+            return output
+          })
+          try {
+            const app = Server.App()
+            await app.request("/a2a/neo-sidecar/tasks", {
+              method: "GET",
+              headers: { "x-opencode-directory": tmp.path, ...AUTH_HEADER },
+            })
+            expect(captured).toBeDefined()
+            expect(captured.agent).toBe("neo-sidecar")
+            expect(captured.action).toBe("invoke")
+            expect(captured.method).toBe("GET")
+            expect(typeof captured.path).toBe("string")
+            expect(typeof captured.strategy).toBe("string")
+            expect(typeof captured.headers).toBe("object")
+            expect(captured.plugin.id).toBe("test-authz")
+          } finally {
+            spy.mockRestore()
+          }
+        },
+      })
+    }, 10000)
+
+    test("credential headers are redacted in hook input", async () => {
+      await using tmp = await projectWithPluginAuthz()
+      await Instance.disposeAll()
+      await Instance.provide({
+        directory: tmp.path,
+        init: async () => {
+          Env.set("ANTHROPIC_API_KEY", "test-key")
+        },
+        fn: async () => {
+          let captured: any
+          const spy = spyOn(Plugin, "trigger").mockImplementation(async (name: any, input: any, output: any) => {
+            if (name === "a2a.authz") {
+              captured = input
+              output.decision = { allow: true }
+            }
+            return output
+          })
+          try {
+            const app = Server.App()
+            await app.request("/a2a/neo-sidecar/tasks", {
+              method: "GET",
+              headers: {
+                "x-opencode-directory": tmp.path,
+                "Authorization": "Bearer super-secret",
+                ...AUTH_HEADER,
+              },
+            })
+            expect(captured).toBeDefined()
+            const authVal =
+              captured.headers["authorization"] ?? captured.headers["Authorization"]
+            // Key may be present but value must be redacted
+            if (authVal !== undefined) expect(authVal).not.toContain("super-secret")
+          } finally {
+            spy.mockRestore()
+          }
+        },
+      })
+    }, 10000)
+  })
 })
