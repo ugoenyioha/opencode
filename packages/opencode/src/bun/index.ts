@@ -87,6 +87,11 @@ export namespace BunProc {
       log.info("Cached version is outdated, proceeding with install", { pkg, cachedVersion })
     }
 
+    const hostDeps = ["@opencode-ai/plugin", "@opencode-ai/sdk"].flatMap((item) => {
+      if (dependencies[item]) return []
+      return [item + "@latest"]
+    })
+
     // Build command arguments
     const args = [
       "add",
@@ -96,6 +101,7 @@ export namespace BunProc {
       ...(proxied() ? ["--no-cache"] : []),
       "--cwd",
       Global.Path.cache,
+      ...hostDeps,
       pkg + "@" + version,
     ]
 

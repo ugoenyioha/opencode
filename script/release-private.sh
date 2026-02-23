@@ -12,6 +12,7 @@
 #   ./script/release-private.sh --with-plugin   # also build + publish @uenyioha/opencode-plugin
 #   ./script/release-private.sh --skip-build    # skip bun build, just publish existing dist/
 #   ./script/release-private.sh --dry-run       # show what would be published, don't actually publish
+#   ./script/release-private.sh --no-install-local # skip updating ~/.local/bin/opencode symlink
 #
 # Prerequisites:
 #   - bun installed
@@ -45,12 +46,14 @@ NPM_TOKEN_KEY="//${REGISTRY_NO_SCHEME}:_authToken"
 SKIP_BUILD=false
 WITH_PLUGIN=false
 DRY_RUN=false
+INSTALL_LOCAL=true
 
 for arg in "$@"; do
   case "$arg" in
     --skip-build)   SKIP_BUILD=true ;;
     --with-plugin)  WITH_PLUGIN=true ;;
     --dry-run)      DRY_RUN=true ;;
+    --no-install-local) INSTALL_LOCAL=false ;;
     --help|-h)
       sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
       exit 0
@@ -78,9 +81,45 @@ echo "  Branch:   $BRANCH"
 echo "  Version:  $VERSION"
 echo "  Tag:      $TAG"
 echo "  Registry: $REGISTRY"
-echo "  Flags:    skip-build=$SKIP_BUILD with-plugin=$WITH_PLUGIN dry-run=$DRY_RUN"
+echo "  Flags:    skip-build=$SKIP_BUILD with-plugin=$WITH_PLUGIN dry-run=$DRY_RUN install-local=$INSTALL_LOCAL"
 echo "========================================="
 echo ""
+
+install_local_binary() {
+  if [ "$INSTALL_LOCAL" = false ]; then
+    echo ">>> Local install: skipped (--no-install-local)"
+    echo ""
+    return
+  fi
+
+  local sys target bin local_bin
+  sys="$(uname -s)-$(uname -m)"
+  case "$sys" in
+    Darwin-arm64) target="opencode-darwin-arm64" ;;
+    Darwin-x86_64) target="opencode-darwin-x64" ;;
+    Linux-aarch64|Linux-arm64) target="opencode-linux-arm64" ;;
+    Linux-x86_64) target="opencode-linux-x64" ;;
+    *)
+      echo ">>> Local install: unsupported platform ($sys), skipping"
+      echo ""
+      return
+      ;;
+  esac
+
+  bin="$OPENCODE_DIR/dist/$target/bin/opencode"
+  if [ ! -x "$bin" ]; then
+    echo ">>> Local install: expected binary missing ($bin), skipping"
+    echo ""
+    return
+  fi
+
+  local_bin="$HOME/.local/bin/opencode"
+  mkdir -p "$HOME/.local/bin"
+  ln -sfn "$bin" "$local_bin"
+  echo ">>> Local install: updated $local_bin -> $bin"
+  "$local_bin" --version | sed 's/^/   version: /'
+  echo ""
+}
 
 ensure_registry_auth() {
   echo ">>> Preflight: verifying npm auth for $REGISTRY"
@@ -361,6 +400,8 @@ else
   echo ">>> Step 4: Skipped (no --with-plugin)"
   echo ""
 fi
+
+install_local_binary
 
 # --- Step 5: Verify ---
 echo ">>> Step 5: Verification"
