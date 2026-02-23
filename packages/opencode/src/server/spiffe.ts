@@ -298,3 +298,60 @@ export async function verifySPIFFE(
     return false
   }
 }
+
+let cachedWorkloadPrincipal: string | null = null
+let lastPrincipalFetchAttempt = 0
+const PRINCIPAL_CACHE_TTL_MS = 60_000
+
+/**
+ * Resolve the local workload principal (SPIFFE ID) via Workload API FetchX509SVID.
+ * Returns null on failure and never throws (fail-closed friendly for authz callers).
+ */
+export async function fetchLocalWorkloadIdentity(): Promise<string | null> {
+  const now = Date.now()
+  if (cachedWorkloadPrincipal && now - lastPrincipalFetchAttempt < PRINCIPAL_CACHE_TTL_MS) {
+    return cachedWorkloadPrincipal
+  }
+
+  if (lastError && now - lastReconnectAttempt < RECONNECT_COOLDOWN_MS) {
+    return null
+  }
+
+  try {
+    const client = await getClient()
+    const grpc = await loadGrpc()
+    const proto = loadProtoTypes()
+    const metadata = new grpc.Metadata()
+
+    return await new Promise((resolve) => {
+      const call = client.makeServerStreamRequest<any, any>(
+        "/SpiffeWorkloadAPI/FetchX509SVID",
+        (req) => {
+          const msg = proto.X509SVIDRequest.create(req)
+          return Buffer.from(proto.X509SVIDRequest.toBinary(msg))
+        },
+        (data) => proto.X509SVIDResponse.fromBinary(new Uint8Array(data)),
+        {},
+        metadata,
+        { deadline: Date.now() + 5_000 },
+      )
+
+      call.on("data", (response) => {
+        const spiffeId = response?.svids?.[0]?.spiffeId
+        if (!spiffeId) return
+        cachedWorkloadPrincipal = spiffeId
+        lastPrincipalFetchAttempt = Date.now()
+        resolve(spiffeId)
+        call.cancel()
+      })
+
+      call.on("error", () => resolve(null))
+      call.on("end", () => resolve(cachedWorkloadPrincipal))
+    })
+  } catch (error) {
+    log.warn("Failed to fetch local workload identity from SPIFFE", {
+      error: error instanceof Error ? error.message : String(error),
+    })
+    return null
+  }
+}
