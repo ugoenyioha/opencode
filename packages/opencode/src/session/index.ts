@@ -71,6 +71,7 @@ export namespace Session {
       share,
       revert,
       permission: row.permission ?? undefined,
+      teammate: row.teammate ?? undefined,
       time: {
         created: row.time_created,
         updated: row.time_updated,
@@ -96,6 +97,7 @@ export namespace Session {
       summary_diffs: info.summary?.diffs,
       revert: info.revert ?? null,
       permission: info.permission,
+      teammate: info.teammate ?? null,
       time_created: info.time.created,
       time_updated: info.time.updated,
       time_compacting: info.time.compacting,
@@ -344,7 +346,9 @@ export namespace Session {
     const dir = path.join(Global.Path.data, "storage")
     const glob = new Bun.Glob(`session/*/${sessionID}.json`)
     for await (const match of glob.scan({ cwd: dir, absolute: true, onlyFiles: true })) {
-      const info = await Bun.file(match).json().catch(() => undefined)
+      const info = await Bun.file(match)
+        .json()
+        .catch(() => undefined)
       if (info?.directory) return info.directory as string
     }
     return undefined

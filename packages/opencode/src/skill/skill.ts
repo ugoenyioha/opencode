@@ -106,14 +106,12 @@ export namespace Skill {
     for (const xdg of [Global.Path.data, Global.Path.config]) {
       const root = path.join(xdg, "skills")
       if (!(await Filesystem.isDir(root))) continue
-      await Array.fromAsync(
-        SKILL_GLOB.scan({
-          cwd: root,
-          absolute: true,
-          onlyFiles: true,
-          followSymlinks: true,
-        }),
-      )
+      await Glob.scan("**/*.md", {
+        cwd: root,
+        absolute: true,
+        include: "file",
+        symlink: true,
+      })
         .then((matches) => Promise.all(matches.map(addSkill)))
         .catch((error) => {
           log.error("failed to scan XDG skills", { dir: root, error })
