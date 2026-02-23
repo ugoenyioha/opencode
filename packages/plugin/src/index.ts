@@ -87,6 +87,28 @@ export type A2AAuthzInput = {
   strategy: AuthStrategy | "none"
   /** Authenticated principal identity (e.g. SPIFFE ID, JWT `sub`, `"api-key"`). */
   principal: string
+  /**
+   * Alias for `principal`. The identity of the human or service that authenticated
+   * via the A2A auth layer (API key, JWT, OIDC, OAuth2).
+   */
+  user_principal: string
+  /**
+   * SPIFFE workload identity of the calling service, derived from the local
+   * SPIRE Workload API. `undefined` when SPIFFE is not configured or the
+   * workload identity could not be fetched.
+   */
+  workload_principal?: string
+  /**
+   * Authz plugin context forwarded from `server.a2a.authz.plugin` (or the
+   * per-agent override). Use `plugin.policy` to pass arbitrary config to
+   * your hook — e.g. OPA policy path, SpiceDB namespace, ACL realm.
+   */
+  plugin: {
+    /** Matches `server.a2a.authz.plugin.id` in opencode.json. */
+    id: string
+    /** Opaque policy object from config, passed through unchanged. */
+    policy: Record<string, unknown>
+  }
 }
 
 export type RouteDefinition = {
