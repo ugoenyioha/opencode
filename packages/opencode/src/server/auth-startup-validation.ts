@@ -51,8 +51,60 @@ function parseURL(input: string) {
   }
 }
 
-function isExactLoopback(host: string) {
-  return LOOPBACK_HOSTS.has(host.trim().toLowerCase())
+// ---------------------------------------------------------------------------
+// plugin authz startup validation
+// ---------------------------------------------------------------------------
+
+function validatePluginAuthzConfig(config: Config.Info) {
+  const pluginAuthzConfigs: Array<{ path: string; config: any }> = []
+
+  // Server-level plugin authz
+  const serverAuthz = (config.server?.a2a as any)?.authz
+  if (serverAuthz?.provider === "plugin") {
+    pluginAuthzConfigs.push({ path: "server.a2a.authz.plugin", config: serverAuthz.plugin })
+  }
+
+  // Per-agent plugin authz
+  if (config.agent) {
+    for (const [agentName, agentConfig] of Object.entries(config.agent)) {
+      const agentAuthz = ((agentConfig as any)?.a2a as any)?.authz
+      if (agentAuthz?.provider === "plugin") {
+        pluginAuthzConfigs.push({ path: `agent.${agentName}.a2a.authz.plugin`, config: agentAuthz.plugin })
+      }
+    }
+  }
+
+  for (const { path, config: pConfig } of pluginAuthzConfigs) {
+    if (!pConfig || typeof pConfig !== "object" || Array.isArray(pConfig)) {
+      fail({
+        code: "AUTH_CONFIG_MISSING",
+        strategy: "plugin",
+        key: path,
+        reason: "required",
+      })
+    }
+    if (typeof pConfig.id !== "string" || !pConfig.id.trim()) {
+      fail({
+        code: "AUTH_CONFIG_MISSING",
+        strategy: "plugin",
+        key: `${path}.id`,
+        reason: "required",
+      })
+    }
+    if (!pConfig.policy || typeof pConfig.policy !== "object" || Array.isArray(pConfig.policy)) {
+      fail({
+        code: "AUTH_CONFIG_MISSING",
+        strategy: "plugin",
+        key: `${path}.policy`,
+        reason: "required",
+      })
+    }
+  }
+}
+
+
+function isExactLoopback(hostname: string) {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1"
 }
 
 function classifyPath(pathname: string) {
@@ -510,6 +562,7 @@ export async function validateStartupAuthConfig(context: ValidatorContext) {
 
   // Validate ext_authz config (server-level)
   validateExtAuthzConfig(context.config)
+  validatePluginAuthzConfig(context.config)
 
   // Validate A2A api-key auth config
   validateA2AApiKeyConfig(context)
