@@ -41,16 +41,18 @@ import {
   TeamCleanupTool,
   TeamStatusTool,
 } from "./team"
+import { Glob } from "../util/glob"
 
 export namespace ToolRegistry {
   const log = Log.create({ service: "tool.registry" })
 
   export const state = Instance.state(async () => {
     const custom = [] as Tool.Info[]
-    const glob = new Bun.Glob("{tool,tools}/*.{js,ts}")
 
     const matches = await Config.directories().then((dirs) =>
-      dirs.flatMap((dir) => [...glob.scanSync({ cwd: dir, absolute: true, followSymlinks: true, dot: true })]),
+      dirs.flatMap((dir) =>
+        Glob.scanSync("{tool,tools}/*.{js,ts}", { cwd: dir, absolute: true, dot: true, symlink: true }),
+      ),
     )
     if (matches.length) await Config.waitForDependencies()
     for (const match of matches) {

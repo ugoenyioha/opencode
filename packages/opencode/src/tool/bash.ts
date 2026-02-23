@@ -191,11 +191,8 @@ export const BashTool = Tool.define("bash", async () => {
               .then((x) => x.trim())
             log.info("resolved path", { arg, resolved })
             if (resolved) {
-              // Git Bash on Windows returns Unix-style paths like /c/Users/...
               const normalized =
-                process.platform === "win32" && resolved.match(/^\/[a-z]\//)
-                  ? resolved.replace(/^\/([a-z])\//, (_, drive) => `${drive.toUpperCase()}:\\`).replace(/\//g, "\\")
-                  : resolved
+                process.platform === "win32" ? Filesystem.windowsPath(resolved).replace(/\//g, "\\") : resolved
               if (!Instance.containsPath(normalized)) {
                 const dir = (await Filesystem.isDir(normalized)) ? normalized : path.dirname(normalized)
                 directories.add(dir)
@@ -230,7 +227,11 @@ export const BashTool = Tool.define("bash", async () => {
         })
       }
 
-      const shellEnv = await Plugin.trigger("shell.env", { cwd }, { env: {} })
+      const shellEnv = await Plugin.trigger(
+        "shell.env",
+        { cwd, sessionID: ctx.sessionID, callID: ctx.callID },
+        { env: {} },
+      )
       const proc = spawn(params.command, {
         shell,
         cwd,
