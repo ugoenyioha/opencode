@@ -946,8 +946,15 @@ export function requestToExtAuthzContext(
 ): ExtAuthzRequestContext {
   const url = new URL(req.url)
   const headers: Record<string, string> = {}
+  const dropped = new Set([
+    // Workload identity headers must be verified in runtime auth paths.
+    // Never forward caller-supplied workload headers to ext_authz by default.
+    "x-opencode-workload",
+  ])
   req.headers.forEach((value, key) => {
-    headers[key.toLowerCase()] = value
+    const name = key.toLowerCase()
+    if (dropped.has(name)) return
+    headers[name] = value
   })
 
   return {

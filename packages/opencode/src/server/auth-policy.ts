@@ -144,8 +144,8 @@ async function strategyPasses(
       route: context.route,
       source: "centralized",
     })
-    if (!result) return false
-    return result.sub ?? `${strategy}:verified`
+    if (!result?.sub) return false
+    return result.sub
   }
   return false
 }
