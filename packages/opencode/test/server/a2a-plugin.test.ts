@@ -2920,6 +2920,90 @@ You are a test agent.
       })
     }, 10000)
 
+    test("discovery respects per-agent plugin authz even when server ext_authz is fail-open", async () => {
+      await using tmp = await tmpdir({
+        init: async (dir) => {
+          await Bun.write(
+            path.join(dir, "agent", "neo-sidecar.md"),
+            `---
+name: neo-sidecar
+description: test agent
+mode: subagent
+model: anthropic/claude-3-5-haiku-latest
+---
+
+You are a test agent.
+`,
+          )
+          await Bun.write(
+            path.join(dir, "opencode.json"),
+            JSON.stringify({
+              $schema: "https://opencode.ai/config.json",
+              server: {
+                a2a: {
+                  enabled: true,
+                  baseUrl: "https://example.test",
+                  auth: ["api-key"],
+                  authz: {
+                    provider: "ext_authz",
+                    extAuthz: {
+                      endpoint: "grpc://127.0.0.1:1",
+                      timeout: 50,
+                      failOpen: true,
+                    },
+                  },
+                },
+              },
+              agent: {
+                "neo-sidecar": {
+                  mode: "subagent",
+                  description: "test agent",
+                  prompt: "You are a test agent.",
+                  model: "anthropic/claude-3-5-haiku-latest",
+                  a2a: {
+                    authz: {
+                      provider: "plugin",
+                      plugin: {
+                        id: "test-authz",
+                        policy: { realm: "test" },
+                      },
+                    },
+                  },
+                },
+              },
+            }),
+          )
+        },
+      })
+      await Instance.disposeAll()
+      await Instance.provide({
+        directory: tmp.path,
+        init: async () => {
+          Env.set("ANTHROPIC_API_KEY", "test-key")
+          Env.set("OPENCODE_A2A_API_KEY", "test-a2a-key")
+        },
+        fn: async () => {
+          const spy = spyOn(Plugin, "trigger").mockImplementation(async (name: any, input: any, output: any) => {
+            if (name === "a2a.authz" && input.action === "view") {
+              output.decision = { allow: false, reason: "view_denied" }
+            }
+            return output
+          })
+          try {
+            const app = Server.App()
+            const response = await app.request("/.well-known/agents.json", {
+              headers: { "x-opencode-directory": tmp.path, "x-a2a-key": "test-a2a-key" },
+            })
+            expect(response.status).toBe(200)
+            const body = (await response.json()) as any
+            expect(body.agents).toHaveLength(0)
+          } finally {
+            spy.mockRestore()
+          }
+        },
+      })
+    }, 10000)
+
     test("view deny hides agent from discovery listing", async () => {
       await using tmp = await projectWithPluginAuthz()
       await Instance.disposeAll()

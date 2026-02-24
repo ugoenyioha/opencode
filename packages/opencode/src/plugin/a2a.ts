@@ -1469,6 +1469,14 @@ export const A2APlugin: Plugin = async () => {
       const checksPromise = Promise.all(
         uncached.map(async (agent): Promise<ViewResult> => {
           const agentAuthz = await resolveAuthzConfig(agent.id)
+          if (agentAuthz?.provider === "plugin") {
+            try {
+              const decision = await runPluginAuthz(req, agent.id, authn, "view", agentAuthz.plugin)
+              return { agent, allowed: decision?.allow === true, failOpen: false }
+            } catch (err) {
+              return { agent, allowed: false, error: err instanceof Error ? err.message : String(err), failOpen: false }
+            }
+          }
           const extAuthzConfig = (agentAuthz?.provider === "ext_authz" ? agentAuthz.extAuthz : undefined) ?? serverExtAuthz!
           const failOpen = extAuthzConfig.failOpen ?? false
           try {
@@ -1527,7 +1535,10 @@ export const A2APlugin: Plugin = async () => {
       // ext_authz module failed to load or aggregate timeout — respect failOpen
       const message = error instanceof Error ? error.message : String(error)
       log.error("discovery: ext_authz error, applying failOpen policy", { error: message })
-      return (serverExtAuthz?.failOpen ?? false) ? agents : []
+      const visible = await Promise.all(
+        agents.map(async (agent) => ((await canViewAgent(req, agent.id)) ? agent : undefined)),
+      )
+      return visible.filter((item): item is A2AAgent => !!item)
     }
     }) // end withConstantTime
   }
