@@ -144,7 +144,7 @@ async function strategyPasses(
       route: context.route,
       source: "centralized",
     })
-    if (!result?.sub) return false
+    if (typeof result !== "object" || !result?.sub) return false
     return result.sub
   }
   return false

@@ -33,6 +33,8 @@ let _grpc: typeof import("@grpc/grpc-js") | null = null
 let _protoTypes: {
   ValidateJWTSVIDRequest: any
   ValidateJWTSVIDResponse: any
+  X509SVIDRequest?: any
+  X509SVIDResponse?: any
   Struct: any
 } | null = null
 
@@ -54,6 +56,8 @@ function loadProtoTypes() {
     _protoTypes = {
       ValidateJWTSVIDRequest: spiffe.ValidateJWTSVIDRequest,
       ValidateJWTSVIDResponse: spiffe.ValidateJWTSVIDResponse,
+      X509SVIDRequest: spiffe.X509SVIDRequest,
+      X509SVIDResponse: spiffe.X509SVIDResponse,
       Struct: spiffe.Struct,
     }
   }
@@ -321,6 +325,9 @@ export async function fetchLocalWorkloadIdentity(): Promise<string | null> {
     const client = await getClient()
     const grpc = await loadGrpc()
     const proto = loadProtoTypes()
+    if (!proto.X509SVIDRequest || !proto.X509SVIDResponse) {
+      return null
+    }
     const metadata = new grpc.Metadata()
     metadata.set("workload.spiffe.io", "true")
 
