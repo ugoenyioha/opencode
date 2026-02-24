@@ -892,6 +892,10 @@ export const A2APlugin: Plugin = async () => {
             statusOnError?: number
           }
         }
+      | {
+          provider: "error"
+          reason: string
+        }
     | undefined
   > {
     try {
@@ -933,8 +937,12 @@ export const A2APlugin: Plugin = async () => {
           extAuthz: perAgentAuthz.extAuthz,
         }
       }
-    } catch {
-      // Fall through to server-level
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error)
+      return {
+        provider: "error",
+        reason: `a2a_authz_config_error: ${reason}`,
+      }
     }
     if (serverPluginAuthz) {
       return {
@@ -1071,6 +1079,13 @@ export const A2APlugin: Plugin = async () => {
 
     // Step 2: Authorization (ext_authz or plugin)
     const authzConfig = await resolveAuthzConfig(agentId)
+    if (authzConfig?.provider === "error") {
+      log.warn("authz config resolution failed", { agentId, reason: authzConfig.reason })
+      return json(
+        { error: { code: "Forbidden", message: "Authorization denied" } },
+        403,
+      )
+    }
     if (authzConfig?.provider === "ext_authz") {
       const extAuthzConfig = authzConfig.extAuthz
       try {
@@ -1321,7 +1336,7 @@ export const A2APlugin: Plugin = async () => {
           if (!authz.provider && authz.extAuthz) return true
           return false
         } catch {
-          return false
+          return true
         }
       }),
     )
@@ -1402,7 +1417,7 @@ export const A2APlugin: Plugin = async () => {
               const authz = ((cfg?.a2a as any)?.authz as any) ?? undefined
               return !authz
             } catch {
-              return true
+              return false
             }
           }),
         )
@@ -1469,6 +1484,14 @@ export const A2APlugin: Plugin = async () => {
       const checksPromise = Promise.all(
         uncached.map(async (agent): Promise<ViewResult> => {
           const agentAuthz = await resolveAuthzConfig(agent.id)
+          if (agentAuthz?.provider === "error") {
+            return {
+              agent,
+              allowed: false,
+              error: agentAuthz.reason,
+              failOpen: false,
+            }
+          }
           if (agentAuthz?.provider === "plugin") {
             try {
               const decision = await runPluginAuthz(req, agent.id, authn, "view", agentAuthz.plugin)
@@ -1549,6 +1572,7 @@ export const A2APlugin: Plugin = async () => {
    */
   async function canViewAgent(req: Request, agentId: string): Promise<boolean> {
     const authzConfig = await resolveAuthzConfig(agentId)
+    if (authzConfig?.provider === "error") return false
     if (!authzConfig) return true
 
     const authn = await tryAuthenticate(req.headers)
