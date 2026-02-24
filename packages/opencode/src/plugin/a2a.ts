@@ -889,7 +889,9 @@ export const A2APlugin: Plugin = async () => {
         route: `a2a.${agentId}` as any,
         source: "centralized",
       })
-      if (result?.sub) return { ok: true, strategy: strategy as any, principal: result.sub }
+      if (typeof result === "object" && result?.sub) {
+        return { ok: true, strategy: strategy as any, principal: result.sub }
+      }
     }
     return { ok: false, strategy: "none", principal: "" }
   }
@@ -1041,7 +1043,7 @@ export const A2APlugin: Plugin = async () => {
           route: `a2a.${agentId}` as any,
           source: "centralized",
         })
-        if (!verified?.sub) {
+        if (typeof verified !== "object" || !verified?.sub) {
           log.warn("trusted workload header token failed JWT verification", {
             agentId,
           })
@@ -1281,7 +1283,9 @@ export const A2APlugin: Plugin = async () => {
         route: "a2a.discovery" as any,
         source: "centralized",
       })
-      if (result?.sub) return { ok: true, strategy: strategy as any, principal: result.sub }
+      if (typeof result === "object" && result?.sub) {
+        return { ok: true, strategy: strategy as any, principal: result.sub }
+      }
     }
     return undefined
   }
