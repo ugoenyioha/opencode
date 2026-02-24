@@ -466,6 +466,24 @@ type SendMessageRequest = {
   configuration?: {
     blocking?: boolean
     timeout?: number
+    model?: string
+  }
+}
+
+function resolveModel(input: SendMessageRequest["configuration"]) {
+  const raw = input?.model
+  if (!raw) return undefined
+  if (typeof raw !== "string") {
+    throw new Error("configuration.model must be a string in provider/model format")
+  }
+  const value = raw.trim()
+  const split = value.indexOf("/")
+  if (split <= 0 || split === value.length - 1) {
+    throw new Error("configuration.model must use provider/model format")
+  }
+  return {
+    providerID: value.slice(0, split),
+    modelID: value.slice(split + 1),
   }
 }
 
@@ -688,6 +706,7 @@ async function handleSendMessage(
     .filter((p): p is { text: string } => "text" in p)
     .map((p) => p.text)
     .join("\n")
+  const model = resolveModel(req.configuration)
 
   // 4. Create OpenCode session
   try {
@@ -702,6 +721,7 @@ async function handleSendMessage(
     SessionPrompt.prompt({
       sessionID: session.id,
       agent: agentId,
+      model,
       parts: [{ type: "text", text: prompt }],
     }).catch((error) => {
       log.error("A2A session prompt failed", { taskId: task.id })
@@ -989,24 +1009,51 @@ export const A2APlugin: Plugin = async () => {
           | { trustDomain?: string; audience?: string; allowedIds?: string[] }
           | undefined
         const audience = spiffeConfig?.audience ?? process.env["OPENCODE_SPIFFE_AUDIENCE"]
-        if (!audience) return undefined
         const allowedIds =
           spiffeConfig?.allowedIds ??
           process.env["OPENCODE_SPIFFE_ALLOWED_IDS"]?.split(",").map((s) => s.trim()).filter(Boolean)
-        if (!allowedIds || allowedIds.length === 0) {
+        if (audience && (!allowedIds || allowedIds.length === 0)) {
           log.warn("trusted workload header ignored: no OPENCODE_SPIFFE_ALLOWED_IDS configured", {
             agentId,
             audience,
           })
           return undefined
         }
-        const { verifySPIFFE } = await import("../server/spiffe")
-        const spiffeId = await verifySPIFFE(token, audience, allowedIds)
-        if (spiffeId) return spiffeId
-        log.warn("trusted workload header token failed SPIFFE verification", {
-          agentId,
-          audience,
+        if (audience && allowedIds && allowedIds.length > 0) {
+          const { verifySPIFFE } = await import("../server/spiffe")
+          const spiffeId = await verifySPIFFE(token, audience, allowedIds)
+          if (spiffeId) return spiffeId
+          log.warn("trusted workload header token failed SPIFFE verification", {
+            agentId,
+            audience,
+          })
+        }
+
+        const jwtAllow = process.env["OPENCODE_WORKLOAD_JWT_ALLOWED_SUBS"]?.split(",").map((s) => s.trim()).filter(Boolean)
+        if (!jwtAllow || jwtAllow.length === 0) {
+          log.warn("trusted workload header ignored: no OPENCODE_WORKLOAD_JWT_ALLOWED_SUBS configured", {
+            agentId,
+          })
+          return undefined
+        }
+        const verified = await verifyBearerForStrategy("jwt", token, {
+          surface: "a2a",
+          route: `a2a.${agentId}` as any,
+          source: "centralized",
         })
+        if (!verified?.sub) {
+          log.warn("trusted workload header token failed JWT verification", {
+            agentId,
+          })
+          return undefined
+        }
+        if (!jwtAllow.includes(verified.sub)) {
+          log.warn("trusted workload header ignored: jwt workload sub not allowlisted", {
+            agentId,
+          })
+          return undefined
+        }
+        return verified.sub
       }
       return undefined
     })()

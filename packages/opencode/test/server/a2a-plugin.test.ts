@@ -843,6 +843,88 @@ Test agent prompt.
     })
   })
 
+  test("message:send forwards configuration.model to SessionPrompt", async () => {
+    await using tmp = await project(true)
+    await Instance.disposeAll()
+    await Instance.provide({
+      directory: tmp.path,
+      init: async () => {
+        Env.set("ANTHROPIC_API_KEY", "test-key")
+      },
+      fn: async () => {
+        const promptSpy = spyOn(SessionPrompt, "prompt").mockResolvedValue(undefined as any)
+        try {
+          const app = Server.App()
+          const response = await app.request("/a2a/neo-sidecar/message:send", {
+            method: "POST",
+            headers: {
+              "x-opencode-directory": tmp.path,
+              "content-type": "application/json",
+              "A2A-Version": "1.0",
+              ...AUTH_HEADER,
+            },
+            body: JSON.stringify({
+              message: {
+                messageId: "test-model-forward",
+                role: "ROLE_USER",
+                parts: [{ text: "hello" }],
+              },
+              configuration: {
+                model: "openai/gpt-5.3-codex",
+              },
+            }),
+          })
+          expect(response.status).toBe(200)
+          expect(promptSpy).toHaveBeenCalled()
+          expect(promptSpy.mock.calls[0]?.[0]).toMatchObject({
+            model: {
+              providerID: "openai",
+              modelID: "gpt-5.3-codex",
+            },
+          })
+        } finally {
+          promptSpy.mockRestore()
+        }
+      },
+    })
+  })
+
+  test("message:send rejects invalid configuration.model format", async () => {
+    await using tmp = await project(true)
+    await Instance.disposeAll()
+    await Instance.provide({
+      directory: tmp.path,
+      init: async () => {
+        Env.set("ANTHROPIC_API_KEY", "test-key")
+      },
+      fn: async () => {
+        const app = Server.App()
+        const response = await app.request("/a2a/neo-sidecar/message:send", {
+          method: "POST",
+          headers: {
+            "x-opencode-directory": tmp.path,
+            "content-type": "application/json",
+            "A2A-Version": "1.0",
+            ...AUTH_HEADER,
+          },
+          body: JSON.stringify({
+            message: {
+              messageId: "test-model-invalid",
+              role: "ROLE_USER",
+              parts: [{ text: "hello" }],
+            },
+            configuration: {
+              model: "gpt-5.3-codex",
+            },
+          }),
+        })
+        expect(response.status).toBe(400)
+        const body = (await response.json()) as any
+        expect(body.error.message).toContain("configuration.model")
+      },
+    })
+  })
+
   test("tasks endpoint returns empty list initially", async () => {
     await using tmp = await project(true)
     await Instance.disposeAll()
