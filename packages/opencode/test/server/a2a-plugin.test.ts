@@ -13,6 +13,7 @@ import { Log } from "../../src/util/log"
 import { tmpdir } from "../fixture/fixture"
 import { Config } from "../../src/config/config"
 import { Plugin } from "../../src/plugin"
+import { Agent } from "../../src/agent/agent"
 import { Session } from "../../src/session"
 import { SessionPrompt } from "../../src/session/prompt"
 import { SessionStatus } from "../../src/session/status"
@@ -2912,6 +2913,81 @@ You are a test agent.
             })
             expect(response.status).toBe(200)
             const body = (await response.json()) as any
+            expect(body.agents).toHaveLength(0)
+          } finally {
+            spy.mockRestore()
+          }
+        },
+      })
+    }, 10000)
+
+    test("fails closed when per-agent authz config lookup errors", async () => {
+      await using tmp = await tmpdir({
+        init: async (dir) => {
+          await Bun.write(
+            path.join(dir, "agent", "neo-sidecar.md"),
+            `---
+name: neo-sidecar
+description: test agent
+mode: subagent
+model: anthropic/claude-3-5-haiku-latest
+---
+
+You are a test agent.
+`,
+          )
+          await Bun.write(
+            path.join(dir, "opencode.json"),
+            JSON.stringify({
+              $schema: "https://opencode.ai/config.json",
+              server: {
+                a2a: {
+                  enabled: true,
+                  baseUrl: "https://example.test",
+                  auth: ["api-key"],
+                },
+              },
+              agent: {
+                "neo-sidecar": {
+                  mode: "subagent",
+                  description: "test agent",
+                  prompt: "You are a test agent.",
+                  model: "anthropic/claude-3-5-haiku-latest",
+                  a2a: {
+                    authz: {
+                      provider: "plugin",
+                      plugin: {
+                        id: "test-authz",
+                        policy: { realm: "test" },
+                      },
+                    },
+                  },
+                },
+              },
+            }),
+          )
+        },
+      })
+      await Instance.disposeAll()
+      await Instance.provide({
+        directory: tmp.path,
+        init: async () => {
+          Env.set("ANTHROPIC_API_KEY", "test-key")
+          Env.set("OPENCODE_A2A_API_KEY", "test-a2a-key")
+        },
+        fn: async () => {
+          const base = Agent.get.bind(Agent)
+          const spy = spyOn(Agent, "get").mockImplementation(async (id: string) => {
+            if (id === "neo-sidecar") throw new Error("agent config read failed")
+            return base(id as any)
+          })
+          try {
+            const app = Server.App()
+            const listing = await app.request("/.well-known/agents.json", {
+              headers: { "x-opencode-directory": tmp.path, "x-a2a-key": "test-a2a-key" },
+            })
+            expect(listing.status).toBe(200)
+            const body = (await listing.json()) as any
             expect(body.agents).toHaveLength(0)
           } finally {
             spy.mockRestore()
