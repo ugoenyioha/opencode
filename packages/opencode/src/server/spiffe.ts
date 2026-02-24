@@ -322,6 +322,7 @@ export async function fetchLocalWorkloadIdentity(): Promise<string | null> {
     const grpc = await loadGrpc()
     const proto = loadProtoTypes()
     const metadata = new grpc.Metadata()
+    metadata.set("workload.spiffe.io", "true")
 
     return await new Promise((resolve) => {
       const call = client.makeServerStreamRequest<any, any>(

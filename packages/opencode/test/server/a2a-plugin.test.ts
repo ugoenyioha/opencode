@@ -2485,7 +2485,7 @@ Agent.
   describe("a2a.authz plugin hook", () => {
     // Project fixture: server-level plugin authz enabled, no real plugin file needed
     // (hook is intercepted via spyOn(Plugin, "trigger"))
-    async function projectWithPluginAuthz() {
+    async function projectWithPluginAuthz(opts?: { statusOnError?: number; exposeDenyReason?: boolean }) {
       return tmpdir({
         init: async (dir) => {
           const skillDir = path.join(dir, ".opencode", "skills", "sidecar-preserve")
@@ -2530,14 +2530,18 @@ You are a container build agent.
                   enabled: true,
                   baseUrl: "https://example.test",
                   auth: ["api-key"],
-                  authz: {
-                    provider: "plugin",
-                    plugin: {
-                      id: "test-authz",
-                      policy: { realm: "test" },
-                    },
+                authz: {
+                  provider: "plugin",
+                  ...(typeof opts?.exposeDenyReason === "boolean"
+                    ? { exposeDenyReason: opts.exposeDenyReason }
+                    : {}),
+                  plugin: {
+                    id: "test-authz",
+                    policy: { realm: "test" },
+                    ...(typeof opts?.statusOnError === "number" ? { statusOnError: opts.statusOnError } : {}),
                   },
                 },
+              },
               },
             }),
           )
@@ -2628,6 +2632,151 @@ You are a container build agent.
       })
     }, 10000)
 
+    test("hook throw honors plugin statusOnError override", async () => {
+      await using tmp = await projectWithPluginAuthz({ statusOnError: 503 })
+      await Instance.disposeAll()
+      await Instance.provide({
+        directory: tmp.path,
+        init: async () => {
+          Env.set("ANTHROPIC_API_KEY", "test-key")
+        },
+        fn: async () => {
+          const spy = spyOn(Plugin, "trigger").mockImplementation(async (name: any, _input: any, output: any) => {
+            if (name === "a2a.authz") throw new Error("authz hook failed")
+            return output
+          })
+          try {
+            const app = Server.App()
+            const response = await app.request("/a2a/neo-sidecar/tasks", {
+              method: "GET",
+              headers: { "x-opencode-directory": tmp.path, ...AUTH_HEADER },
+            })
+            expect(response.status).toBe(503)
+          } finally {
+            spy.mockRestore()
+          }
+        },
+      })
+    }, 10000)
+
+    test("hook timeout fails closed with default status", async () => {
+      await using tmp = await projectWithPluginAuthz()
+      await Instance.disposeAll()
+      await Instance.provide({
+        directory: tmp.path,
+        init: async () => {
+          Env.set("ANTHROPIC_API_KEY", "test-key")
+          Env.set("OPENCODE_A2A_PLUGIN_AUTHZ_TIMEOUT_MS", "50")
+        },
+        fn: async () => {
+          const spy = spyOn(Plugin, "trigger").mockImplementation(async (name: any, _input: any, output: any) => {
+            if (name === "a2a.authz") {
+              await new Promise(() => {})
+            }
+            return output
+          })
+          try {
+            const app = Server.App()
+            const response = await app.request("/a2a/neo-sidecar/tasks", {
+              method: "GET",
+              headers: { "x-opencode-directory": tmp.path, ...AUTH_HEADER },
+            })
+            expect(response.status).toBe(403)
+          } finally {
+            spy.mockRestore()
+          }
+        },
+      })
+    }, 10000)
+
+    test("hook timeout honors plugin statusOnError override", async () => {
+      await using tmp = await projectWithPluginAuthz({ statusOnError: 503 })
+      await Instance.disposeAll()
+      await Instance.provide({
+        directory: tmp.path,
+        init: async () => {
+          Env.set("ANTHROPIC_API_KEY", "test-key")
+          Env.set("OPENCODE_A2A_PLUGIN_AUTHZ_TIMEOUT_MS", "50")
+        },
+        fn: async () => {
+          const spy = spyOn(Plugin, "trigger").mockImplementation(async (name: any, _input: any, output: any) => {
+            if (name === "a2a.authz") {
+              await new Promise(() => {})
+            }
+            return output
+          })
+          try {
+            const app = Server.App()
+            const response = await app.request("/a2a/neo-sidecar/tasks", {
+              method: "GET",
+              headers: { "x-opencode-directory": tmp.path, ...AUTH_HEADER },
+            })
+            expect(response.status).toBe(503)
+          } finally {
+            spy.mockRestore()
+          }
+        },
+      })
+    }, 10000)
+
+    test("default deny response hides provider reason", async () => {
+      await using tmp = await projectWithPluginAuthz()
+      await Instance.disposeAll()
+      await Instance.provide({
+        directory: tmp.path,
+        init: async () => {
+          Env.set("ANTHROPIC_API_KEY", "test-key")
+        },
+        fn: async () => {
+          const spy = spyOn(Plugin, "trigger").mockImplementation(async (name: any, _input: any, output: any) => {
+            if (name === "a2a.authz") output.decision = { allow: false, reason: "policy_denied" }
+            return output
+          })
+          try {
+            const app = Server.App()
+            const response = await app.request("/a2a/neo-sidecar/tasks", {
+              method: "GET",
+              headers: { "x-opencode-directory": tmp.path, ...AUTH_HEADER },
+            })
+            expect(response.status).toBe(403)
+            const body = (await response.json()) as any
+            expect(body.error.message).toBe("Authorization denied")
+          } finally {
+            spy.mockRestore()
+          }
+        },
+      })
+    }, 10000)
+
+    test("exposeDenyReason returns provider reason to caller", async () => {
+      await using tmp = await projectWithPluginAuthz({ exposeDenyReason: true })
+      await Instance.disposeAll()
+      await Instance.provide({
+        directory: tmp.path,
+        init: async () => {
+          Env.set("ANTHROPIC_API_KEY", "test-key")
+        },
+        fn: async () => {
+          const spy = spyOn(Plugin, "trigger").mockImplementation(async (name: any, _input: any, output: any) => {
+            if (name === "a2a.authz") output.decision = { allow: false, reason: "policy_denied" }
+            return output
+          })
+          try {
+            const app = Server.App()
+            const response = await app.request("/a2a/neo-sidecar/tasks", {
+              method: "GET",
+              headers: { "x-opencode-directory": tmp.path, ...AUTH_HEADER },
+            })
+            expect(response.status).toBe(403)
+            const body = (await response.json()) as any
+            expect(body.error.message).toBe("policy_denied")
+          } finally {
+            spy.mockRestore()
+          }
+        },
+      })
+    }, 10000)
+
     test("allow decision passes request through", async () => {
       await using tmp = await projectWithPluginAuthz()
       await Instance.disposeAll()
@@ -2656,7 +2805,7 @@ You are a container build agent.
       })
     }, 10000)
 
-    test("abstain (undefined decision) passes request through", async () => {
+    test("undefined decision fails closed", async () => {
       await using tmp = await projectWithPluginAuthz()
       await Instance.disposeAll()
       await Instance.provide({
@@ -2666,7 +2815,7 @@ You are a container build agent.
         },
         fn: async () => {
           const spy = spyOn(Plugin, "trigger").mockImplementation(async (_name: any, _input: any, output: any) => {
-            // leave output.decision undefined — abstain
+            // leave output.decision undefined — runtime must fail closed
             return output
           })
           try {
@@ -2675,8 +2824,81 @@ You are a container build agent.
               method: "GET",
               headers: { "x-opencode-directory": tmp.path, ...AUTH_HEADER },
             })
-            expect(response.status).not.toBe(403)
-            expect(response.status).not.toBe(401)
+            expect(response.status).toBe(403)
+          } finally {
+            spy.mockRestore()
+          }
+        },
+      })
+    }, 10000)
+
+    test("per-agent plugin authz is enforced in discovery listing", async () => {
+      await using tmp = await tmpdir({
+        init: async (dir) => {
+          await Bun.write(
+            path.join(dir, "agent", "neo-sidecar.md"),
+            `---
+name: neo-sidecar
+description: test agent
+mode: subagent
+model: anthropic/claude-3-5-haiku-latest
+---
+
+You are a test agent.
+`,
+          )
+          await Bun.write(
+            path.join(dir, "opencode.json"),
+            JSON.stringify({
+              $schema: "https://opencode.ai/config.json",
+              server: {
+                a2a: {
+                  enabled: true,
+                  baseUrl: "https://example.test",
+                  auth: ["api-key"],
+                },
+              },
+              agent: {
+                "neo-sidecar": {
+                  mode: "subagent",
+                  description: "test agent",
+                  prompt: "You are a test agent.",
+                  model: "anthropic/claude-3-5-haiku-latest",
+                  a2a: {
+                    authz: {
+                      provider: "plugin",
+                      plugin: {
+                        id: "test-authz",
+                        policy: { realm: "test" },
+                      },
+                    },
+                  },
+                },
+              },
+            }),
+          )
+        },
+      })
+      await Instance.disposeAll()
+      await Instance.provide({
+        directory: tmp.path,
+        init: async () => {
+          Env.set("ANTHROPIC_API_KEY", "test-key")
+          Env.set("OPENCODE_A2A_API_KEY", "test-a2a-key")
+        },
+        fn: async () => {
+          const spy = spyOn(Plugin, "trigger").mockImplementation(async (_name: any, _input: any, output: any) => {
+            // leave output.decision undefined — runtime must fail closed
+            return output
+          })
+          try {
+            const app = Server.App()
+            const response = await app.request("/.well-known/agents.json", {
+              headers: { "x-opencode-directory": tmp.path, "x-a2a-key": "test-a2a-key" },
+            })
+            expect(response.status).toBe(200)
+            const body = (await response.json()) as any
+            expect(body.agents).toHaveLength(0)
           } finally {
             spy.mockRestore()
           }

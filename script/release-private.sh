@@ -71,7 +71,7 @@ TIMESTAMP=$(date -u +"%Y%m%d%H%M")
 SHORT_HASH=$(cd "$REPO_ROOT" && git rev-parse --short=9 HEAD)
 # npm doesn't allow slashes in versions — replace with hyphens
 SAFE_BRANCH=$(echo "$BRANCH" | tr '/' '-')
-VERSION="0.0.0-${SAFE_BRANCH}-${TIMESTAMP}-${SHORT_HASH}"
+VERSION="${OPENCODE_RELEASE_VERSION:-0.0.0-${SAFE_BRANCH}-${TIMESTAMP}-${SHORT_HASH}}"
 TAG="$SAFE_BRANCH"
 
 echo "========================================="

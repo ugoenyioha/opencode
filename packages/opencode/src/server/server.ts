@@ -337,9 +337,13 @@ export namespace Server {
               headers?: Record<string, string>
             }
           } = {}
-          const forwarded = c.req.header("x-forwarded-for")
-          const clientIP =
-            forwarded?.split(",")[0]?.trim() || c.req.header("x-real-ip") || c.req.header("cf-connecting-ip") || ""
+          const trustProxyHeaders = ["1", "true", "yes", "on"].includes(
+            (Env.get("OPENCODE_TRUST_PROXY_HEADERS") ?? "").trim().toLowerCase(),
+          )
+          const forwarded = trustProxyHeaders ? c.req.header("x-forwarded-for") : undefined
+          const clientIP = trustProxyHeaders
+            ? forwarded?.split(",")[0]?.trim() || c.req.header("x-real-ip") || c.req.header("cf-connecting-ip") || ""
+            : ""
           await Plugin.trigger(
             "http.request",
             {

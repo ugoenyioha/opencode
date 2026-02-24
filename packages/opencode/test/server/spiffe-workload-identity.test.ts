@@ -2,10 +2,13 @@ import { describe, expect, mock, test } from "bun:test"
 
 let mode: "success" | "error" = "success"
 let calls = 0
+let metadataSetCalled = false
 
 mock.module("@grpc/grpc-js", () => {
   class Metadata {
-    set() {}
+    set(key: string, value: string) {
+      if (key === "workload.spiffe.io" && value === "true") metadataSetCalled = true
+    }
   }
 
   class Client {
@@ -69,6 +72,7 @@ describe("fetchLocalWorkloadIdentity", () => {
     process.env.SPIFFE_ENDPOINT_SOCKET = "unix:///tmp/spire-agent.sock"
     mode = "success"
     calls = 0
+    metadataSetCalled = false
 
     const first = await spiffe.fetchLocalWorkloadIdentity()
     const second = await spiffe.fetchLocalWorkloadIdentity()
@@ -76,5 +80,6 @@ describe("fetchLocalWorkloadIdentity", () => {
     expect(first).toBe("spiffe://trust.domain/ns/default/sa/sidecar")
     expect(second).toBe("spiffe://trust.domain/ns/default/sa/sidecar")
     expect(calls).toBe(1)
+    expect(metadataSetCalled).toBe(true)
   })
 })
