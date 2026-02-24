@@ -116,6 +116,7 @@ describe("a2a plugin authz context", () => {
           expect(captured.plugin.policy).toEqual({ mode: "enforce" })
           expect(captured.headers.authorization).toBe("[redacted]")
           expect(captured.headers["x-a2a-key"]).toBe("[redacted]")
+          expect(captured.headers["x-opencode-workload"]).toBeUndefined()
         } finally {
           triggerSpy.mockRestore()
         }
@@ -132,6 +133,7 @@ describe("a2a plugin authz context", () => {
         Env.set("ANTHROPIC_API_KEY", "test-key")
         process.env["OPENCODE_A2A_TRUST_WORKLOAD_HEADER"] = "true"
         process.env["OPENCODE_SPIFFE_AUDIENCE"] = "test-audience"
+        process.env["OPENCODE_SPIFFE_ALLOWED_IDS"] = "spiffe://trust.domain/ns/default/sa/caller"
       },
       fn: async () => {
         let captured: any
@@ -157,12 +159,117 @@ describe("a2a plugin authz context", () => {
           })
           expect(response.status).toBe(200)
           expect(captured.workload_principal).toBe("spiffe://trust.domain/ns/default/sa/caller")
-          expect(spiffeSpy).toHaveBeenCalledWith("trusted-workload-jwt-svid", expect.any(String), undefined)
+          expect(spiffeSpy).toHaveBeenCalledWith(
+            "trusted-workload-jwt-svid",
+            "test-audience",
+            ["spiffe://trust.domain/ns/default/sa/caller"],
+          )
+          expect(captured.headers["x-opencode-workload"]).toBe("[redacted]")
         } finally {
           spiffeSpy.mockRestore()
           triggerSpy.mockRestore()
           delete process.env["OPENCODE_A2A_TRUST_WORKLOAD_HEADER"]
           delete process.env["OPENCODE_SPIFFE_AUDIENCE"]
+          delete process.env["OPENCODE_SPIFFE_ALLOWED_IDS"]
+        }
+      },
+    })
+  })
+
+  test("fails closed to no workload_principal when trusted workload token fails SPIFFE verify", async () => {
+    await using tmp = await projectWithPluginAuthz()
+    await Instance.disposeAll()
+    await Instance.provide({
+      directory: tmp.path,
+      init: async () => {
+        Env.set("ANTHROPIC_API_KEY", "test-key")
+        process.env["OPENCODE_A2A_TRUST_WORKLOAD_HEADER"] = "true"
+        process.env["OPENCODE_SPIFFE_AUDIENCE"] = "test-audience"
+        process.env["OPENCODE_SPIFFE_ALLOWED_IDS"] = "spiffe://trust.domain/ns/default/sa/caller"
+      },
+      fn: async () => {
+        let captured: any
+        const base = Plugin.trigger.bind(Plugin)
+        const spiffeSpy = spyOn(Spiffe, "verifySPIFFE").mockResolvedValue(false)
+        const triggerSpy = spyOn(Plugin, "trigger").mockImplementation(async (name: any, input: any, output: any) => {
+          if (name === "a2a.authz") {
+            captured = input
+            output.decision = { allow: true }
+            return output
+          }
+          return base(name, input, output)
+        })
+        try {
+          const app = Server.App()
+          const response = await app.request("/a2a/neo-sidecar/tasks", {
+            method: "GET",
+            headers: {
+              "x-opencode-directory": tmp.path,
+              "x-opencode-workload": "Bearer invalid-workload-token",
+              ...AUTH_HEADER,
+            },
+          })
+          expect(response.status).toBe(200)
+          expect(captured.workload_principal).toBeUndefined()
+          expect(spiffeSpy).toHaveBeenCalledWith(
+            "invalid-workload-token",
+            "test-audience",
+            ["spiffe://trust.domain/ns/default/sa/caller"],
+          )
+          expect(captured.headers["x-opencode-workload"]).toBe("[redacted]")
+        } finally {
+          spiffeSpy.mockRestore()
+          triggerSpy.mockRestore()
+          delete process.env["OPENCODE_A2A_TRUST_WORKLOAD_HEADER"]
+          delete process.env["OPENCODE_SPIFFE_AUDIENCE"]
+          delete process.env["OPENCODE_SPIFFE_ALLOWED_IDS"]
+        }
+      },
+    })
+  })
+
+  test("ignores trusted workload header when allowlist is not configured", async () => {
+    await using tmp = await projectWithPluginAuthz()
+    await Instance.disposeAll()
+    await Instance.provide({
+      directory: tmp.path,
+      init: async () => {
+        Env.set("ANTHROPIC_API_KEY", "test-key")
+        process.env["OPENCODE_A2A_TRUST_WORKLOAD_HEADER"] = "true"
+        process.env["OPENCODE_SPIFFE_AUDIENCE"] = "test-audience"
+        delete process.env["OPENCODE_SPIFFE_ALLOWED_IDS"]
+      },
+      fn: async () => {
+        let captured: any
+        const base = Plugin.trigger.bind(Plugin)
+        const spiffeSpy = spyOn(Spiffe, "verifySPIFFE").mockResolvedValue("spiffe://trust.domain/ns/default/sa/caller")
+        const triggerSpy = spyOn(Plugin, "trigger").mockImplementation(async (name: any, input: any, output: any) => {
+          if (name === "a2a.authz") {
+            captured = input
+            output.decision = { allow: true }
+            return output
+          }
+          return base(name, input, output)
+        })
+        try {
+          const app = Server.App()
+          const response = await app.request("/a2a/neo-sidecar/tasks", {
+            method: "GET",
+            headers: {
+              "x-opencode-directory": tmp.path,
+              "x-opencode-workload": "Bearer trusted-workload-jwt-svid",
+              ...AUTH_HEADER,
+            },
+          })
+          expect(response.status).toBe(200)
+          expect(captured.workload_principal).toBeUndefined()
+          expect(spiffeSpy).not.toHaveBeenCalled()
+        } finally {
+          spiffeSpy.mockRestore()
+          triggerSpy.mockRestore()
+          delete process.env["OPENCODE_A2A_TRUST_WORKLOAD_HEADER"]
+          delete process.env["OPENCODE_SPIFFE_AUDIENCE"]
+          delete process.env["OPENCODE_SPIFFE_ALLOWED_IDS"]
         }
       },
     })

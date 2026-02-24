@@ -2,7 +2,7 @@ import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import * as grpc from "@grpc/grpc-js"
 import * as protoLoader from "@grpc/proto-loader"
 import path from "path"
-import { checkAuthorization, closeAllClients, type ExtAuthzConfig, type ExtAuthzRequestContext } from "../../src/server/ext-authz"
+import { checkAuthorization, closeAllClients, requestToExtAuthzContext, type ExtAuthzConfig, type ExtAuthzRequestContext } from "../../src/server/ext-authz"
 import type { AuthnResult } from "../../src/server/auth-policy"
 
 // ---------------------------------------------------------------------------
@@ -252,6 +252,7 @@ describe("ext_authz gRPC client", () => {
         headers: {
           "content-type": "application/json",
           "x-request-id": "req-123",
+          "x-opencode-workload": "Bearer should-not-forward",
         },
       })
 
@@ -264,6 +265,23 @@ describe("ext_authz gRPC client", () => {
       expect(http.headers["content-type"]).toBe("application/json")
       expect(http.headers["x-request-id"]).toBe("req-123")
       expect(http.id).toBe("req-123") // x-request-id maps to id field
+    })
+  })
+
+  describe("requestToExtAuthzContext header filtering", () => {
+    test("strips x-opencode-workload from forwarded headers", () => {
+      const req = new Request("http://localhost:8080/a2a/test-agent/message:send", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer user-token",
+          "x-opencode-workload": "Bearer workload-token",
+          "x-request-id": "req-ctx-1",
+        },
+      })
+      const context = requestToExtAuthzContext(req, { agentId: "test-agent" })
+      expect(context.headers["authorization"]).toBe("Bearer user-token")
+      expect(context.headers["x-opencode-workload"]).toBeUndefined()
+      expect(context.headers["x-request-id"]).toBe("req-ctx-1")
     })
   })
 

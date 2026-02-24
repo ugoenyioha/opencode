@@ -187,7 +187,7 @@ function sanitizeHeaders(headers: Headers) {
   const output: Record<string, string> = {}
   for (const [key, value] of headers.entries()) {
     const lower = key.toLowerCase()
-    if (lower === "authorization" || lower === "x-a2a-key") {
+    if (lower === "authorization" || lower === "x-a2a-key" || lower === "x-opencode-workload") {
       output[key] = "[redacted]"
       continue
     }
@@ -869,7 +869,7 @@ export const A2APlugin: Plugin = async () => {
         route: `a2a.${agentId}` as any,
         source: "centralized",
       })
-      if (result) return { ok: true, strategy: strategy as any, principal: result.sub ?? `${strategy}:verified` }
+      if (result?.sub) return { ok: true, strategy: strategy as any, principal: result.sub }
     }
     return { ok: false, strategy: "none", principal: "" }
   }
@@ -985,6 +985,13 @@ export const A2APlugin: Plugin = async () => {
         const allowedIds =
           spiffeConfig?.allowedIds ??
           process.env["OPENCODE_SPIFFE_ALLOWED_IDS"]?.split(",").map((s) => s.trim()).filter(Boolean)
+        if (!allowedIds || allowedIds.length === 0) {
+          log.warn("trusted workload header ignored: no OPENCODE_SPIFFE_ALLOWED_IDS configured", {
+            agentId,
+            audience,
+          })
+          return undefined
+        }
         const { verifySPIFFE } = await import("../server/spiffe")
         const spiffeId = await verifySPIFFE(token, audience, allowedIds)
         if (spiffeId) return spiffeId
@@ -1212,7 +1219,7 @@ export const A2APlugin: Plugin = async () => {
         route: "a2a.discovery" as any,
         source: "centralized",
       })
-      if (result) return { ok: true, strategy: strategy as any, principal: result.sub ?? `${strategy}:verified` }
+      if (result?.sub) return { ok: true, strategy: strategy as any, principal: result.sub }
     }
     return undefined
   }
@@ -1387,7 +1394,19 @@ export const A2APlugin: Plugin = async () => {
       }
 
       // --- Phase 2: Attempt batch check for uncached agents ---
-      const allUseServerConfig = uncached.every((a) => !(a as any).a2a?.authz?.extAuthz)
+      const allUseServerConfig = (
+        await Promise.all(
+          uncached.map(async (a) => {
+            try {
+              const cfg = await Agent.get(a.id)
+              const authz = ((cfg?.a2a as any)?.authz as any) ?? undefined
+              return !authz
+            } catch {
+              return true
+            }
+          }),
+        )
+      ).every(Boolean)
       let batchResolved = false
 
       if (allUseServerConfig && mod.batchCheckAuthorization && serverExtAuthz) {

@@ -1569,6 +1569,11 @@ Agent without per-agent auth config.
 
             const app = Server.App()
             const goodToken = signRS256(
+              { exp: Math.floor(Date.now() / 1000) + 120, iss: "a2a-issuer", aud: "a2a-audience", sub: "jwt-user-1" },
+              privateKey,
+              kid,
+            )
+            const noSubToken = signRS256(
               { exp: Math.floor(Date.now() / 1000) + 120, iss: "a2a-issuer", aud: "a2a-audience" },
               privateKey,
               kid,
@@ -1592,6 +1597,15 @@ Agent without per-agent auth config.
               },
             })
             expect(denied.status).toBe(401)
+
+            const noSubDenied = await app.request("/a2a/neo-sidecar/tasks", {
+              method: "GET",
+              headers: {
+                "x-opencode-directory": tmp.path,
+                authorization: `Bearer ${noSubToken}`,
+              },
+            })
+            expect(noSubDenied.status).toBe(401)
           } finally {
             if (previousJwks === undefined) delete process.env.OPENCODE_COMPAT_JWT_JWKS_URL
             else process.env.OPENCODE_COMPAT_JWT_JWKS_URL = previousJwks
