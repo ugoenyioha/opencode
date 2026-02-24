@@ -35,6 +35,8 @@ export type ExtAuthzConfig = {
   timeout?: number
   /** If true, allow requests when the ext_authz server is unreachable (default: false). */
   failOpen?: boolean
+  /** HTTP status to return when ext_authz fails and failOpen is false (default: 403). */
+  statusOnError?: number
   /** Optional request body forwarding config. */
   withRequestBody?: {
     maxBytes?: number
@@ -519,7 +521,7 @@ export async function checkAuthorization(
 
     return {
       allowed: false,
-      statusCode: 503,
+      statusCode: config.statusOnError ?? 403,
       reason: `ext_authz_error: ${message}`,
       latencyMs,
     }

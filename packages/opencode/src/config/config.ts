@@ -713,6 +713,14 @@ export namespace Config {
         .optional()
         .default(false)
         .describe("Allow requests when ext_authz server is unreachable (default: false)"),
+      statusOnError: z
+        .number()
+        .int()
+        .min(400)
+        .max(599)
+        .optional()
+        .default(403)
+        .describe("HTTP status to return when ext_authz errors and failOpen is false (default: 403)"),
       withRequestBody: z
         .object({
           maxBytes: z.number().int().positive().optional().describe("Max request body bytes to forward"),
@@ -737,6 +745,14 @@ export namespace Config {
     .object({
       id: z.string().describe("ID of the authz plugin to invoke"),
       policy: z.record(z.string(), z.any()).describe("Policy configuration passed to the plugin"),
+      statusOnError: z
+        .number()
+        .int()
+        .min(400)
+        .max(599)
+        .optional()
+        .default(403)
+        .describe("HTTP status to return when plugin authz hook throws or times out (default: 403)"),
     })
     .strict()
 
@@ -745,6 +761,13 @@ export namespace Config {
       provider: z.enum(["ext_authz", "plugin"]).optional().describe("Authorization provider"),
       extAuthz: ExtAuthzConfig.optional().describe("Envoy-compatible ext_authz gRPC authorization"),
       plugin: PluginAuthzConfig.optional().describe("Plugin-based authorization configuration"),
+      exposeDenyReason: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "If true, include provider deny reason in HTTP responses. If false, return generic deny message while keeping detailed logs",
+        ),
     })
     .strict()
 

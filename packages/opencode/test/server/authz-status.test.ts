@@ -12,6 +12,10 @@ describe("a2a authz status mapping", () => {
     expect(mapA2AAuthzStatus(403, true)).toBe(403)
   })
 
+  test("preserves configured 5xx status for authenticated authz errors", () => {
+    expect(mapA2AAuthzStatus(503, true)).toBe(503)
+  })
+
   test("normalizes authenticated 401 deny to 403", () => {
     expect(mapA2AAuthzStatus(401, true)).toBe(403)
   })

@@ -299,6 +299,9 @@ type OIDCMultiVerifyResult = {
 
 const oidcDiscoveryCache = new Map<string, { expiresAt: number; data?: OIDCDiscovery }>()
 const OIDC_DISCOVERY_TTL_MS = 60_000
+const OIDC_DISCOVERY_RETRIES = 2
+const OIDC_DISCOVERY_RETRY_DELAY_MS = 150
+const OIDC_DISCOVERY_STALE_ON_ERROR_TTL_MS = 30_000
 const INTROSPECTION_CACHE_MAX_ENTRIES = 2048
 
 function toURL(input: string) {
@@ -409,6 +412,7 @@ async function loadOIDCDiscovery(issuer: string, context: AuthObserveContext) {
   const cached = oidcDiscoveryCache.get(issuer)
   const now = Date.now()
   if (cached && cached.expiresAt > now) return cached.data
+  const stale = cached?.data
 
   const normalizedIssuer = normalizeIssuer(issuer)
   const validatedIssuer = enforceAuthURLPolicy(normalizedIssuer)
@@ -417,43 +421,54 @@ async function loadOIDCDiscovery(issuer: string, context: AuthObserveContext) {
     return
   }
   const discoveryUrl = `${normalizedIssuer}/.well-known/openid-configuration`
-  try {
-    const response = await fetch(discoveryUrl, { signal: AbortSignal.timeout(JWKS_FETCH_TIMEOUT_MS) })
-    if (!response.ok) {
-      oidcDiscoveryCache.set(issuer, { expiresAt: now + JWKS_ERROR_TTL_MS })
-      return
+  for (let attempt = 0; attempt < OIDC_DISCOVERY_RETRIES; attempt++) {
+    try {
+      const response = await fetch(discoveryUrl, { signal: AbortSignal.timeout(JWKS_FETCH_TIMEOUT_MS) })
+      if (!response.ok) {
+        if (attempt + 1 < OIDC_DISCOVERY_RETRIES) {
+          await new Promise((resolve) => setTimeout(resolve, OIDC_DISCOVERY_RETRY_DELAY_MS))
+          continue
+        }
+        break
+      }
+      const data = (await response.json()) as OIDCDiscovery
+      if (!data?.jwks_uri) {
+        if (attempt + 1 < OIDC_DISCOVERY_RETRIES) {
+          await new Promise((resolve) => setTimeout(resolve, OIDC_DISCOVERY_RETRY_DELAY_MS))
+          continue
+        }
+        break
+      }
+      const discoveredIssuer = typeof data.issuer === "string" ? trimIssuerPath(data.issuer) : undefined
+      const expectedIssuer = trimIssuerPath(normalizedIssuer)
+      if (discoveredIssuer && discoveredIssuer !== expectedIssuer) break
+      const jwksURL = enforceAuthURLPolicy(data.jwks_uri)
+      if (!jwksURL) break
+      if (!isLoopbackHost(validatedIssuer.hostname) && jwksURL.hostname !== validatedIssuer.hostname) break
+      const normalizedData: OIDCDiscovery = {
+        issuer: data.issuer,
+        jwks_uri: jwksURL.toString(),
+      }
+      oidcDiscoveryCache.set(issuer, { expiresAt: now + OIDC_DISCOVERY_TTL_MS, data: normalizedData })
+      return normalizedData
+    } catch {
+      if (attempt + 1 < OIDC_DISCOVERY_RETRIES) {
+        await new Promise((resolve) => setTimeout(resolve, OIDC_DISCOVERY_RETRY_DELAY_MS))
+        continue
+      }
     }
-    const data = (await response.json()) as OIDCDiscovery
-    if (!data?.jwks_uri) {
-      oidcDiscoveryCache.set(issuer, { expiresAt: now + JWKS_ERROR_TTL_MS })
-      return
-    }
-    const discoveredIssuer = typeof data.issuer === "string" ? trimIssuerPath(data.issuer) : undefined
-    const expectedIssuer = trimIssuerPath(normalizedIssuer)
-    if (discoveredIssuer && discoveredIssuer !== expectedIssuer) {
-      oidcDiscoveryCache.set(issuer, { expiresAt: now + JWKS_ERROR_TTL_MS })
-      return
-    }
-    const jwksURL = enforceAuthURLPolicy(data.jwks_uri)
-    if (!jwksURL) {
-      oidcDiscoveryCache.set(issuer, { expiresAt: now + JWKS_ERROR_TTL_MS })
-      return
-    }
-    if (!isLoopbackHost(validatedIssuer.hostname) && jwksURL.hostname !== validatedIssuer.hostname) {
-      oidcDiscoveryCache.set(issuer, { expiresAt: now + JWKS_ERROR_TTL_MS })
-      return
-    }
-    const normalizedData: OIDCDiscovery = {
-      issuer: data.issuer,
-      jwks_uri: jwksURL.toString(),
-    }
-    oidcDiscoveryCache.set(issuer, { expiresAt: now + OIDC_DISCOVERY_TTL_MS, data: normalizedData })
-    return normalizedData
-  } catch {
-    verifierWarn("oidc", "oidc_discovery_error", context)
-    oidcDiscoveryCache.set(issuer, { expiresAt: now + JWKS_ERROR_TTL_MS })
-    return
   }
+
+  verifierWarn("oidc", "oidc_discovery_error", context)
+  if (stale?.jwks_uri) {
+    oidcDiscoveryCache.set(issuer, {
+      expiresAt: now + OIDC_DISCOVERY_STALE_ON_ERROR_TTL_MS,
+      data: stale,
+    })
+    return stale
+  }
+  oidcDiscoveryCache.set(issuer, { expiresAt: now + JWKS_ERROR_TTL_MS })
+  return
 }
 
 function acceptedOIDCAlgs() {

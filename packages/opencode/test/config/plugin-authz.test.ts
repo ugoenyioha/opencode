@@ -19,8 +19,10 @@ describe("Config plugin authz schema", () => {
             a2a: {
               authz: {
                 provider: "plugin",
+                exposeDenyReason: true,
                 plugin: {
                   id: "test-plugin",
+                  statusOnError: 503,
                   policy: {
                     mode: "user_and_workload"
                   }
@@ -36,7 +38,9 @@ describe("Config plugin authz schema", () => {
       fn: async () => {
         const config = await Config.get()
         expect(config.server?.a2a?.authz?.provider).toBe("plugin")
+        expect(config.server?.a2a?.authz?.exposeDenyReason).toBe(true)
         expect(config.server?.a2a?.authz?.plugin?.id).toBe("test-plugin")
+        expect(config.server?.a2a?.authz?.plugin?.statusOnError).toBe(503)
         expect(config.server?.a2a?.authz?.plugin?.policy).toEqual({ mode: "user_and_workload" })
       },
     })
@@ -128,6 +132,36 @@ describe("Config plugin authz schema", () => {
                 plugin: {
                   id: "test-plugin",
                   policy: "not-an-object",
+                },
+              },
+            },
+          },
+        })
+      },
+    })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        await expect(Config.get()).rejects.toThrow()
+      },
+    })
+  })
+
+  test("invalid plugin config: statusOnError must be 400-599", async () => {
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await writeConfig(dir, {
+          $schema: "https://opencode.ai/config.json",
+          server: {
+            a2a: {
+              authz: {
+                provider: "plugin",
+                plugin: {
+                  id: "test-plugin",
+                  statusOnError: 700,
+                  policy: {
+                    mode: "machine_only",
+                  },
                 },
               },
             },

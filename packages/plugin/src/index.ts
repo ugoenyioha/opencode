@@ -43,19 +43,15 @@ export type AuthStrategy = "api-key" | "jwt" | "spiffe" | "oauth2" | "oidc" | "p
  * - `allow: false` — deny the request. `reason` is surfaced in the response error body.
  *   `status_code` defaults to `403` if omitted.
  *
- * Leave `output.decision` as `undefined` to **abstain** — the next registered hook is tried,
- * and the request is allowed if all hooks abstain.
+ * Leaving `output.decision` as `undefined` is treated as **deny** by the runtime
+ * (fail-closed, reason code `a2a_authz_no_decision`).
  */
 export type A2AAuthzDecision = {
   allow: boolean
   /** Human-readable reason. Surfaced in error body on deny; used for audit logs on allow. */
   reason?: string
-  /**
-   * Optional deny status hint.
-   * Runtime policy maps unauthenticated failures to `401` and
-   * authenticated authorization denials to `403`.
-   */
-  status_code?: 401 | 403
+  /** Optional deny status hint. Use 4xx/5xx values. */
+  status_code?: number
 }
 
 /**
@@ -266,7 +262,7 @@ export interface Hooks {
    *
    * | `output.decision` | Effect |
    * |---|---|
-   * | `undefined` (default) | Hook **abstains**. Next registered hook is tried. If all hooks abstain the request is **allowed**. |
+    * | `undefined` (default) | No decision produced. Runtime denies request (fail-closed). |
    * | `{ allow: true }` | Request is **allowed**. Hook chain stops immediately. |
    * | `{ allow: false, reason?, status_code? }` | Request is **denied**. First denying hook wins. |
    *
@@ -290,7 +286,7 @@ export interface Hooks {
    *     if (input.agent === "restricted-agent" && input.principal !== "spiffe://corp/svc") {
    *       output.decision = { allow: false, reason: "Access restricted", status_code: 403 }
    *     }
-   *     // Leave output.decision undefined to abstain and defer to the next hook
+    *     // If you do not set output.decision, runtime denies request (fail-closed)
    *   },
    * })
    * ```

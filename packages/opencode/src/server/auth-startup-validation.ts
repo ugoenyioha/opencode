@@ -565,6 +565,7 @@ export async function validateStartupAuthConfig(context: ValidatorContext) {
   validatePluginAuthzConfig(context.config)
 
   // Validate A2A api-key auth config
+  validateA2AAuthStrategies(context)
   validateA2AApiKeyConfig(context)
 }
 
@@ -572,6 +573,51 @@ function normalizeA2AAuth(raw: unknown): string[] {
   if (raw === undefined) return []
   if (Array.isArray(raw)) return raw
   return [raw as string]
+}
+
+const SUPPORTED_A2A_AUTH_STRATEGIES = new Set(["api-key", "jwt", "oidc", "oauth2", "spiffe"])
+
+function validateA2AAuthStrategies(context: ValidatorContext) {
+  const a2a = context.config.server?.a2a
+  if (!a2a?.enabled) return
+
+  const check = (path: string, auth: string[]) => {
+    const seen = new Set<string>()
+    for (const strategy of auth) {
+      if (seen.has(strategy)) {
+        fail({
+          code: "AUTH_CONFIG_CONFLICT",
+          strategy,
+          key: path,
+          reason: "duplicate_strategy",
+        })
+      }
+      seen.add(strategy)
+      if (strategy === "plugin") {
+        fail({
+          code: "AUTH_CONFIG_UNSUPPORTED_REF",
+          strategy,
+          key: path,
+          reason: "plugin_not_allowed_in_a2a_auth",
+        })
+      }
+      if (!SUPPORTED_A2A_AUTH_STRATEGIES.has(strategy)) {
+        fail({
+          code: "AUTH_CONFIG_UNSUPPORTED_REF",
+          strategy: "unknown",
+          key: path,
+          reason: "unsupported_strategy_reference",
+        })
+      }
+    }
+  }
+
+  check("server.a2a.auth", normalizeA2AAuth((a2a as any).auth))
+  if (!context.config.agent) return
+  for (const [agentName, agentConfig] of Object.entries(context.config.agent)) {
+    const auth = normalizeA2AAuth(((agentConfig as any)?.a2a as any)?.auth)
+    check(`agent.${agentName}.a2a.auth`, auth)
+  }
 }
 
 function validateA2AApiKeyConfig(context: ValidatorContext) {

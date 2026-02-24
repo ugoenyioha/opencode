@@ -156,4 +156,51 @@ describe("plugin authz startup validation", () => {
       ),
     ).resolves.toBeUndefined()
   })
+
+  test("fails when plugin strategy is used in server a2a.auth", async () => {
+    await expect(
+      validateStartupAuthConfig(
+        context({
+          server: {
+            a2a: {
+              enabled: true,
+              auth: ["plugin"],
+            },
+          },
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: "AUTH_CONFIG_UNSUPPORTED_REF",
+      strategy: "plugin",
+      key: "server.a2a.auth",
+      reason: "plugin_not_allowed_in_a2a_auth",
+    })
+  })
+
+  test("fails when unsupported strategy is used in agent a2a.auth", async () => {
+    await expect(
+      validateStartupAuthConfig(
+        context({
+          server: {
+            a2a: {
+              enabled: true,
+              auth: ["api-key"],
+            },
+          },
+          agent: {
+            "my-agent": {
+              a2a: {
+                auth: ["magic-token"],
+              },
+            },
+          },
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: "AUTH_CONFIG_UNSUPPORTED_REF",
+      strategy: "unknown",
+      key: "agent.my-agent.a2a.auth",
+      reason: "unsupported_strategy_reference",
+    })
+  })
 })

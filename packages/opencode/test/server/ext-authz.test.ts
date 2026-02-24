@@ -285,6 +285,7 @@ describe("ext_authz gRPC client", () => {
       )
 
       expect(decision.allowed).toBe(false)
+      expect(decision.statusCode).toBe(403)
       expect(decision.reason).toContain("ext_authz_error")
     })
 
@@ -322,6 +323,7 @@ describe("ext_authz gRPC client", () => {
       )
 
       expect(decision.allowed).toBe(false)
+      expect(decision.statusCode).toBe(403)
       expect(decision.reason).toContain("ext_authz_error")
       expect(decision.latencyMs).toBeGreaterThanOrEqual(90) // Close to timeout
     })
@@ -340,6 +342,7 @@ describe("ext_authz gRPC client", () => {
       )
 
       expect(decision.allowed).toBe(false)
+      expect(decision.statusCode).toBe(403)
       expect(decision.reason).toContain("ext_authz_error")
     })
 
@@ -358,6 +361,27 @@ describe("ext_authz gRPC client", () => {
 
       expect(decision.allowed).toBe(true)
       expect(decision.reason).toContain("ext_authz_error_failopen")
+    })
+
+    test("honors statusOnError override when failOpen is false", async () => {
+      closeAllClients()
+
+      checkBehavior = (_call: any, callback: any) => {
+        callback({
+          code: grpc.status.UNAVAILABLE,
+          message: "Connection refused",
+        })
+      }
+
+      const decision = await checkAuthorization(
+        makeConfig({ failOpen: false, statusOnError: 503 }),
+        makeContext(),
+        makeAuthn(),
+      )
+
+      expect(decision.allowed).toBe(false)
+      expect(decision.statusCode).toBe(503)
+      expect(decision.reason).toContain("ext_authz_error")
     })
   })
 
