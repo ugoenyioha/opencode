@@ -13,6 +13,7 @@ import { ShareNext } from "@/share/share-next"
 import { Snapshot } from "../snapshot"
 import { Truncate } from "../tool/truncation"
 import { Flag } from "@/flag/flag"
+import { SessionRecovery } from "@/session/recovery"
 
 export async function InstanceBootstrap() {
   Log.Default.info("bootstrapping", { directory: Instance.directory })
@@ -25,6 +26,14 @@ export async function InstanceBootstrap() {
   Vcs.init()
   Snapshot.init()
   Truncate.init()
+
+  try {
+    await Promise.resolve(SessionRecovery.recover())
+  } catch (error) {
+    Log.Default.warn("session recovery failed", {
+      error: error instanceof Error ? error.message : String(error),
+    })
+  }
 
   Bus.subscribe(Command.Event.Executed, async (payload) => {
     if (payload.properties.name === Command.Default.INIT) {

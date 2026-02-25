@@ -1,0 +1,41 @@
+services:
+  opencode-search:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: opencode-runtime:dev
+    runtime: runsc
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./seccomp-profile.json
+    tmpfs:
+      - /tmp
+      - /run
+      - /home/opencode/.local/share/opencode:rw,size=512m
+    ports:
+      - "4096:4096"
+    environment:
+      OPENCODE_SERVER_PASSWORD: change-me
+    command: ["serve", "--hostname", "0.0.0.0", "--port", "4096"]
+
+  opencode-a2a:
+    image: opencode-runtime:dev
+    runtime: runsc
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./seccomp-profile.json
+    tmpfs:
+      - /tmp
+      - /run
+      - /home/opencode/.local/share/opencode:rw,size=512m
+    ports:
+      - "4097:4096"
+    environment:
+      OPENCODE_SERVER_PASSWORD: change-me
+    command: ["serve", "--hostname", "0.0.0.0", "--port", "4096"]

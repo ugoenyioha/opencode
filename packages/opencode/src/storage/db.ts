@@ -139,4 +139,18 @@ export namespace Database {
       throw err
     }
   }
+
+  export function close() {
+    try {
+      const db = Client()
+      db.$client.run("PRAGMA wal_checkpoint(TRUNCATE)")
+      db.$client.close()
+      Client.reset()
+      log.info("database closed")
+    } catch (error) {
+      log.warn("database close failed", {
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
 }

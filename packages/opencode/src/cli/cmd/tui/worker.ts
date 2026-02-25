@@ -10,6 +10,7 @@ import { GlobalBus } from "@/bus/global"
 import { createOpencodeClient, type Event } from "@opencode-ai/sdk/v2"
 import type { BunWebSocketData } from "hono/bun"
 import { Flag } from "@/flag/flag"
+import { Database } from "@/storage/db"
 
 await Log.init({
   print: process.argv.includes("--print-logs"),
@@ -145,13 +146,20 @@ export const rpc = {
   async shutdown() {
     Log.Default.info("worker shutting down")
     if (eventStream.abort) eventStream.abort.abort()
-    await Promise.race([
-      Instance.disposeAll(),
-      new Promise((resolve) => {
-        setTimeout(resolve, 5000)
-      }),
-    ])
-    if (server) server.stop(true)
+    try {
+      await Promise.race([
+        Instance.disposeAll(),
+        new Promise((resolve) => {
+          setTimeout(resolve, 5000)
+        }),
+      ])
+      if (server) server.stop(true)
+    } catch (error) {
+      Log.Default.warn("worker shutdown encountered error", {
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+    Database.close()
   },
 }
 

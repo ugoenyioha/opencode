@@ -11,10 +11,12 @@ import { MessageV2 } from "@/session/message-v2"
 import { Bus } from "@/bus"
 import { Instance } from "@/project/instance"
 import { Plugin as Plugins } from "@/plugin"
+import { Database, eq, sql } from "@/storage/db"
 import { bearerFromHeaders, verifyBearerForStrategy, type StrictBearerStrategy } from "../server/compat/auth"
 import { validA2AApiKey, type AuthnResult } from "../server/auth-policy"
 import { emitAuthDecision } from "../server/auth-observability"
 import { mapA2AAuthzStatus } from "../server/authz-status"
+import { A2ATaskTable } from "./a2a.sql"
 // Auth is enforced per-agent in agentHandler() — agent config replaces server-level auth.
 
 const log = Log.create({ service: "a2a" })
@@ -72,21 +74,71 @@ type A2ATask = {
 }
 
 // ============================================================================
-// Task Storage (in-memory)
+// Task Storage
 // ============================================================================
-
-const taskStore = Instance.state(() => new Map<string, A2ATask>())
 
 function generateUUID(): string {
   return crypto.randomUUID()
 }
 
+function fromRow(row: typeof A2ATaskTable.$inferSelect): A2ATask {
+  return {
+    id: row.id,
+    contextId: row.context_id,
+    agentId: row.agent_id,
+    sessionId: row.session_id ?? undefined,
+    status: row.message
+      ? {
+          state: row.state as TaskState,
+          message: row.message,
+        }
+      : {
+          state: row.state as TaskState,
+        },
+    artifacts: (row.artifacts ?? []) as unknown[] as A2AArtifact[],
+    history: (row.history ?? []) as unknown[] as A2AMessage[],
+    createdAt: row.time_created,
+    updatedAt: row.time_updated,
+  }
+}
+
 function getTask(taskId: string): A2ATask | undefined {
-  return taskStore().get(taskId)
+  const row = Database.use((db) => db.select().from(A2ATaskTable).where(eq(A2ATaskTable.id, taskId)).get())
+  if (!row) return
+  return fromRow(row)
 }
 
 function setTask(task: A2ATask): void {
-  taskStore().set(task.id, task)
+  Database.use((db) =>
+    db
+      .insert(A2ATaskTable)
+      .values({
+        id: task.id,
+        context_id: task.contextId,
+        agent_id: task.agentId,
+        session_id: task.sessionId ?? null,
+        state: task.status.state,
+        message: task.status.message ?? null,
+        artifacts: task.artifacts,
+        history: task.history,
+        time_created: task.createdAt,
+        time_updated: task.updatedAt,
+      })
+      .onConflictDoUpdate({
+        target: A2ATaskTable.id,
+        set: {
+          context_id: task.contextId,
+          agent_id: task.agentId,
+          session_id: task.sessionId ?? null,
+          state: task.status.state,
+          message: task.status.message ?? null,
+          artifacts: task.artifacts,
+          history: task.history,
+          time_updated: task.updatedAt,
+        },
+      })
+      .run(),
+  )
 }
 
 function transitionTask(task: A2ATask, state: TaskState, message?: string): A2ATask {
@@ -97,11 +149,46 @@ function transitionTask(task: A2ATask, state: TaskState, message?: string): A2AT
 }
 
 function listTasks(agentId?: string): A2ATask[] {
-  const tasks = Array.from(taskStore().values())
-  if (agentId) {
-    return tasks.filter((t) => t.agentId === agentId)
+  const rows = Database.use((db) => {
+    if (agentId) {
+      return db.select().from(A2ATaskTable).where(eq(A2ATaskTable.agent_id, agentId)).all()
+    }
+    return db.select().from(A2ATaskTable).all()
+  })
+  return rows.map(fromRow)
+}
+
+function recoverTasks() {
+  const stuck = Database.use((db) =>
+    db
+      .select()
+      .from(A2ATaskTable)
+      .where(sql`${A2ATaskTable.state} in ('TASK_STATE_WORKING', 'TASK_STATE_SUBMITTED')`)
+      .all(),
+  )
+
+  const now = Date.now()
+  for (const row of stuck) {
+    Database.use((db) =>
+      db
+        .update(A2ATaskTable)
+        .set({
+          state: "TASK_STATE_FAILED",
+          message: "Process restarted before task completion",
+          time_updated: now,
+        })
+        .where(eq(A2ATaskTable.id, row.id))
+        .run(),
+    )
   }
-  return tasks
+
+  if (stuck.length > 0) {
+    log.info("a2a task recovery", {
+      failed: stuck.length,
+    })
+  }
+
+  return stuck.length
 }
 
 function isTerminalState(state: TaskState): boolean {
@@ -777,6 +864,8 @@ export const A2APlugin: Plugin = async () => {
   const a2a = config.server?.a2a
   if (!a2a?.enabled) return {}
 
+  recoverTasks()
+
   const serverConfig = {
     baseUrl: a2a.baseUrl,
     auth: a2a.auth,
@@ -820,9 +909,7 @@ export const A2APlugin: Plugin = async () => {
 
   // Eagerly load the ext_authz module once at init time if configured,
   // so hot-path handlers don't pay the dynamic import cost per request.
-  const extAuthzModule = serverExtAuthz
-    ? await import("../server/ext-authz")
-    : undefined
+  const extAuthzModule = serverExtAuthz ? await import("../server/ext-authz") : undefined
 
   const agents = await discoverA2AAgents(serverConfig)
   const byID = new Map(agents.map((agent) => [agent.id, agent]))
@@ -837,11 +924,7 @@ export const A2APlugin: Plugin = async () => {
    * the caller's principal identity. Agent auth config replaces server-level auth
    * (not additive).
    */
-  async function checkAgentAuth(
-    strategies: AuthStrategy[],
-    headers: Headers,
-    agentId: string,
-  ): Promise<AuthnResult> {
+  async function checkAgentAuth(strategies: AuthStrategy[], headers: Headers, agentId: string): Promise<AuthnResult> {
     if (strategies.length === 0) return { ok: true, strategy: "none", principal: "" } // No auth required (public agent)
 
     for (const strategy of strategies) {
@@ -850,26 +933,31 @@ export const A2APlugin: Plugin = async () => {
         continue
       }
       if (strategy === "plugin") continue // Enforced by plugin hooks, not here
-      
+
       // SPIFFE JWT-SVID with per-agent config override
       if (strategy === "spiffe") {
         const token = bearerFromHeaders(headers)
         if (!token) continue
-        
+
         try {
           // Get per-agent SPIFFE config
           const agentConfig = await Agent.get(agentId)
-          const spiffeConfig = (agentConfig?.a2a as any)?.spiffe as { trustDomain?: string; audience?: string; allowedIds?: string[] } | undefined
-          
+          const spiffeConfig = (agentConfig?.a2a as any)?.spiffe as
+            | { trustDomain?: string; audience?: string; allowedIds?: string[] }
+            | undefined
+
           // Audience: per-agent override or global env var
           const audience = spiffeConfig?.audience ?? process.env["OPENCODE_SPIFFE_AUDIENCE"]
           if (!audience) continue
-          
+
           // Allowed IDs: per-agent override or global env var
-          const allowedIds = 
+          const allowedIds =
             spiffeConfig?.allowedIds ??
-            process.env["OPENCODE_SPIFFE_ALLOWED_IDS"]?.split(",").map((s) => s.trim()).filter(Boolean)
-          
+            process.env["OPENCODE_SPIFFE_ALLOWED_IDS"]
+              ?.split(",")
+              .map((s) => s.trim())
+              .filter(Boolean)
+
           const { verifySPIFFE } = await import("../server/spiffe")
           const spiffeId = await verifySPIFFE(token, audience, allowedIds)
           if (spiffeId) return { ok: true, strategy: "spiffe", principal: spiffeId }
@@ -880,7 +968,7 @@ export const A2APlugin: Plugin = async () => {
         }
         continue
       }
-      
+
       // jwt, oidc, oauth2
       const token = bearerFromHeaders(headers)
       if (!token) continue
@@ -900,24 +988,24 @@ export const A2APlugin: Plugin = async () => {
    * Resolve the ext_authz config for an agent: per-agent override > server-level > none.
    */
   async function resolveAuthzConfig(agentId: string): Promise<
-      | {
+    | {
         provider: "ext_authz"
         extAuthz: import("../server/ext-authz").ExtAuthzConfig
         exposeDenyReason: boolean
       }
-      | {
-          provider: "plugin"
-          exposeDenyReason: boolean
-          plugin: {
-            id: string
-            policy: Record<string, unknown>
-            statusOnError?: number
-          }
+    | {
+        provider: "plugin"
+        exposeDenyReason: boolean
+        plugin: {
+          id: string
+          policy: Record<string, unknown>
+          statusOnError?: number
         }
-      | {
-          provider: "error"
-          reason: string
-        }
+      }
+    | {
+        provider: "error"
+        reason: string
+      }
     | undefined
   > {
     try {
@@ -1013,7 +1101,10 @@ export const A2APlugin: Plugin = async () => {
         const audience = spiffeConfig?.audience ?? process.env["OPENCODE_SPIFFE_AUDIENCE"]
         const allowedIds =
           spiffeConfig?.allowedIds ??
-          process.env["OPENCODE_SPIFFE_ALLOWED_IDS"]?.split(",").map((s) => s.trim()).filter(Boolean)
+          process.env["OPENCODE_SPIFFE_ALLOWED_IDS"]
+            ?.split(",")
+            .map((s) => s.trim())
+            .filter(Boolean)
         if (audience && (!allowedIds || allowedIds.length === 0)) {
           log.warn("trusted workload header ignored: no OPENCODE_SPIFFE_ALLOWED_IDS configured", {
             agentId,
@@ -1031,7 +1122,10 @@ export const A2APlugin: Plugin = async () => {
           })
         }
 
-        const jwtAllow = process.env["OPENCODE_WORKLOAD_JWT_ALLOWED_SUBS"]?.split(",").map((s) => s.trim()).filter(Boolean)
+        const jwtAllow = process.env["OPENCODE_WORKLOAD_JWT_ALLOWED_SUBS"]
+          ?.split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
         if (!jwtAllow || jwtAllow.length === 0) {
           log.warn("trusted workload header ignored: no OPENCODE_WORKLOAD_JWT_ALLOWED_SUBS configured", {
             agentId,
@@ -1116,13 +1210,13 @@ export const A2APlugin: Plugin = async () => {
     if (!agentId) return json({ error: { code: "BadRequest", message: "Missing agent ID" } }, 400)
     const agent = byID.get(agentId)
     if (!agent) return json({ error: { code: "NotFound", message: `Unknown agent: ${agentId}` } }, 404)
-    
+
     // Step 1: Authentication (who are you?)
     const authn = await checkAgentAuth(agent.auth, req.headers, agentId)
     if (!authn.ok) {
       return json({ error: { code: "Unauthorized", message: "Authentication required" } }, 401)
     }
-    
+
     // Stash the authn result so ext_authz and handlers can access the caller identity
     _authnResults.set(req, authn)
 
@@ -1130,17 +1224,14 @@ export const A2APlugin: Plugin = async () => {
     const authzConfig = await resolveAuthzConfig(agentId)
     if (authzConfig?.provider === "error") {
       log.warn("authz config resolution failed", { agentId, reason: authzConfig.reason })
-      return json(
-        { error: { code: "Forbidden", message: "Authorization denied" } },
-        403,
-      )
+      return json({ error: { code: "Forbidden", message: "Authorization denied" } }, 403)
     }
     if (authzConfig?.provider === "ext_authz") {
       const extAuthzConfig = authzConfig.extAuthz
       try {
         // Use eagerly-loaded module if available, fall back to dynamic import
         // (per-agent config may enable ext_authz even when server-level is off)
-        const mod = extAuthzModule ?? await import("../server/ext-authz")
+        const mod = extAuthzModule ?? (await import("../server/ext-authz"))
         const context = mod.requestToExtAuthzContext(req, {
           agentId,
           authStrategy: authn.strategy,
@@ -1190,7 +1281,7 @@ export const A2APlugin: Plugin = async () => {
         // ext_authz module failed to load or unexpected error
         const message = error instanceof Error ? error.message : String(error)
         log.error("ext_authz unexpected error", { error: message, agentId })
-        
+
         emitAuthDecision({
           surface: "a2a",
           route: "a2a.protected",
@@ -1262,7 +1353,10 @@ export const A2APlugin: Plugin = async () => {
         try {
           const audience = process.env["OPENCODE_SPIFFE_AUDIENCE"]
           if (!audience) continue
-          const allowedIds = process.env["OPENCODE_SPIFFE_ALLOWED_IDS"]?.split(",").map((s) => s.trim()).filter(Boolean)
+          const allowedIds = process.env["OPENCODE_SPIFFE_ALLOWED_IDS"]
+            ?.split(",")
+            .map((s) => s.trim())
+            .filter(Boolean)
           const { verifySPIFFE } = await import("../server/spiffe")
           const spiffeId = await verifySPIFFE(token, audience, allowedIds)
           if (spiffeId) return { ok: true, strategy: "spiffe", principal: spiffeId }
@@ -1311,10 +1405,7 @@ export const A2APlugin: Plugin = async () => {
    * could reveal the total agent count to unauthorized callers.
    * Set to 0 to disable (or via OPENCODE_DISCOVERY_MIN_LATENCY_MS env var).
    */
-  const DISCOVERY_MIN_LATENCY_MS = parseInt(
-    process.env.OPENCODE_DISCOVERY_MIN_LATENCY_MS ?? "150",
-    10,
-  )
+  const DISCOVERY_MIN_LATENCY_MS = parseInt(process.env.OPENCODE_DISCOVERY_MIN_LATENCY_MS ?? "150", 10)
 
   /** Pad execution to a constant time floor. Eliminates timing side channels. */
   async function withConstantTime<T>(startTime: number, fn: () => Promise<T>): Promise<T> {
@@ -1421,199 +1512,205 @@ export const A2APlugin: Plugin = async () => {
 
     const startTime = Date.now()
     return withConstantTime(startTime, async () => {
-    // Try to authenticate the caller (optional — no credentials is not an error)
-    const authn = await tryAuthenticate(req.headers)
+      // Try to authenticate the caller (optional — no credentials is not an error)
+      const authn = await tryAuthenticate(req.headers)
 
-    // If ext_authz is configured but caller is unauthenticated, fail-closed: hide all agents
-    if (!authn) {
-      log.debug("discovery: no credentials provided, hiding all agents (ext_authz configured)")
-      return []
-    }
-
-    // Check "view" permission for each agent. First check cache, then try
-    // batch for uncached agents (single RPC), fall back to parallel individual checks.
-    try {
-      const mod = extAuthzModule ?? await import("../server/ext-authz")
-      const principal = authn.principal
-
-      // --- Phase 1: Check cache for all agents ---
-      const cached: A2AAgent[] = []
-      const uncached: A2AAgent[] = []
-      for (const agent of agents) {
-        const hit = cacheGet(principal, agent.id, "view")
-        if (hit !== undefined) {
-          if (hit) cached.push(agent)
-          // hit === false means cached deny — skip agent
-        } else {
-          uncached.push(agent)
-        }
+      // If ext_authz is configured but caller is unauthenticated, fail-closed: hide all agents
+      if (!authn) {
+        log.debug("discovery: no credentials provided, hiding all agents (ext_authz configured)")
+        return []
       }
 
-      // If all agents were cached, return immediately
-      if (uncached.length === 0) {
-        log.debug("discovery: all agents resolved from cache", {
-          total: agents.length,
-          visible: cached.length,
-          principal,
-        })
-        return cached
-      }
+      // Check "view" permission for each agent. First check cache, then try
+      // batch for uncached agents (single RPC), fall back to parallel individual checks.
+      try {
+        const mod = extAuthzModule ?? (await import("../server/ext-authz"))
+        const principal = authn.principal
 
-      // --- Phase 2: Attempt batch check for uncached agents ---
-      const allUseServerConfig = (
-        await Promise.all(
-          uncached.map(async (a) => {
-            try {
-              const cfg = await Agent.get(a.id)
-              const authz = ((cfg?.a2a as any)?.authz as any) ?? undefined
-              return !authz
-            } catch {
-              return false
-            }
-          }),
-        )
-      ).every(Boolean)
-      let batchResolved = false
-
-      if (allUseServerConfig && mod.batchCheckAuthorization && serverExtAuthz) {
-        try {
-          const items = uncached.map((a) => ({ agentId: a.id, permission: "view" }))
-
-          const batchPromise = mod.batchCheckAuthorization(serverExtAuthz, principal, items)
-          const timeoutPromise = new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error("batch discovery authz timeout")), DISCOVERY_AUTHZ_TIMEOUT_MS),
-          )
-
-          const batchResults = await Promise.race([batchPromise, timeoutPromise])
-
-          const resultMap = new Map(batchResults.map((r: any) => [r.agentId, r]))
-          const failOpen = serverExtAuthz?.failOpen ?? false
-
-          for (const agent of uncached) {
-            const result = resultMap.get(agent.id)
-            if (!result) {
-              if (failOpen) cached.push(agent)
-              else log.warn("discovery: batch missing result for agent", { agentId: agent.id })
-              continue
-            }
-            if (result.error) {
-              log.warn("discovery: batch check error for agent", { agentId: agent.id, error: result.error, failOpen })
-              if (failOpen) cached.push(agent)
-              // Don't cache errors
-            } else {
-              cacheSet(principal, agent.id, "view", result.allowed)
-              if (result.allowed) cached.push(agent)
-            }
+        // --- Phase 1: Check cache for all agents ---
+        const cached: A2AAgent[] = []
+        const uncached: A2AAgent[] = []
+        for (const agent of agents) {
+          const hit = cacheGet(principal, agent.id, "view")
+          if (hit !== undefined) {
+            if (hit) cached.push(agent)
+            // hit === false means cached deny — skip agent
+          } else {
+            uncached.push(agent)
           }
+        }
 
-          batchResolved = true
-          log.debug("discovery: batch-filtered agents", {
+        // If all agents were cached, return immediately
+        if (uncached.length === 0) {
+          log.debug("discovery: all agents resolved from cache", {
             total: agents.length,
-            fromCache: agents.length - uncached.length,
-            batchChecked: uncached.length,
             visible: cached.length,
             principal,
           })
-        } catch (batchErr) {
-          log.debug("discovery: batch authz unavailable, falling back to individual checks", {
-            error: batchErr instanceof Error ? batchErr.message : String(batchErr),
-          })
+          return cached
         }
-      }
 
-      if (batchResolved) return cached
+        // --- Phase 2: Attempt batch check for uncached agents ---
+        const allUseServerConfig = (
+          await Promise.all(
+            uncached.map(async (a) => {
+              try {
+                const cfg = await Agent.get(a.id)
+                const authz = ((cfg?.a2a as any)?.authz as any) ?? undefined
+                return !authz
+              } catch {
+                return false
+              }
+            }),
+          )
+        ).every(Boolean)
+        let batchResolved = false
 
-      // --- Phase 3: Fall back to parallel individual checks ---
-      type ViewResult = {
-        agent: A2AAgent
-        allowed: boolean
-        error?: string
-        failOpen: boolean
-        latencyMs?: number
-      }
-
-      const checksPromise = Promise.all(
-        uncached.map(async (agent): Promise<ViewResult> => {
-          const agentAuthz = await resolveAuthzConfig(agent.id)
-          if (agentAuthz?.provider === "error") {
-            return {
-              agent,
-              allowed: false,
-              error: agentAuthz.reason,
-              failOpen: false,
-            }
-          }
-          if (agentAuthz?.provider === "plugin") {
-            try {
-              const decision = await runPluginAuthz(req, agent.id, authn, "view", agentAuthz.plugin)
-              return { agent, allowed: decision?.allow === true, failOpen: false }
-            } catch (err) {
-              return { agent, allowed: false, error: err instanceof Error ? err.message : String(err), failOpen: false }
-            }
-          }
-          const extAuthzConfig = (agentAuthz?.provider === "ext_authz" ? agentAuthz.extAuthz : undefined) ?? serverExtAuthz!
-          const failOpen = extAuthzConfig.failOpen ?? false
+        if (allUseServerConfig && mod.batchCheckAuthorization && serverExtAuthz) {
           try {
-            const context = mod.requestToExtAuthzContext(req, {
-              agentId: agent.id,
-              skill: "view",
-              authStrategy: authn.strategy,
+            const items = uncached.map((a) => ({ agentId: a.id, permission: "view" }))
+
+            const batchPromise = mod.batchCheckAuthorization(serverExtAuthz, principal, items)
+            const timeoutPromise = new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error("batch discovery authz timeout")), DISCOVERY_AUTHZ_TIMEOUT_MS),
+            )
+
+            const batchResults = await Promise.race([batchPromise, timeoutPromise])
+
+            const resultMap = new Map(batchResults.map((r: any) => [r.agentId, r]))
+            const failOpen = serverExtAuthz?.failOpen ?? false
+
+            for (const agent of uncached) {
+              const result = resultMap.get(agent.id)
+              if (!result) {
+                if (failOpen) cached.push(agent)
+                else log.warn("discovery: batch missing result for agent", { agentId: agent.id })
+                continue
+              }
+              if (result.error) {
+                log.warn("discovery: batch check error for agent", { agentId: agent.id, error: result.error, failOpen })
+                if (failOpen) cached.push(agent)
+                // Don't cache errors
+              } else {
+                cacheSet(principal, agent.id, "view", result.allowed)
+                if (result.allowed) cached.push(agent)
+              }
+            }
+
+            batchResolved = true
+            log.debug("discovery: batch-filtered agents", {
+              total: agents.length,
+              fromCache: agents.length - uncached.length,
+              batchChecked: uncached.length,
+              visible: cached.length,
+              principal,
             })
-            const decision = await mod.checkAuthorization(extAuthzConfig, context, authn)
-            return { agent, allowed: decision.allowed, latencyMs: decision.latencyMs, failOpen }
-          } catch (err) {
-            return { agent, allowed: failOpen, error: err instanceof Error ? err.message : String(err), failOpen }
+          } catch (batchErr) {
+            log.debug("discovery: batch authz unavailable, falling back to individual checks", {
+              error: batchErr instanceof Error ? batchErr.message : String(batchErr),
+            })
           }
-        }),
-      )
-
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("discovery authz timeout")), DISCOVERY_AUTHZ_TIMEOUT_MS),
-      )
-
-      const results = await Promise.race([checksPromise, timeoutPromise])
-
-      for (const result of results) {
-        if (result.error) {
-          log.warn("discovery: ext_authz check failed for agent", {
-            agentId: result.agent.id,
-            error: result.error,
-            failOpen: result.failOpen,
-            allowed: result.allowed,
-          })
-          // Don't cache errors
-        } else {
-          cacheSet(principal, result.agent.id, "view", result.allowed)
         }
-        if (result.allowed) {
-          cached.push(result.agent)
-        } else if (!result.error) {
-          log.debug("discovery: agent hidden by ext_authz", {
-            agentId: result.agent.id,
-            principal,
-            latencyMs: result.latencyMs,
-          })
+
+        if (batchResolved) return cached
+
+        // --- Phase 3: Fall back to parallel individual checks ---
+        type ViewResult = {
+          agent: A2AAgent
+          allowed: boolean
+          error?: string
+          failOpen: boolean
+          latencyMs?: number
         }
+
+        const checksPromise = Promise.all(
+          uncached.map(async (agent): Promise<ViewResult> => {
+            const agentAuthz = await resolveAuthzConfig(agent.id)
+            if (agentAuthz?.provider === "error") {
+              return {
+                agent,
+                allowed: false,
+                error: agentAuthz.reason,
+                failOpen: false,
+              }
+            }
+            if (agentAuthz?.provider === "plugin") {
+              try {
+                const decision = await runPluginAuthz(req, agent.id, authn, "view", agentAuthz.plugin)
+                return { agent, allowed: decision?.allow === true, failOpen: false }
+              } catch (err) {
+                return {
+                  agent,
+                  allowed: false,
+                  error: err instanceof Error ? err.message : String(err),
+                  failOpen: false,
+                }
+              }
+            }
+            const extAuthzConfig =
+              (agentAuthz?.provider === "ext_authz" ? agentAuthz.extAuthz : undefined) ?? serverExtAuthz!
+            const failOpen = extAuthzConfig.failOpen ?? false
+            try {
+              const context = mod.requestToExtAuthzContext(req, {
+                agentId: agent.id,
+                skill: "view",
+                authStrategy: authn.strategy,
+              })
+              const decision = await mod.checkAuthorization(extAuthzConfig, context, authn)
+              return { agent, allowed: decision.allowed, latencyMs: decision.latencyMs, failOpen }
+            } catch (err) {
+              return { agent, allowed: failOpen, error: err instanceof Error ? err.message : String(err), failOpen }
+            }
+          }),
+        )
+
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("discovery authz timeout")), DISCOVERY_AUTHZ_TIMEOUT_MS),
+        )
+
+        const results = await Promise.race([checksPromise, timeoutPromise])
+
+        for (const result of results) {
+          if (result.error) {
+            log.warn("discovery: ext_authz check failed for agent", {
+              agentId: result.agent.id,
+              error: result.error,
+              failOpen: result.failOpen,
+              allowed: result.allowed,
+            })
+            // Don't cache errors
+          } else {
+            cacheSet(principal, result.agent.id, "view", result.allowed)
+          }
+          if (result.allowed) {
+            cached.push(result.agent)
+          } else if (!result.error) {
+            log.debug("discovery: agent hidden by ext_authz", {
+              agentId: result.agent.id,
+              principal,
+              latencyMs: result.latencyMs,
+            })
+          }
+        }
+
+        log.debug("discovery: filtered agents", {
+          total: agents.length,
+          fromCache: agents.length - uncached.length,
+          checked: uncached.length,
+          visible: cached.length,
+          principal,
+        })
+
+        return cached
+      } catch (error) {
+        // ext_authz module failed to load or aggregate timeout — respect failOpen
+        const message = error instanceof Error ? error.message : String(error)
+        log.error("discovery: ext_authz error, applying failOpen policy", { error: message })
+        const visible = await Promise.all(
+          agents.map(async (agent) => ((await canViewAgent(req, agent.id)) ? agent : undefined)),
+        )
+        return visible.filter((item): item is A2AAgent => !!item)
       }
-
-      log.debug("discovery: filtered agents", {
-        total: agents.length,
-        fromCache: agents.length - uncached.length,
-        checked: uncached.length,
-        visible: cached.length,
-        principal,
-      })
-
-      return cached
-    } catch (error) {
-      // ext_authz module failed to load or aggregate timeout — respect failOpen
-      const message = error instanceof Error ? error.message : String(error)
-      log.error("discovery: ext_authz error, applying failOpen policy", { error: message })
-      const visible = await Promise.all(
-        agents.map(async (agent) => ((await canViewAgent(req, agent.id)) ? agent : undefined)),
-      )
-      return visible.filter((item): item is A2AAgent => !!item)
-    }
     }) // end withConstantTime
   }
 
@@ -1642,7 +1739,7 @@ export const A2APlugin: Plugin = async () => {
     if (hit !== undefined) return hit
 
     try {
-      const mod = extAuthzModule ?? await import("../server/ext-authz")
+      const mod = extAuthzModule ?? (await import("../server/ext-authz"))
       const context = mod.requestToExtAuthzContext(req, {
         agentId,
         skill: "view",
