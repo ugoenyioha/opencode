@@ -1102,6 +1102,23 @@ export namespace Config {
       .describe("Control diff rendering style: 'auto' adapts to terminal width, 'stacked' always shows single column"),
   })
 
+  const SandboxWasm = z
+    .object({
+      enabled: z.boolean().default(false),
+      timeout_ms: z.number().int().positive().default(30000),
+      memory_pages: z.number().int().positive().default(256),
+      network: z.boolean().default(false),
+      allowed_hosts: z.array(z.string()).optional(),
+      allowed_paths: z.array(z.string()).optional(),
+    })
+    .strict()
+
+  const Sandbox = z
+    .object({
+      wasm: SandboxWasm.optional(),
+    })
+    .strict()
+
   // Server-level A2A config (references A2AAuth, A2ASecurityScheme, ExtAuthzConfig defined above)
   const A2A = z
     .object({
@@ -1400,6 +1417,7 @@ export namespace Config {
           url: z.string().optional().describe("Enterprise URL"),
         })
         .optional(),
+      sandbox: Sandbox.optional().describe("Sandbox runtime configuration"),
       compaction: z
         .object({
           auto: z.boolean().optional().describe("Enable automatic compaction when context is full (default: true)"),

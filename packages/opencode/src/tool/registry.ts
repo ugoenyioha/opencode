@@ -42,6 +42,26 @@ import {
   TeamStatusTool,
 } from "./team"
 import { Glob } from "../util/glob"
+import { WasmSandbox } from "../sandbox/wasm"
+
+const WasmMetadata = z
+  .object({
+    description: z.string().optional(),
+    args: z.unknown().optional(),
+    function: z.string().optional(),
+  })
+  .passthrough()
+
+const WasmArgsSchema = z
+  .object({
+    type: z.union([z.string(), z.array(z.string())]).optional(),
+    properties: z.record(z.string(), z.unknown()).optional(),
+    required: z.array(z.string()).optional(),
+    items: z.unknown().optional(),
+    enum: z.array(z.unknown()).optional(),
+    additionalProperties: z.union([z.boolean(), z.unknown()]).optional(),
+  })
+  .passthrough()
 
 export namespace ToolRegistry {
   const log = Log.create({ service: "tool.registry" })
@@ -49,13 +69,17 @@ export namespace ToolRegistry {
   export const state = Instance.state(async () => {
     const custom = [] as Tool.Info[]
 
-    const matches = await Config.directories().then((dirs) =>
+    const files = await Config.directories().then((dirs) =>
       dirs.flatMap((dir) =>
-        Glob.scanSync("{tool,tools}/*.{js,ts}", { cwd: dir, absolute: true, dot: true, symlink: true }),
+        Glob.scanSync("{tool,tools}/*.{js,ts,wasm}", { cwd: dir, absolute: true, dot: true, symlink: true }),
       ),
     )
-    if (matches.length) await Config.waitForDependencies()
-    for (const match of matches) {
+    if (files.length) await Config.waitForDependencies()
+    for (const match of files.filter((file) => file.endsWith(".wasm"))) {
+      const name = path.basename(match, path.extname(match))
+      custom.push(fromWasm(name, match))
+    }
+    for (const match of files.filter((file) => !file.endsWith(".wasm"))) {
       const namespace = path.basename(match, path.extname(match))
       const mod = await import(match)
       for (const [id, def] of Object.entries<ToolDefinition>(mod)) {
@@ -107,6 +131,109 @@ export namespace ToolRegistry {
         },
       }),
     }
+  }
+
+  function fromWasm(name: string, wasmPath: string): Tool.Info {
+    const metaPath = `${wasmPath}.json`
+    const fallbackArgs = z.object({
+      input: z.string(),
+    })
+    return {
+      id: name,
+      init: async () => {
+        const meta = await Bun.file(metaPath)
+          .exists()
+          .then(async (exists) => {
+            if (!exists) return
+            return Bun.file(metaPath)
+              .json()
+              .then((json) => WasmMetadata.parse(json))
+          })
+        const description = meta?.description ?? `Execute the ${name} WASM tool.`
+        const parameters = meta?.args ? fromWasmArgs(meta.args) : fallbackArgs
+        const func = meta?.function ?? "execute"
+        return {
+          description,
+          parameters,
+          execute: async (args) => {
+            const wasm = (await Config.get()).sandbox?.wasm
+            if (!wasm?.enabled) {
+              throw new Error("WASM sandbox is disabled. Enable sandbox.wasm.enabled in config.")
+            }
+            const output = await WasmSandbox.call(
+              {
+                wasm_path: wasmPath,
+                timeout_ms: wasm.timeout_ms,
+                memory_pages: wasm.memory_pages,
+                network: wasm.network,
+                allowed_hosts: wasm.allowed_hosts,
+                allowed_paths: wasm.allowed_paths,
+              },
+              func,
+              JSON.stringify(args),
+            )
+            return {
+              title: "",
+              metadata: {},
+              output,
+            }
+          },
+        }
+      },
+    }
+  }
+
+  function fromWasmArgs(input: unknown): z.ZodType {
+    const parsed = WasmArgsSchema.safeParse(input)
+    if (!parsed.success) return z.any()
+    return fromWasmSchema(parsed.data)
+  }
+
+  function fromWasmSchema(input: z.infer<typeof WasmArgsSchema>): z.ZodType {
+    if (input.enum?.length) {
+      const values = input.enum.filter(
+        (item): item is string | number | boolean | null =>
+          typeof item === "string" || typeof item === "number" || typeof item === "boolean" || item === null,
+      )
+      if (!values.length) return z.any()
+      const inner = values
+        .slice(1)
+        .reduce<z.ZodType>((result, item) => z.union([result, z.literal(item)]), z.literal(values[0]))
+      return nullable(input.type, inner)
+    }
+
+    const types = toTypes(input.type)
+    if (types.has("object") || input.properties) {
+      const required = new Set(input.required ?? [])
+      const shape = Object.fromEntries(
+        Object.entries(input.properties ?? {}).map(([key, val]) => {
+          const item = fromWasmArgs(val)
+          return [key, required.has(key) ? item : item.optional()]
+        }),
+      )
+      const object = z.object(shape)
+      if (input.additionalProperties === false) return nullable(input.type, object.strict())
+      return nullable(input.type, object)
+    }
+
+    if (types.has("array")) return nullable(input.type, z.array(fromWasmArgs(input.items ?? {})))
+    if (types.has("string")) return nullable(input.type, z.string())
+    if (types.has("integer")) return nullable(input.type, z.number().int())
+    if (types.has("number")) return nullable(input.type, z.number())
+    if (types.has("boolean")) return nullable(input.type, z.boolean())
+    if (types.has("null")) return z.null()
+    return z.any()
+  }
+
+  function toTypes(input: string | string[] | undefined) {
+    if (!input) return new Set<string>()
+    if (typeof input === "string") return new Set([input])
+    return new Set(input)
+  }
+
+  function nullable(type: string | string[] | undefined, schema: z.ZodType) {
+    if (toTypes(type).has("null")) return schema.nullable()
+    return schema
   }
 
   export async function register(tool: Tool.Info) {
