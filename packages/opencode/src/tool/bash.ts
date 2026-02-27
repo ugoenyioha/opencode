@@ -19,6 +19,8 @@ import { Truncate } from "./truncation"
 import { Plugin } from "@/plugin"
 import { TaskManager } from "@/task"
 import type { ChildProcess } from "child_process"
+import { Config } from "@/config/config"
+import { Sandbox } from "@/sandbox"
 
 const MAX_METADATA_LENGTH = 30_000
 const DEFAULT_TIMEOUT = Flag.OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
@@ -58,9 +60,7 @@ const foregroundProcesses = Instance.state(
 )
 
 export function listForegroundProcesses(): ForegroundProcess[] {
-  return Array.from(foregroundProcesses().values()).filter(
-    (p) => !p.migrated && p.process.exitCode === null,
-  )
+  return Array.from(foregroundProcesses().values()).filter((p) => !p.migrated && p.process.exitCode === null)
 }
 
 /**
@@ -232,16 +232,38 @@ export const BashTool = Tool.define("bash", async () => {
         { cwd, sessionID: ctx.sessionID, callID: ctx.callID },
         { env: {} },
       )
-      const proc = spawn(params.command, {
-        shell,
-        cwd,
-        env: {
-          ...process.env,
-          ...shellEnv.env,
-        },
-        stdio: ["ignore", "pipe", "pipe"],
-        detached: process.platform !== "win32",
-      })
+      const config = await Config.get()
+      const mode = config.sandbox?.bash ?? "none"
+      const available = Sandbox.available()
+
+      if (mode === "namespace" && available === "none") {
+        throw new Error("Sandbox mode 'namespace' requested but no sandbox runtime is available on this platform")
+      }
+
+      const proc =
+        mode === "none" || available === "none"
+          ? spawn(params.command, {
+              shell,
+              cwd,
+              env: {
+                ...process.env,
+                ...shellEnv.env,
+              },
+              stdio: ["ignore", "pipe", "pipe"],
+              detached: process.platform !== "win32",
+            })
+          : Sandbox.spawn({
+              command: [shell, "-lc", params.command],
+              workdir: cwd,
+              network: config.sandbox?.network ?? false,
+              writable: [cwd, ...(config.sandbox?.writable ?? [])],
+              memory: config.sandbox?.memory_mb,
+              cpu: config.sandbox?.cpu_percent,
+              env: {
+                ...process.env,
+                ...shellEnv.env,
+              },
+            })
 
       let output = ""
       const startTime = Date.now()

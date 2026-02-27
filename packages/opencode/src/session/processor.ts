@@ -45,6 +45,8 @@ export namespace SessionProcessor {
       async process(streamInput: LLM.StreamInput) {
         log.info("process")
         needsCompaction = false
+        let steps = 0
+        const maxSteps = (await Config.get()).server?.limits?.max_steps ?? 100
         const shouldBreak = (await Config.get()).experimental?.continue_loop_on_deny !== true
         while (true) {
           try {
@@ -231,6 +233,10 @@ export namespace SessionProcessor {
                   throw value.error
 
                 case "start-step":
+                  steps++
+                  if (steps > maxSteps) {
+                    throw new Error(`Maximum step limit of ${maxSteps} exceeded.`)
+                  }
                   snapshot = await Snapshot.track()
                   await Session.updatePart({
                     id: Identifier.ascending("part"),
@@ -356,10 +362,13 @@ export namespace SessionProcessor {
             if (MessageV2.ContextOverflowError.isInstance(error)) {
               // TODO: Handle context overflow error
             }
-            const retry = SessionRetry.retryable(error)
+            const retry = SessionRetry.retryable(error, input.model.providerID)
             if (retry !== undefined) {
               attempt++
-              const delay = SessionRetry.delay(attempt, error.name === "APIError" ? error : undefined)
+              const delay = Math.max(
+                SessionRetry.delay(attempt, error.name === "APIError" ? error : undefined),
+                SessionRetry.cooldown(input.model.providerID),
+              )
               SessionStatus.set(input.sessionID, {
                 type: "retry",
                 attempt,
@@ -409,6 +418,7 @@ export namespace SessionProcessor {
           }
           input.assistantMessage.time.completed = Date.now()
           await Session.updateMessage(input.assistantMessage)
+          SessionRetry.success(input.model.providerID)
           if (needsCompaction) return "compact"
           if (blocked) return "stop"
           if (input.assistantMessage.error) return "stop"

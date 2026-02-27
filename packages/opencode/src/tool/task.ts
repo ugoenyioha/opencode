@@ -11,6 +11,22 @@ import { defer } from "@/util/defer"
 import { Config } from "../config/config"
 import { PermissionNext } from "@/permission/next"
 
+/**
+ * Calculate the subagent nesting depth for a session by walking up the parentID chain.
+ * Returns 0 for a root session, 1 for a direct child, etc.
+ */
+async function getSubagentDepth(sessionID: string): Promise<number> {
+  let depth = 0
+  let current = sessionID
+  while (true) {
+    const session = await Session.get(current).catch(() => undefined)
+    if (!session || !session.parentID) break
+    depth++
+    current = session.parentID
+  }
+  return depth
+}
+
 /** All team tools that must be denied for task subagents to prevent
  *  accidental bridge into the team communication graph. */
 const TEAM_TOOLS = [
@@ -59,6 +75,16 @@ export const TaskTool = Tool.define("task", async (ctx) => {
     parameters,
     async execute(params: z.infer<typeof parameters>, ctx) {
       const config = await Config.get()
+
+      // Guard: enforce max subagent depth limit
+      const maxSubagentDepth = config.server?.limits?.max_subagent_depth ?? 5
+      const currentDepth = await getSubagentDepth(ctx.sessionID)
+      if (currentDepth >= maxSubagentDepth) {
+        throw new Error(
+          `Maximum subagent nesting depth of ${maxSubagentDepth} exceeded (current depth: ${currentDepth}). ` +
+            `Cannot spawn nested subagent. Consider restructuring the task to avoid deep nesting.`,
+        )
+      }
 
       // Skip permission check when user explicitly invoked via @ or command subtask
       if (!ctx.extra?.bypassAgentCheck) {

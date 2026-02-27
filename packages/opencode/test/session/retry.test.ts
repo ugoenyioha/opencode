@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { beforeEach, describe, expect, test } from "bun:test"
 import type { NamedError } from "@opencode-ai/util/error"
 import { APICallError } from "ai"
 import { SessionRetry } from "../../src/session/retry"
@@ -15,6 +15,10 @@ function apiError(headers?: Record<string, string>): MessageV2.APIError {
 function wrap(message: unknown): ReturnType<NamedError["toObject"]> {
   return { data: { message } } as ReturnType<NamedError["toObject"]>
 }
+
+beforeEach(() => {
+  SessionRetry.reset()
+})
 
 describe("session.retry.delay", () => {
   test("caps delay at 30 seconds when headers missing", () => {
@@ -120,6 +124,37 @@ describe("session.retry.retryable", () => {
     }).toObject() as ReturnType<NamedError["toObject"]>
 
     expect(SessionRetry.retryable(error)).toBeUndefined()
+  })
+})
+
+describe("session.retry.circuit-breaker", () => {
+  test("opens circuit after consecutive retryable failures", () => {
+    const error = apiError()
+    expect(SessionRetry.retryable(error, "openai")).toBe("boom")
+    expect(SessionRetry.retryable(error, "openai")).toBe("boom")
+    const opened = SessionRetry.retryable(error, "openai")
+    expect(opened).toContain("Provider circuit opened")
+    expect(SessionRetry.cooldown("openai")).toBeGreaterThan(0)
+  })
+
+  test("returns open-circuit message during cooldown", () => {
+    const error = apiError()
+    SessionRetry.retryable(error, "anthropic")
+    SessionRetry.retryable(error, "anthropic")
+    SessionRetry.retryable(error, "anthropic")
+    const open = SessionRetry.retryable(error, "anthropic")
+    expect(open).toContain("Provider circuit open")
+  })
+
+  test("success resets provider circuit state", () => {
+    const error = apiError()
+    SessionRetry.retryable(error, "gemini")
+    SessionRetry.retryable(error, "gemini")
+    SessionRetry.retryable(error, "gemini")
+    expect(SessionRetry.cooldown("gemini")).toBeGreaterThan(0)
+    SessionRetry.success("gemini")
+    expect(SessionRetry.cooldown("gemini")).toBe(0)
+    expect(SessionRetry.retryable(error, "gemini")).toBe("boom")
   })
 })
 

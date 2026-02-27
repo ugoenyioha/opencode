@@ -35,6 +35,8 @@ import { $, fileURLToPath, pathToFileURL } from "bun"
 import { ConfigMarkdown } from "../config/markdown"
 import { SessionSummary } from "./summary"
 import { NamedError } from "@opencode-ai/util/error"
+import { Config } from "@/config/config"
+import { ConcurrencyLimitError } from "@/limit"
 import { fn } from "@/util/fn"
 import { SessionProcessor } from "./processor"
 import { TaskTool } from "@/tool/task"
@@ -235,9 +237,17 @@ export namespace SessionPrompt {
     return parts
   }
 
-  function start(sessionID: string) {
+  async function start(sessionID: string) {
     const s = state()
     if (s[sessionID]) return
+    const limit = (await Config.get()).server?.limits?.max_concurrent_sessions
+    if (limit && Object.keys(s).length >= limit) {
+      throw new ConcurrencyLimitError({
+        scope: "session",
+        limit,
+        message: `Too many concurrent sessions (limit: ${limit}).`,
+      })
+    }
     const controller = new AbortController()
     s[sessionID] = {
       abort: controller,
@@ -274,7 +284,7 @@ export namespace SessionPrompt {
   export const loop = fn(LoopInput, async (input) => {
     const { sessionID, resume_existing } = input
 
-    const abort = resume_existing ? resume(sessionID) : start(sessionID)
+    const abort = resume_existing ? resume(sessionID) : await start(sessionID)
     if (!abort) {
       return new Promise<MessageV2.WithParts>((resolve, reject) => {
         const callbacks = state()[sessionID].callbacks
@@ -1471,7 +1481,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
   })
   export type ShellInput = z.infer<typeof ShellInput>
   export async function shell(input: ShellInput) {
-    const abort = start(input.sessionID)
+    const abort = await start(input.sessionID)
     if (!abort) {
       throw new Session.BusyError(input.sessionID)
     }
