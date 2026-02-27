@@ -8,6 +8,7 @@ import { Agent } from "../agent/agent"
 import { Provider } from "../provider/provider"
 import { Bus } from "../bus"
 import { TeamEvent } from "../team/events"
+import { Config } from "../config/config"
 
 /**
  * Create a new agent team. Only the lead session should call this.
@@ -172,6 +173,21 @@ export const TeamSpawnTool = Tool.define("team_spawn", {
       }
     }
     const teamName = teamInfo.team.name
+
+    // Guard: enforce max team members limit
+    const config = await Config.get()
+    const maxTeamMembers = config.server?.limits?.max_team_members ?? 20
+    if (teamInfo.team.members.length >= maxTeamMembers) {
+      return {
+        title: "Error",
+        output: `Team "${teamName}" has reached the maximum of ${maxTeamMembers} teammates. Cannot spawn more members. Use team_shutdown to free up slots.`,
+        metadata: {
+          error: "max_team_members_exceeded",
+          current: teamInfo.team.members.length,
+          limit: maxTeamMembers,
+        },
+      }
+    }
 
     // Resolve agent
     const agentName = params.agent ?? "general"

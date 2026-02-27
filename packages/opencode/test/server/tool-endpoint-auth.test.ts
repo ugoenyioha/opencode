@@ -146,7 +146,12 @@ describe("tool endpoint auth policy", () => {
               const sessionID = await createSession(app, tmp.path)
 
               const token = signRS256(
-                { exp: Math.floor(Date.now() / 1000) + 120, iss: "issuer-jwt-array", aud: "aud-jwt-array" },
+                {
+                  exp: Math.floor(Date.now() / 1000) + 120,
+                  iss: "issuer-jwt-array",
+                  aud: "aud-jwt-array",
+                  sub: "jwt-array-user",
+                },
                 privateKey,
                 kid,
               )
@@ -223,7 +228,12 @@ describe("tool endpoint auth policy", () => {
               const sessionID = await createSession(app, tmp.path, { "x-api-key": "still-not-used" })
 
               const goodToken = signRS256(
-                { exp: Math.floor(Date.now() / 1000) + 120, iss: "issuer-jwt", aud: "aud-jwt" },
+                {
+                  exp: Math.floor(Date.now() / 1000) + 120,
+                  iss: "issuer-jwt",
+                  aud: "aud-jwt",
+                  sub: "jwt-user",
+                },
                 privateKey,
                 kid,
               )
@@ -290,7 +300,12 @@ describe("tool endpoint auth policy", () => {
               const app = Server.App()
               const sessionID = await createSession(app, tmp.path)
               const goodToken = signRS256(
-                { exp: Math.floor(Date.now() / 1000) + 120, iss: issuer, aud: "aud-oidc-tool" },
+                {
+                  exp: Math.floor(Date.now() / 1000) + 120,
+                  iss: issuer,
+                  aud: "aud-oidc-tool",
+                  sub: "oidc-user",
+                },
                 privateKey,
                 kid,
               )
@@ -337,6 +352,7 @@ describe("tool endpoint auth policy", () => {
         res.end(
           JSON.stringify({
             active: true,
+            sub: "oauth-user",
             iss: "https://issuer.oauth2.tool",
             aud: ["aud-oauth2-tool"],
             scope: "tool.invoke",
@@ -441,7 +457,12 @@ describe("tool endpoint auth policy", () => {
               const app = Server.App()
               const sessionID = await createSession(app, tmp.path)
               const token = signRS256(
-                { exp: Math.floor(Date.now() / 1000) + 120, iss: "issuer-allowlist", aud: "aud-allowlist" },
+                {
+                  exp: Math.floor(Date.now() / 1000) + 120,
+                  iss: "issuer-allowlist",
+                  aud: "aud-allowlist",
+                  sub: "allowlist-user",
+                },
                 privateKey,
                 kid,
               )

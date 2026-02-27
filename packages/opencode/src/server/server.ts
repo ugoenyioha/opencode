@@ -49,6 +49,7 @@ import { CompatRoutes } from "./compat"
 import { evaluateAuthorization, type RouteAuthRule } from "./auth-policy"
 import { emitAuthBoundary, emitAuthDecision } from "./auth-observability"
 import { validateStartupAuthConfig } from "./auth-startup-validation"
+import { INTERNAL_CLIENT_IP_HEADER, rateLimitMiddleware } from "./rate-limit"
 
 // @ts-ignore This global is needed to prevent ai-sdk from logging warnings to stdout https://github.com/vercel/ai/blob/2dc67e0ef538307f21368db32d5a12345d98831b/packages/ai/src/logger/log-warnings.ts#L85
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -61,7 +62,9 @@ export namespace Server {
 
   const PLUGIN_ROUTE_MISS_HEADER = "x-opencode-plugin-route"
 
-  function resolveRequestDirectory(c: { req: { query: (key: string) => string | undefined; header: (key: string) => string | undefined } }) {
+  function resolveRequestDirectory(c: {
+    req: { query: (key: string) => string | undefined; header: (key: string) => string | undefined }
+  }) {
     const raw = c.req.query("directory") || c.req.header("x-opencode-directory")
     if (!raw) return process.cwd()
     try {
@@ -181,7 +184,8 @@ export namespace Server {
           }
 
           const shouldEmitDecision =
-            (auth.policyMode === "global-default" || auth.policyMode === "strategies") && auth.route !== "anthropic.compat"
+            (auth.policyMode === "global-default" || auth.policyMode === "strategies") &&
+            auth.route !== "anthropic.compat"
 
           if (shouldEmitDecision) {
             emitAuthDecision({
@@ -198,6 +202,19 @@ export namespace Server {
           if (auth.ok) return next()
           return c.json({ error: "Unauthorized" }, 401)
         })
+        .use(
+          rateLimitMiddleware(
+            async () => {
+              try {
+                const config = await Config.get()
+                return config.server?.limits?.rate_limit_rpm ?? 600
+              } catch {
+                return 600
+              }
+            },
+            ["1", "true", "yes", "on"].includes((Env.get("OPENCODE_TRUST_PROXY_HEADERS") ?? "").trim().toLowerCase()),
+          ),
+        )
         .use(async (c, next) => {
           const skipLogging = c.req.path === "/log"
           if (!skipLogging) {
@@ -777,9 +794,18 @@ export namespace Server {
     await verifyToolEndpointConfig()
     _corsWhitelist = opts.cors ?? []
 
+    const appFetch = App().fetch
+    const fetch = (request: Request, server: Bun.Server<any>) => {
+      const headers = new Headers(request.headers)
+      headers.delete(INTERNAL_CLIENT_IP_HEADER)
+      const ip = server.requestIP(request)?.address
+      if (ip) headers.set(INTERNAL_CLIENT_IP_HEADER, ip)
+      return appFetch(new Request(request, { headers }))
+    }
+
     const args = {
       idleTimeout: 0,
-      fetch: App().fetch,
+      fetch,
       websocket: websocket,
     } as const
 

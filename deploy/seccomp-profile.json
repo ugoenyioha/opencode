@@ -1,0 +1,32 @@
+{
+  "defaultAction": "SCMP_ACT_ALLOW",
+  "archMap": [
+    {
+      "architecture": "SCMP_ARCH_X86_64",
+      "subArchitectures": ["SCMP_ARCH_X86", "SCMP_ARCH_X32"]
+    },
+    {
+      "architecture": "SCMP_ARCH_AARCH64",
+      "subArchitectures": ["SCMP_ARCH_ARM"]
+    }
+  ],
+  "syscalls": [
+    {
+      "names": [
+        "ptrace",
+        "kexec_load",
+        "open_by_handle_at",
+        "init_module",
+        "finit_module",
+        "delete_module",
+        "mount",
+        "umount",
+        "umount2",
+        "swapon",
+        "swapoff",
+        "reboot"
+      ],
+      "action": "SCMP_ACT_ERRNO"
+    }
+  ]
+}

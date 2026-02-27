@@ -1,0 +1,8 @@
+log = "/var/log/runsc.log"
+log_format = "json"
+debug = false
+platform = "systrap"
+network = "sandbox"
+strace = false
+overlay = true
+file_access = "shared"

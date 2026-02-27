@@ -5,13 +5,16 @@ description: Create tools the LLM can call in opencode.
 
 Custom tools are functions you create that the LLM can call during conversations. They work alongside opencode's [built-in tools](/docs/tools) like `read`, `write`, and `bash`.
 
+opencode supports two kinds of custom tools:
+
+| Type          | File          | Trust                               | Capabilities                                        |
+| ------------- | ------------- | ----------------------------------- | --------------------------------------------------- |
+| **Trusted**   | `.ts` / `.js` | Full — runs in the opencode process | Unrestricted: filesystem, network, subprocesses     |
+| **Sandboxed** | `.wasm`       | Isolated — runs in a WASM sandbox   | Capability-based: opt-in file reads, opt-in network |
+
 ---
 
 ## Creating a tool
-
-Tools are defined as **TypeScript** or **JavaScript** files. However, the tool definition can invoke scripts written in **any language** — TypeScript or JavaScript is only used for the tool definition itself.
-
----
 
 ### Location
 
@@ -22,7 +25,9 @@ They can be defined:
 
 ---
 
-### Structure
+### TypeScript / JavaScript tools
+
+Tools are defined as **TypeScript** or **JavaScript** files. However, the tool definition can invoke scripts written in **any language** — TypeScript or JavaScript is only used for the tool definition itself.
 
 The easiest way to create tools is using the `tool()` helper which provides type-safety and validation.
 
@@ -154,6 +159,193 @@ export default tool({
 
 Use `context.directory` for the session working directory.
 Use `context.worktree` for the git worktree root.
+
+---
+
+## WASM sandboxed tools
+
+WASM tools run inside a strict capability-based sandbox. Unlike `.ts/.js` tools, they cannot access the filesystem, network, or host environment unless you explicitly grant them permission in your config.
+
+This makes WASM tools suitable for running **untrusted or third-party tool plugins** without giving them unrestricted access to your machine.
+
+### Capability-based security model
+
+WASM tools have **no capabilities by default**:
+
+- **No network access** — outbound HTTP is denied unless `sandbox.wasm.network: true`
+- **No filesystem reads** — file reads are denied unless paths are listed in `sandbox.wasm.allowed_paths`
+- **No filesystem writes** — write access is never granted to WASM tools
+- **No subprocesses** — WASM plugins cannot spawn child processes
+- **Memory bounded** — capped at `memory_pages × 64 KB` (default: 256 pages = 16 MB)
+- **Time bounded** — execution is killed after `timeout_ms` (default: 30 seconds)
+
+The WASM runtime (Extism) exposes only three host functions to plugins:
+
+| Host function                | Description          | Controlled by              |
+| ---------------------------- | -------------------- | -------------------------- |
+| `opencode:sandbox/read_file` | Read a file by path  | `allowed_paths`            |
+| `opencode:sandbox/fetch`     | Make an HTTP request | `network`, `allowed_hosts` |
+| `opencode:sandbox/log`       | Write a log message  | Always available           |
+
+---
+
+### Enabling WASM tools
+
+WASM sandbox support is **disabled by default**. To use `.wasm` tools, enable it in your `opencode.json`:
+
+```json title="opencode.json"
+{
+  "sandbox": {
+    "wasm": {
+      "enabled": true
+    }
+  }
+}
+```
+
+If `sandbox.wasm.enabled` is `false` (the default), any `.wasm` tool in your tools directory will be discovered but will throw an error when the LLM tries to call it.
+
+---
+
+### Configuration reference
+
+All fields live under `sandbox.wasm` in `opencode.json`:
+
+| Field           | Type       | Default | Description                                                |
+| --------------- | ---------- | ------- | ---------------------------------------------------------- |
+| `enabled`       | `boolean`  | `false` | Master switch — must be `true` to run WASM tools           |
+| `timeout_ms`    | `number`   | `30000` | Maximum execution time in milliseconds                     |
+| `memory_pages`  | `number`   | `256`   | Maximum WASM memory pages (1 page = 64 KB, so 256 = 16 MB) |
+| `network`       | `boolean`  | `false` | Allow outbound HTTP/HTTPS from WASM plugins                |
+| `allowed_hosts` | `string[]` | —       | When `network` is `true`, restrict to these hostnames only |
+| `allowed_paths` | `string[]` | —       | Filesystem paths the plugin may read (prefix-matched)      |
+
+Example with all options:
+
+```json title="opencode.json"
+{
+  "sandbox": {
+    "wasm": {
+      "enabled": true,
+      "timeout_ms": 10000,
+      "memory_pages": 128,
+      "network": true,
+      "allowed_hosts": ["api.example.com"],
+      "allowed_paths": ["/home/user/project/data"]
+    }
+  }
+}
+```
+
+---
+
+### Adding a WASM tool
+
+Place your `.wasm` file in `.opencode/tools/`. The filename (without extension) becomes the tool name.
+
+```
+.opencode/tools/
+├── summarize.wasm         ← tool name: "summarize"
+└── summarize.wasm.json    ← optional metadata
+```
+
+#### Metadata file (`.wasm.json`)
+
+If present, the sidecar `.wasm.json` file describes the tool to the LLM. It is optional — without it, the tool will accept a single `input` string argument.
+
+```json title=".opencode/tools/summarize.wasm.json"
+{
+  "description": "Summarize text using an offline WASM model",
+  "function": "execute",
+  "args": {
+    "type": "object",
+    "properties": {
+      "text": {
+        "type": "string",
+        "description": "The text to summarize"
+      },
+      "max_words": {
+        "type": "number",
+        "description": "Maximum words in the summary"
+      }
+    },
+    "required": ["text"],
+    "additionalProperties": false
+  }
+}
+```
+
+| Field         | Type               | Required | Description                                                                      |
+| ------------- | ------------------ | -------- | -------------------------------------------------------------------------------- |
+| `description` | `string`           | No       | Tool description shown to the LLM. Defaults to `"Execute the <name> WASM tool."` |
+| `function`    | `string`           | No       | Exported function name to call. Defaults to `"execute"`                          |
+| `args`        | JSON Schema object | No       | Argument schema (JSON Schema). Defaults to `{ input: string }`                   |
+
+#### How the tool receives its arguments
+
+When the LLM calls your tool, opencode serializes the arguments as **JSON** and passes them to the exported WASM function as a UTF-8 string. The function should return a UTF-8 string result.
+
+```rust
+// Example WASM plugin in Rust (using Extism PDK)
+use extism_pdk::*;
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+struct Args {
+    text: String,
+    max_words: Option<u32>,
+}
+
+#[plugin_fn]
+pub fn execute(input: String) -> FnResult<String> {
+    let args: Args = serde_json::from_str(&input)?;
+    // ... process args.text ...
+    Ok(format!("Summary: ..."))
+}
+```
+
+---
+
+### Minimal example
+
+Here is the minimal setup for a WASM tool with file-read capability:
+
+**1. Enable and configure the sandbox** in `opencode.json`:
+
+```json title="opencode.json"
+{
+  "sandbox": {
+    "wasm": {
+      "enabled": true,
+      "allowed_paths": [".opencode/data"]
+    }
+  }
+}
+```
+
+**2. Add the WASM binary** and its metadata:
+
+```
+.opencode/tools/
+├── grep-data.wasm
+└── grep-data.wasm.json
+```
+
+```json title=".opencode/tools/grep-data.wasm.json"
+{
+  "description": "Search files in the data directory",
+  "args": {
+    "type": "object",
+    "properties": {
+      "pattern": { "type": "string", "description": "Search pattern" }
+    },
+    "required": ["pattern"],
+    "additionalProperties": false
+  }
+}
+```
+
+The LLM can now call `grep-data` with a `pattern` argument. The WASM plugin can read files under `.opencode/data/` but nothing else.
 
 ---
 

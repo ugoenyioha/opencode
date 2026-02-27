@@ -1102,6 +1102,47 @@ export namespace Config {
       .describe("Control diff rendering style: 'auto' adapts to terminal width, 'stacked' always shows single column"),
   })
 
+  const SandboxWasm = z
+    .object({
+      enabled: z.boolean().default(false),
+      timeout_ms: z.number().int().positive().default(30000),
+      memory_pages: z.number().int().positive().default(256),
+      network: z.boolean().default(false),
+      allowed_hosts: z.array(z.string()).optional(),
+      allowed_paths: z.array(z.string()).optional(),
+    })
+    .strict()
+
+  const Sandbox = z
+    .object({
+      wasm: SandboxWasm.optional(),
+      bash: z
+        .enum(["none", "namespace", "auto"])
+        .optional()
+        .describe(
+          "Sandbox mode for bash tool. 'namespace' uses Linux namespaces or macOS sandbox-exec. 'auto' picks the best available. Default: 'none'.",
+        ),
+      network: z.boolean().optional().describe("Allow network access in sandboxed bash. Default: false."),
+      writable: z
+        .array(z.string())
+        .optional()
+        .describe("Additional directories writable inside the sandbox. Project directory is always writable."),
+      memory_mb: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Memory limit in MB for sandboxed processes (Linux only, requires cgroups v2). Default: 256."),
+      cpu_percent: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .optional()
+        .describe("CPU limit as percentage for sandboxed processes (Linux only). Default: 100."),
+    })
+    .strict()
+
   // Server-level A2A config (references A2AAuth, A2ASecurityScheme, ExtAuthzConfig defined above)
   const A2A = z
     .object({
@@ -1146,6 +1187,53 @@ export namespace Config {
     })
     .strict()
 
+  const ServerLimits = z
+    .object({
+      rate_limit_rpm: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .default(600)
+        .describe("Maximum requests per minute allowed per principal"),
+      max_concurrent_sessions: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .default(200)
+        .describe("Maximum concurrently active sessions"),
+      max_llm_streams: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .default(100)
+        .describe("Maximum concurrent LLM streaming responses"),
+      max_team_members: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .default(20)
+        .describe("Maximum number of teammates allowed in a team"),
+      max_subagent_depth: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .default(5)
+        .describe("Maximum allowed subagent nesting depth"),
+      max_steps: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .default(100)
+        .describe("Maximum number of execution steps per session"),
+    })
+    .strict()
+
   export const Server = z
     .object({
       port: z.number().int().positive().optional().describe("Port to listen on"),
@@ -1178,6 +1266,7 @@ export namespace Config {
         })
         .optional()
         .describe("Tool endpoint configuration"),
+      limits: ServerLimits.optional().describe("Runtime safety limits for server requests and agent execution"),
       a2a: A2A.optional().describe("A2A runtime configuration"),
       compat: Compat.optional().describe("Provider compatibility HTTP configuration"),
     })
@@ -1400,6 +1489,7 @@ export namespace Config {
           url: z.string().optional().describe("Enterprise URL"),
         })
         .optional(),
+      sandbox: Sandbox.optional().describe("Sandbox runtime configuration"),
       compaction: z
         .object({
           auto: z.boolean().optional().describe("Enable automatic compaction when context is full (default: true)"),
