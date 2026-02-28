@@ -204,7 +204,79 @@ Available options:
 - `mdnsDomain` - Custom domain name for mDNS service. Defaults to `opencode.local`. Useful for running multiple instances on the same network.
 - `cors` - Additional origins to allow for CORS when using the HTTP server from a browser-based client. Values must be full origins (scheme + host + optional port), eg `https://app.example.com`.
 
+#### Limits
+
+You can configure runtime limits under `server.limits`.
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "server": {
+    "limits": {
+      "rate_limit_rpm": 600,
+      "rate_limit_backend": {
+        "driver": "sqlite",
+        "sqlite": {
+          "path": "/var/lib/opencode/rate-limit.db"
+        }
+      }
+    }
+  }
+}
+```
+
+Available options:
+
+- `rate_limit_backend.driver` - Backend driver for rate-limit state. Supported values: `sqlite` and `memory`. Default: `sqlite`.
+- `rate_limit_backend.sqlite.path` - Optional sqlite file path override for rate-limit state.
+
 [Learn more about the server here](/docs/server).
+
+---
+
+### Sandbox
+
+You can configure sandboxing for bash execution backends through `sandbox`.
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "sandbox": {
+    "bash": "auto",
+    "network": false,
+    "writable": ["./tmp"]
+  }
+}
+```
+
+Supported `sandbox.bash` modes:
+
+- `none` - Run bash without a sandbox.
+- `namespace` - Linux namespaces, or `sandbox-exec` on macOS.
+- `bwrap` - Linux bubblewrap backend.
+- `gvisor` - Linux gVisor backend (requires `runsc`).
+- `firecracker` - Linux Firecracker backend.
+- `auto` - Pick the best available backend for the host.
+
+Linux `auto` selection order:
+
+- `firecracker -> gvisor -> bwrap -> namespace -> none`
+
+Network is blocked by default for sandboxed bash runs. Set `sandbox.network` to `true` to opt in to network access.
+
+:::note
+On macOS, sandboxing uses `sandbox-exec`. Apple has deprecated it, but it is still used as the current backend. For Linux backend validation (`bwrap`, `gvisor`, `firecracker`), prefer running OpenCode inside OrbStack or another Linux environment.
+:::
+
+#### Validation matrix
+
+Use these commands to validate sandbox and rate-limit behavior:
+
+```bash
+bun test test/sandbox/firecracker.test.ts test/sandbox/gvisor.test.ts test/sandbox/bwrap.test.ts
+bun test test/tool/sandbox-security.test.ts test/tool/bash.test.ts
+bun test test/server/rate-limit.test.ts test/server/rate-limit-store.test.ts
+```
 
 ---
 
@@ -620,17 +692,17 @@ The `experimental` key contains options that are under active development.
   "$schema": "https://opencode.ai/config.json",
   "experimental": {
     "max_turns": 50,
-    "max_budget_usd": 5.00,
+    "max_budget_usd": 5.0,
     "suggestions": true
   }
 }
 ```
 
-| Option | Type | Description |
-|--------|------|-------------|
-| `max_turns` | number | Maximum LLM call turns per session. Session stops when reached. |
-| `max_budget_usd` | number | Maximum cost in USD per session. Warns at 80%, stops when exceeded. |
-| `suggestions` | boolean | Enable prompt suggestions after each response (default: enabled). |
+| Option           | Type    | Description                                                         |
+| ---------------- | ------- | ------------------------------------------------------------------- |
+| `max_turns`      | number  | Maximum LLM call turns per session. Session stops when reached.     |
+| `max_budget_usd` | number  | Maximum cost in USD per session. Warns at 80%, stops when exceeded. |
+| `suggestions`    | boolean | Enable prompt suggestions after each response (default: enabled).   |
 
 :::caution
 Experimental options are not stable. They may change or be removed without notice.

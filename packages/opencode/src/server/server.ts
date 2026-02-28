@@ -50,12 +50,36 @@ import { evaluateAuthorization, type RouteAuthRule } from "./auth-policy"
 import { emitAuthBoundary, emitAuthDecision } from "./auth-observability"
 import { validateStartupAuthConfig } from "./auth-startup-validation"
 import { INTERNAL_CLIENT_IP_HEADER, rateLimitMiddleware } from "./rate-limit"
+import { MemoryRateLimitStore, SqliteRateLimitStore, type RateLimitStore } from "./rate-limit/store"
 
 // @ts-ignore This global is needed to prevent ai-sdk from logging warnings to stdout https://github.com/vercel/ai/blob/2dc67e0ef538307f21368db32d5a12345d98831b/packages/ai/src/logger/log-warnings.ts#L85
 globalThis.AI_SDK_LOG_WARNINGS = false
 
 export namespace Server {
   const log = Log.create({ service: "server" })
+
+  const rateLimitStore = (() => {
+    let init: Promise<RateLimitStore> | undefined
+    return () => {
+      if (!init) init = createRateLimitStore()
+      return init
+    }
+  })()
+
+  async function createRateLimitStore(): Promise<RateLimitStore> {
+    try {
+      const config = await Config.get()
+      const backend = config.server?.limits?.rate_limit_backend
+      const driver = backend?.driver ?? "sqlite"
+      if (driver === "memory") return new MemoryRateLimitStore()
+      return new SqliteRateLimitStore({ path: backend?.sqlite?.path })
+    } catch (error) {
+      log.warn("failed to initialize rate-limit store", {
+        error: error instanceof Error ? error.message : String(error),
+      })
+      return new MemoryRateLimitStore()
+    }
+  }
 
   let _url: URL | undefined
   let _corsWhitelist: string[] = []
@@ -213,6 +237,7 @@ export namespace Server {
               }
             },
             ["1", "true", "yes", "on"].includes((Env.get("OPENCODE_TRUST_PROXY_HEADERS") ?? "").trim().toLowerCase()),
+            { store: rateLimitStore() },
           ),
         )
         .use(async (c, next) => {

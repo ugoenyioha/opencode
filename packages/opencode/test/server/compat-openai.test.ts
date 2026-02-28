@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { beforeAll, describe, expect, test } from "bun:test"
 import path from "path"
 import { tmpdir } from "../fixture/fixture"
 import { Instance } from "../../src/project/instance"
@@ -20,6 +20,25 @@ async function project(config: Record<string, unknown>) {
 }
 
 describe("openai compat routes", () => {
+  beforeAll(async () => {
+    await using tmp = await project({
+      server: {
+        compat: {
+          openai: {
+            enabled: true,
+          },
+        },
+      },
+    })
+    await Instance.disposeAll()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        Server.App()
+      },
+    })
+  })
+
   test("chat completions returns non-stream success response", async () => {
     await using tmp = await project({
       server: {
