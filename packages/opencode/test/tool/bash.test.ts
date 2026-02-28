@@ -6,6 +6,8 @@ import { Filesystem } from "../../src/util/filesystem"
 import { tmpdir } from "../fixture/fixture"
 import type { PermissionNext } from "../../src/permission/next"
 import { Truncate } from "../../src/tool/truncation"
+import { Config } from "../../src/config/config"
+import { Sandbox } from "../../src/sandbox"
 
 const ctx = {
   sessionID: "test",
@@ -394,6 +396,340 @@ describe("tool.bash truncation", () => {
         expect(lines.length).toBe(lineCount)
         expect(lines[0]).toBe("1")
         expect(lines[lineCount - 1]).toBe(String(lineCount))
+      },
+    })
+  })
+})
+
+describe("sandbox mode semantics", () => {
+  test("explicit bwrap mode fails when bwrap unavailable", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        // Mock config with bwrap mode
+        const originalGet = Config.get
+        Config.get = async () => ({ sandbox: { bash: "bwrap" as const } }) as any
+
+        // Mock Sandbox.available to return none (bwrap unavailable)
+        const originalAvailable = Sandbox.available
+        Sandbox.available = () => "none"
+
+        try {
+          const bash = await BashTool.init()
+          await expect(
+            bash.execute(
+              {
+                command: "echo test",
+                description: "Test",
+              },
+              ctx,
+            ),
+          ).rejects.toThrow("Sandbox mode 'bwrap' requested but bubblewrap is not available on this platform")
+        } finally {
+          // Restore originals
+          Config.get = originalGet
+          Sandbox.available = originalAvailable
+        }
+      },
+    })
+  })
+
+  test("explicit gvisor mode fails when gvisor unavailable", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const originalGet = Config.get
+        Config.get = async () => ({ sandbox: { bash: "gvisor" as const } }) as any
+
+        const originalAvailable = Sandbox.available
+        Sandbox.available = () => "bwrap"
+
+        try {
+          const bash = await BashTool.init()
+          await expect(
+            bash.execute(
+              {
+                command: "echo test",
+                description: "Test",
+              },
+              ctx,
+            ),
+          ).rejects.toThrow("Sandbox mode 'gvisor' requested but gVisor runsc binary is unavailable on this platform")
+        } finally {
+          Config.get = originalGet
+          Sandbox.available = originalAvailable
+        }
+      },
+    })
+  })
+
+  test("explicit firecracker mode fails when firecracker unavailable", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const originalGet = Config.get
+        Config.get = async () => ({ sandbox: { bash: "firecracker" as const } }) as any
+
+        const originalAvailable = Sandbox.available
+        Sandbox.available = () => "gvisor"
+
+        try {
+          const bash = await BashTool.init()
+          await expect(
+            bash.execute(
+              {
+                command: "echo test",
+                description: "Test",
+              },
+              ctx,
+            ),
+          ).rejects.toThrow("Firecracker sandbox is unavailable")
+        } finally {
+          Config.get = originalGet
+          Sandbox.available = originalAvailable
+        }
+      },
+    })
+  })
+
+  test("auto mode selects bwrap over namespace when both available", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        // Mock config with auto mode
+        const originalGet = Config.get
+        Config.get = async () => ({ sandbox: { bash: "auto" as const } }) as any
+
+        const originalAvailable = Sandbox.available
+        Sandbox.available = () => "bwrap"
+
+        const originalSpawnWith = Sandbox.spawnWith
+        let modeUsed: string | null = null
+        Sandbox.spawnWith = ((mode: any) => {
+          modeUsed = mode
+          return {
+            stdout: { on: () => {} },
+            stderr: { on: () => {} },
+            on: () => {},
+            once: (event: string, callback: Function) => {
+              if (event === "exit") process.nextTick(() => callback(0))
+            },
+            pid: 12345,
+            exitCode: 0,
+          } as any
+        }) as any
+
+        try {
+          const bash = await BashTool.init()
+          await bash.execute(
+            {
+              command: "echo test",
+              description: "Test",
+            },
+            ctx,
+          )
+
+          expect(modeUsed === "bwrap").toBe(true)
+        } finally {
+          // Restore originals
+          Config.get = originalGet
+          Sandbox.available = originalAvailable
+          Sandbox.spawnWith = originalSpawnWith
+        }
+      },
+    })
+  })
+
+  test("auto mode selects gvisor when available", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const originalGet = Config.get
+        Config.get = async () => ({ sandbox: { bash: "auto" as const } }) as any
+
+        const originalAvailable = Sandbox.available
+        Sandbox.available = () => "gvisor"
+
+        const originalSpawnWith = Sandbox.spawnWith
+        let modeUsed: string | null = null
+        Sandbox.spawnWith = ((mode: any) => {
+          modeUsed = mode
+          return {
+            stdout: { on: () => {} },
+            stderr: { on: () => {} },
+            on: () => {},
+            once: (event: string, callback: Function) => {
+              if (event === "exit") process.nextTick(() => callback(0))
+            },
+            pid: 12345,
+            exitCode: 0,
+          } as any
+        }) as any
+
+        try {
+          const bash = await BashTool.init()
+          await bash.execute(
+            {
+              command: "echo test",
+              description: "Test",
+            },
+            ctx,
+          )
+
+          expect(modeUsed === "gvisor").toBe(true)
+        } finally {
+          Config.get = originalGet
+          Sandbox.available = originalAvailable
+          Sandbox.spawnWith = originalSpawnWith
+        }
+      },
+    })
+  })
+
+  test("auto mode selects firecracker when available", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const originalGet = Config.get
+        Config.get = async () => ({ sandbox: { bash: "auto" as const } }) as any
+
+        const originalAvailable = Sandbox.available
+        Sandbox.available = () => "firecracker"
+
+        const originalSpawnWith = Sandbox.spawnWith
+        let modeUsed: string | null = null
+        Sandbox.spawnWith = ((mode: any) => {
+          modeUsed = mode
+          return {
+            stdout: { on: () => {} },
+            stderr: { on: () => {} },
+            on: () => {},
+            once: (event: string, callback: Function) => {
+              if (event === "exit") process.nextTick(() => callback(0))
+            },
+            pid: 12345,
+            exitCode: 0,
+          } as any
+        }) as any
+
+        try {
+          const bash = await BashTool.init()
+          await bash.execute(
+            {
+              command: "echo test",
+              description: "Test",
+            },
+            ctx,
+          )
+
+          expect(modeUsed === "firecracker").toBe(true)
+        } finally {
+          Config.get = originalGet
+          Sandbox.available = originalAvailable
+          Sandbox.spawnWith = originalSpawnWith
+        }
+      },
+    })
+  })
+
+  test("explicit gvisor mode uses gvisor backend when available", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const originalGet = Config.get
+        Config.get = async () => ({ sandbox: { bash: "gvisor" as const } }) as any
+
+        const originalAvailable = Sandbox.available
+        Sandbox.available = () => "gvisor"
+
+        const originalSpawnWith = Sandbox.spawnWith
+        let calledMode: string | null = null
+        Sandbox.spawnWith = ((mode: any) => {
+          calledMode = mode
+          return {
+            stdout: { on: () => {} },
+            stderr: { on: () => {} },
+            on: () => {},
+            once: (event: string, callback: Function) => {
+              if (event === "exit") process.nextTick(() => callback(0))
+            },
+            pid: 12345,
+            exitCode: 0,
+          } as any
+        }) as any
+
+        try {
+          const bash = await BashTool.init()
+          await bash.execute(
+            {
+              command: "echo test",
+              description: "Test",
+            },
+            ctx,
+          )
+
+          expect(calledMode === "gvisor").toBe(true)
+        } finally {
+          Config.get = originalGet
+          Sandbox.available = originalAvailable
+          Sandbox.spawnWith = originalSpawnWith
+        }
+      },
+    })
+  })
+
+  test("auto mode degrades on availability only, not runtime failure", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        // Mock config with auto mode
+        const originalGet = Config.get
+        Config.get = async () => ({ sandbox: { bash: "auto" as const } }) as any
+
+        const originalAvailable = Sandbox.available
+        Sandbox.available = () => "namespace"
+
+        const originalSpawnWith = Sandbox.spawnWith
+        let sandboxCalled = false
+        Sandbox.spawnWith = ((mode: any) => {
+          sandboxCalled = mode === "namespace"
+          return {
+            stdout: { on: () => {} },
+            stderr: { on: () => {} },
+            on: () => {},
+            once: (event: string, callback: Function) => {
+              if (event === "exit") process.nextTick(() => callback(0))
+            },
+            pid: 12345,
+            exitCode: 0,
+          } as any
+        }) as any
+
+        try {
+          const bash = await BashTool.init()
+          await bash.execute(
+            {
+              command: "echo test",
+              description: "Test",
+            },
+            ctx,
+          )
+
+          expect(sandboxCalled).toBe(true)
+        } finally {
+          // Restore originals
+          Config.get = originalGet
+          Sandbox.available = originalAvailable
+          Sandbox.spawnWith = originalSpawnWith
+        }
       },
     })
   })

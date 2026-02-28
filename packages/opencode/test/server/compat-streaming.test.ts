@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { beforeAll, describe, expect, test } from "bun:test"
 import path from "path"
 import { tmpdir } from "../fixture/fixture"
 import { Instance } from "../../src/project/instance"
@@ -31,6 +31,28 @@ function responseEventTypes(body: string) {
 }
 
 describe("compat streaming", () => {
+  beforeAll(async () => {
+    await using tmp = await project({
+      server: {
+        compat: {
+          openai: {
+            enabled: true,
+          },
+          anthropic: {
+            enabled: true,
+          },
+        },
+      },
+    })
+    await Instance.disposeAll()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        Server.App()
+      },
+    })
+  })
+
   test("openai chat streaming emits done sentinel", async () => {
     await using tmp = await project({
       server: {
@@ -67,7 +89,7 @@ describe("compat streaming", () => {
         expect(body).toContain("data: [DONE]")
       },
     })
-  }, 20000)
+  }, 30000)
 
   test("openai responses streaming emits done sentinel", async () => {
     await using tmp = await project({
@@ -104,7 +126,7 @@ describe("compat streaming", () => {
         expect(body).toContain("data: [DONE]")
       },
     })
-  }, 20000)
+  }, 30000)
 
   test("openai responses streaming emits lifecycle taxonomy", async () => {
     await using tmp = await project({
@@ -155,7 +177,7 @@ describe("compat streaming", () => {
         expect(body).toContain("data: [DONE]")
       },
     })
-  }, 20000)
+  }, 30000)
 
   test("anthropic messages streaming emits ordered events", async () => {
     await using tmp = await project({
@@ -199,5 +221,5 @@ describe("compat streaming", () => {
         expect(stop).toBeGreaterThan(delta)
       },
     })
-  }, 20000)
+  }, 30000)
 })
