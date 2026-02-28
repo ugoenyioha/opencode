@@ -3,3 +3,4 @@ export { SessionTable, MessageTable, PartTable, TodoTable, PermissionTable } fro
 export { SessionShareTable } from "../share/share.sql"
 export { ProjectTable } from "../project/project.sql"
 export { A2ATaskTable } from "../plugin/a2a.sql"
+export { WorkspaceTable } from "../control-plane/workspace.sql"

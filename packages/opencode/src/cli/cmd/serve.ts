@@ -5,6 +5,9 @@ import { Flag } from "../../flag/flag"
 import { Instance } from "../../project/instance"
 import { Log } from "../../util/log"
 import { Database } from "../../storage/db"
+import { Workspace } from "../../control-plane/workspace"
+import { Project } from "../../project/project"
+import { Installation } from "../../installation"
 
 export const ServeCommand = cmd({
   command: "serve",
@@ -22,6 +25,11 @@ export const ServeCommand = cmd({
       console.log(`opencode server listening on http://${server.hostname}:${server.port}`)
     }
 
+    let workspaceSync: Array<ReturnType<typeof Workspace.startSyncing>> = []
+    if (Installation.isLocal()) {
+      workspaceSync = Project.list().map((project) => Workspace.startSyncing(project))
+    }
+
     let stopping = false
     const shutdown = async (signal: string) => {
       if (stopping) return
@@ -35,6 +43,7 @@ export const ServeCommand = cmd({
             setTimeout(resolve, 5000)
           }),
         ])
+        await Promise.all(workspaceSync.map((item) => item.stop()))
         await server.stop(false)
       } catch (error) {
         Log.Default.warn("shutdown encountered error", {

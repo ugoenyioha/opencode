@@ -1,3 +1,4 @@
+import { PlanExitTool } from "./plan"
 import { QuestionTool } from "./question"
 import { BashTool } from "./bash"
 import { EditTool } from "./edit"
@@ -25,7 +26,9 @@ import { Flag } from "@/flag/flag"
 import { Log } from "@/util/log"
 import { LspTool } from "./lsp"
 import { Truncate } from "./truncation"
-import { PlanExitTool, PlanEnterTool } from "./plan"
+import { WasmSandbox } from "../sandbox/wasm"
+import { pathToFileURL } from "url"
+
 import { ApplyPatchTool } from "./apply_patch"
 import { ProcessQueryTool } from "./process-query"
 import { MemorySaveTool } from "./memory-save"
@@ -42,8 +45,6 @@ import {
   TeamStatusTool,
 } from "./team"
 import { Glob } from "../util/glob"
-import { WasmSandbox } from "../sandbox/wasm"
-
 const WasmMetadata = z
   .object({
     description: z.string().optional(),
@@ -81,7 +82,7 @@ export namespace ToolRegistry {
     }
     for (const match of files.filter((file) => !file.endsWith(".wasm"))) {
       const namespace = path.basename(match, path.extname(match))
-      const mod = await import(match)
+      const mod = await import(pathToFileURL(match).href)
       for (const [id, def] of Object.entries<ToolDefinition>(mod)) {
         custom.push(fromPlugin(id === "default" ? namespace : `${namespace}_${id}`, def))
       }
@@ -272,7 +273,7 @@ export namespace ToolRegistry {
       MemorySaveTool,
       ...(Flag.OPENCODE_EXPERIMENTAL_LSP_TOOL ? [LspTool] : []),
       ...(config.experimental?.batch_tool === true ? [BatchTool] : []),
-      ...(Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && Flag.OPENCODE_CLIENT === "cli" ? [PlanExitTool, PlanEnterTool] : []),
+      ...(Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && Flag.OPENCODE_CLIENT === "cli" ? [PlanExitTool] : []),
       ...(Flag.OPENCODE_EXPERIMENTAL_AGENT_TEAMS
         ? [
             TeamCreateTool,

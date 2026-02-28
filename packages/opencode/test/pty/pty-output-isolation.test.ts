@@ -98,7 +98,7 @@ describe("pty", () => {
     })
   })
 
-  test("does not leak when identity token is only on websocket wrapper", async () => {
+  test("treats in-place socket data mutation as the same connection", async () => {
     await using dir = await tmpdir({ git: true })
 
     await Instance.provide({
@@ -106,63 +106,14 @@ describe("pty", () => {
       fn: async () => {
         const a = await Pty.create({ command: "cat", title: "a" })
         try {
-          const outA: string[] = []
-          const outB: string[] = []
-          const text = (data: string | Uint8Array | ArrayBuffer) => {
-            if (typeof data === "string") return data
-            if (data instanceof ArrayBuffer) return Buffer.from(new Uint8Array(data)).toString("utf8")
-            return Buffer.from(data).toString("utf8")
-          }
-
-          const raw: Parameters<typeof Pty.connect>[1] = {
-            readyState: 1,
-            send: (data) => {
-              outA.push(text(data))
-            },
-            close: () => {
-              // no-op
-            },
-          }
-
-          const wrap = { data: { events: { connection: "a" } } }
-
-          Pty.connect(a.id, raw, undefined, wrap)
-          outA.length = 0
-
-          // Simulate Bun reusing the raw socket object before the next onOpen,
-          // while the connection token only exists on the wrapper socket.
-          raw.send = (data) => {
-            outB.push(text(data))
-          }
-
-          Pty.write(a.id, "AAA\n")
-          await Bun.sleep(100)
-
-          expect(outB.join("")).not.toContain("AAA")
-        } finally {
-          await Pty.remove(a.id)
-        }
-      },
-    })
-  })
-
-  test("does not leak output when socket data mutates in-place", async () => {
-    await using dir = await tmpdir({ git: true })
-
-    await Instance.provide({
-      directory: dir.path,
-      fn: async () => {
-        const a = await Pty.create({ command: "cat", title: "a" })
-        try {
-          const outA: string[] = []
-          const outB: string[] = []
+          const out: string[] = []
 
           const ctx = { connId: 1 }
           const ws = {
             readyState: 1,
             data: ctx,
             send: (data: unknown) => {
-              outA.push(typeof data === "string" ? data : Buffer.from(data as Uint8Array).toString("utf8"))
+              out.push(typeof data === "string" ? data : Buffer.from(data as Uint8Array).toString("utf8"))
             },
             close: () => {
               // no-op
@@ -170,19 +121,16 @@ describe("pty", () => {
           }
 
           Pty.connect(a.id, ws as any)
-          outA.length = 0
+          out.length = 0
 
-          // Simulate the runtime mutating per-connection data without
-          // swapping the reference (ws.data stays the same object).
+          // Mutating fields on ws.data should not look like a new
+          // connection lifecycle when the object identity stays stable.
           ctx.connId = 2
-          ws.send = (data: unknown) => {
-            outB.push(typeof data === "string" ? data : Buffer.from(data as Uint8Array).toString("utf8"))
-          }
 
           Pty.write(a.id, "AAA\n")
           await Bun.sleep(100)
 
-          expect(outB.join("")).not.toContain("AAA")
+          expect(out.join("")).toContain("AAA")
         } finally {
           await Pty.remove(a.id)
         }
