@@ -1117,10 +1117,10 @@ export namespace Config {
     .object({
       wasm: SandboxWasm.optional(),
       bash: z
-        .enum(["none", "namespace", "auto"])
+        .enum(["none", "namespace", "bwrap", "gvisor", "firecracker", "auto"])
         .optional()
         .describe(
-          "Sandbox mode for bash tool. 'namespace' uses Linux namespaces or macOS sandbox-exec. 'auto' picks the best available. Default: 'none'.",
+          "Sandbox mode for bash tool. 'firecracker' requires Linux with firecracker assets, 'gvisor' requires Linux with runsc, 'namespace' uses Linux namespaces, 'bwrap' uses bubblewrap (Linux), 'sandbox-exec' (macOS). 'auto' picks best available. Default: 'none'.",
         ),
       network: z.boolean().optional().describe("Allow network access in sandboxed bash. Default: false."),
       writable: z
@@ -1210,6 +1210,19 @@ export namespace Config {
         .optional()
         .default(100)
         .describe("Maximum concurrent LLM streaming responses"),
+      rate_limit_backend: z
+        .object({
+          driver: z.enum(["sqlite", "memory"]).describe("Rate limit backend driver (sqlite|memory). Default: sqlite."),
+          sqlite: z
+            .object({
+              path: z.string().optional().describe("Override sqlite database path for rate limit state"),
+            })
+            .strict()
+            .optional(),
+        })
+        .strict()
+        .optional()
+        .describe("Distributed rate limit backend configuration"),
       max_team_members: z
         .number()
         .int()

@@ -17,20 +17,21 @@
 
 import type { Context, MiddlewareHandler } from "hono"
 import { createHash } from "crypto"
+import type { RateLimitStore } from "./rate-limit/store"
+import { MemoryRateLimitStore } from "./rate-limit/store"
 
 export const INTERNAL_CLIENT_IP_HEADER = "x-opencode-client-ip"
 
-// One sliding-window bucket per identity key.
-type Bucket = { count: number; window: number }
+const defaultStore = new MemoryRateLimitStore()
 
-// Module-level store so the same in-memory state is shared across all requests
-// within one server process.  Intentionally not exported – callers interact
-// only through the middleware factory.
-const store = new Map<string, Bucket>()
+type RateLimitOptions = {
+  store?: RateLimitStore | Promise<RateLimitStore>
+  now?: () => number
+}
 
 /** Return the current 60-second window index (seconds-since-epoch / 60). */
-function currentWindow() {
-  return Math.floor(Date.now() / 60_000)
+function currentWindow(now: number) {
+  return Math.floor(now / 60_000)
 }
 
 /**
@@ -52,28 +53,9 @@ function identityKey(headers: Headers, clientIP: string): string {
   return `ip:${clientIP || "unknown"}`
 }
 
-/**
- * Increment the counter for `key` and return whether the request is allowed.
- * Returns false when the count has already reached (or exceeded) the limit.
- */
-function allow(key: string, rpm: number): boolean {
-  const win = currentWindow()
-  const bucket = store.get(key)
-
-  if (!bucket || bucket.window !== win) {
-    store.set(key, { count: 1, window: win })
-    return true
-  }
-
-  if (bucket.count >= rpm) return false
-
-  bucket.count++
-  return true
-}
-
 /** Seconds until the next window resets. */
-function retryAfter(): number {
-  return 60 - (Math.floor(Date.now() / 1_000) % 60)
+function retryAfter(now: number): number {
+  return 60 - (Math.floor(now / 1_000) % 60)
 }
 
 /**
@@ -85,7 +67,13 @@ function retryAfter(): number {
  * @param trustProxy  When true, read client IP from x-forwarded-for / x-real-ip
  *                    / cf-connecting-ip before falling back to the socket address.
  */
-export function rateLimitMiddleware(getRpm: () => Promise<number>, trustProxy = false): MiddlewareHandler {
+export function rateLimitMiddleware(
+  getRpm: () => Promise<number>,
+  trustProxy = false,
+  options: RateLimitOptions = {},
+): MiddlewareHandler {
+  const clock = options.now ?? Date.now
+  const storePromise = Promise.resolve(options.store ?? defaultStore)
   return async (c: Context, next) => {
     const rpm = await getRpm()
     // rpm <= 0 means "disabled" – skip enforcement
@@ -103,9 +91,13 @@ export function rateLimitMiddleware(getRpm: () => Promise<number>, trustProxy = 
 
     const key = identityKey(headers, ip)
 
-    if (allow(key, rpm)) return next()
+    const now = clock()
+    const win = currentWindow(now)
+    const store = await storePromise
 
-    const after = retryAfter()
+    if (await store.increment(key, win, rpm)) return next()
+
+    const after = retryAfter(now)
     c.header("Retry-After", String(after))
     c.header("X-RateLimit-Limit", String(rpm))
     c.header("X-RateLimit-Remaining", "0")
@@ -122,5 +114,5 @@ export function rateLimitMiddleware(getRpm: () => Promise<number>, trustProxy = 
 
 /** Exported for tests only – resets the in-process store. */
 export function _resetStore() {
-  store.clear()
+  defaultStore.reset()
 }

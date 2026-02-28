@@ -21,6 +21,7 @@ import { TaskManager } from "@/task"
 import type { ChildProcess } from "child_process"
 import { Config } from "@/config/config"
 import { Sandbox } from "@/sandbox"
+import { FirecrackerSandbox } from "@/sandbox/firecracker"
 
 const MAX_METADATA_LENGTH = 30_000
 const DEFAULT_TIMEOUT = Flag.OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
@@ -236,12 +237,40 @@ export const BashTool = Tool.define("bash", async () => {
       const mode = config.sandbox?.bash ?? "none"
       const available = Sandbox.available()
 
-      if (mode === "namespace" && available === "none") {
-        throw new Error("Sandbox mode 'namespace' requested but no sandbox runtime is available on this platform")
+      // Explicit modes fail-fast, no silent downgrade
+      if (mode === "bwrap" && available !== "bwrap") {
+        throw new Error("Sandbox mode 'bwrap' requested but bubblewrap is not available on this platform")
+      }
+      if (mode === "namespace" && available !== "namespace") {
+        throw new Error(
+          "Sandbox mode 'namespace' requested but Linux namespace sandbox is unavailable on this platform",
+        )
+      }
+      if (mode === "gvisor" && available !== "gvisor") {
+        throw new Error("Sandbox mode 'gvisor' requested but gVisor runsc binary is unavailable on this platform")
+      }
+      if (mode === "firecracker" && available !== "firecracker") {
+        throw new Error(FirecrackerSandbox.unavailableMessage())
+      }
+
+      // Auto mode: degrade on availability only, not runtime failure
+      const selectedMode = mode === "auto" ? available : mode
+
+      const sandboxOpts = {
+        command: [shell, "-lc", params.command],
+        workdir: cwd,
+        network: config.sandbox?.network ?? false,
+        writable: [cwd, ...(config.sandbox?.writable ?? [])],
+        memory: config.sandbox?.memory_mb,
+        cpu: config.sandbox?.cpu_percent,
+        env: {
+          ...process.env,
+          ...shellEnv.env,
+        },
       }
 
       const proc =
-        mode === "none" || available === "none"
+        selectedMode === "none"
           ? spawn(params.command, {
               shell,
               cwd,
@@ -252,18 +281,7 @@ export const BashTool = Tool.define("bash", async () => {
               stdio: ["ignore", "pipe", "pipe"],
               detached: process.platform !== "win32",
             })
-          : Sandbox.spawn({
-              command: [shell, "-lc", params.command],
-              workdir: cwd,
-              network: config.sandbox?.network ?? false,
-              writable: [cwd, ...(config.sandbox?.writable ?? [])],
-              memory: config.sandbox?.memory_mb,
-              cpu: config.sandbox?.cpu_percent,
-              env: {
-                ...process.env,
-                ...shellEnv.env,
-              },
-            })
+          : Sandbox.spawnWith(selectedMode as Exclude<Sandbox.Backend, "none">, sandboxOpts)
 
       let output = ""
       const startTime = Date.now()
