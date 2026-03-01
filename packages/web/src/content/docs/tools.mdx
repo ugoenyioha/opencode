@@ -60,6 +60,10 @@ Execute shell commands in your project environment.
 
 This tool allows the LLM to run terminal commands like `npm install`, `git status`, or any other shell command.
 
+:::tip[Performance Optimization]
+OpenCode automatically caches your shell environment at startup so the LLM doesn't have to evaluate heavy dotfiles (`.zshrc`, `.bash_profile`, `nvm`, `pyenv`, etc.) on every single bash command. This dramatically reduces latency and speeds up agents that run lots of shell operations.
+:::
+
 ---
 
 ### edit
@@ -358,18 +362,18 @@ Lets the agent check status, read output, and search through background task out
 
 A set of tools for coordinating agent teams. These are only available when `OPENCODE_EXPERIMENTAL_AGENT_TEAMS=1` is set.
 
-| Tool | Description |
-|------|-------------|
-| `team_create` | Create a new agent team |
-| `team_spawn` | Spawn a teammate in a new session |
-| `team_message` | Send a message to a teammate |
-| `team_broadcast` | Broadcast a message to all teammates |
-| `team_tasks` | Manage the shared task list |
-| `team_claim` | Claim a pending task |
-| `team_status` | Get a full snapshot of members, tasks, and unread messages |
-| `team_approve_plan` | Approve/reject a teammate's plan |
-| `team_shutdown` | Request a teammate to shut down |
-| `team_cleanup` | Clean up team resources |
+| Tool                | Description                                                |
+| ------------------- | ---------------------------------------------------------- |
+| `team_create`       | Create a new agent team                                    |
+| `team_spawn`        | Spawn a teammate in a new session                          |
+| `team_message`      | Send a message to a teammate                               |
+| `team_broadcast`    | Broadcast a message to all teammates                       |
+| `team_tasks`        | Manage the shared task list                                |
+| `team_claim`        | Claim a pending task                                       |
+| `team_status`       | Get a full snapshot of members, tasks, and unread messages |
+| `team_approve_plan` | Approve/reject a teammate's plan                           |
+| `team_shutdown`     | Request a teammate to shut down                            |
+| `team_cleanup`      | Clean up team resources                                    |
 
 [Learn more](/docs/agent-teams) about agent teams.
 

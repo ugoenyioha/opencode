@@ -278,6 +278,10 @@ export const InjectEnvPlugin = async () => {
 }
 ```
 
+:::note
+If a plugin captures a full environment snapshot (including `.bashrc`/`.zshrc` exports) and wishes to bypass the latency of evaluating dotfiles for every shell command, it can set `output.isSnapshotValid = true`. The built-in `ShellEnvPlugin` does exactly this to optimize tool performance.
+:::
+
 ---
 
 ### Custom tools
