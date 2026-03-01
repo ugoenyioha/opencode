@@ -799,7 +799,7 @@ export namespace Config {
     .object({
       wasm: SandboxWasm.optional(),
       bash: z
-        .enum(["none", "namespace", "bwrap", "gvisor", "firecracker", "auto"])
+        .enum(["none", "namespace", "bwrap", "gvisor", "firecracker", "sandbox-exec", "auto"])
         .optional()
         .describe(
           "Sandbox mode for bash tool. 'firecracker' requires Linux with firecracker assets, 'gvisor' requires Linux with runsc, 'namespace' uses Linux namespaces, 'bwrap' uses bubblewrap (Linux), 'sandbox-exec' (macOS). 'auto' picks best available. Default: 'none'.",

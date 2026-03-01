@@ -110,8 +110,7 @@ const isMac = process.platform === "darwin"
 const backendsToTest = []
 if (isLinux) {
   backendsToTest.push("namespace")
-  // bwrap needs bubblewrap installed, firecracker needs specific setup.
-  // We'll test auto to ensure it picks the best available backend.
+  backendsToTest.push("bwrap") // Bubblewrap is now installed in our test environment
   backendsToTest.push("auto")
 } else if (isMac) {
   backendsToTest.push("sandbox-exec")
