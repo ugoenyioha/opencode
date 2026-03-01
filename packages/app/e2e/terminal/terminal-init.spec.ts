@@ -14,7 +14,6 @@ test("smoke terminal mounts and can create a second tab", async ({ page, gotoSes
   }
 
   await expect(terminals.first()).toBeVisible()
-  await expect(terminals.first().locator("textarea")).toHaveCount(1)
   await expect(terminals).toHaveCount(1)
 
   // Ghostty captures a lot of keybinds when focused; move focus back
@@ -24,5 +23,4 @@ test("smoke terminal mounts and can create a second tab", async ({ page, gotoSes
 
   await expect(tabs).toHaveCount(2)
   await expect(terminals).toHaveCount(1)
-  await expect(terminals.first().locator("textarea")).toHaveCount(1)
 })

@@ -57,6 +57,26 @@ const [serverPort, webPort] = await Promise.all([freePort(), freePort()])
 const sandbox = await fs.mkdtemp(path.join(os.tmpdir(), "opencode-e2e-"))
 const keepSandbox = process.env.OPENCODE_E2E_KEEP_SANDBOX === "1"
 
+const configDir = path.join(sandbox, "config", "opencode")
+await fs.mkdir(configDir, { recursive: true })
+await fs.writeFile(
+  path.join(configDir, "opencode.json"),
+  JSON.stringify(
+    {
+      server: {
+        limits: {
+          rate_limit_rpm: 20000,
+          rate_limit_backend: {
+            driver: "memory",
+          },
+        },
+      },
+    },
+    null,
+    2,
+  ),
+)
+
 const serverEnv = {
   ...process.env,
   OPENCODE_DISABLE_SHARE: process.env.OPENCODE_DISABLE_SHARE ?? "true",
@@ -156,7 +176,7 @@ try {
 
     const servermod = await import("../../opencode/src/server/server")
     inst = await import("../../opencode/src/project/instance")
-    server = servermod.Server.listen({ port: serverPort, hostname: "127.0.0.1" })
+    server = await servermod.Server.listen({ port: serverPort, hostname: "127.0.0.1" })
     console.log(`opencode server listening on http://127.0.0.1:${serverPort}`)
 
     await waitForHealth(`http://127.0.0.1:${serverPort}/global/health`)

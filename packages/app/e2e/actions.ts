@@ -448,12 +448,33 @@ export async function seedSessionTodos(
     todos: Array<{ content: string; status: string; priority: string }>
   },
 ) {
+  const todos = input.todos.map((todo, index) => ({
+    ...todo,
+    id: `todo-${index + 1}`,
+  }))
+  const data = process.env.XDG_DATA_HOME
+  if (data) {
+    const file = path.join(data, "opencode", "storage", "todo", `${input.sessionID}.json`)
+    await fs.mkdir(path.dirname(file), { recursive: true })
+    await fs.writeFile(file, JSON.stringify(todos, null, 2))
+    const seeded = await wait({
+      timeout: 30_000,
+      probe: async () => {
+        const current = await sdk.session.todo({ sessionID: input.sessionID }).then((x) => x.data ?? [])
+        if (JSON.stringify(current) !== JSON.stringify(todos)) return
+        return true
+      },
+    })
+    if (!seeded) throw new Error("Timed out seeding todos")
+    return true
+  }
+
   const text = [
     "Your only valid response is one todowrite tool call.",
-    `Use this JSON input: ${JSON.stringify({ todos: input.todos })}`,
+    `Use this JSON input: ${JSON.stringify({ todos })}`,
     "Do not output plain text.",
   ].join("\n")
-  const target = JSON.stringify(input.todos)
+  const target = JSON.stringify(todos)
 
   const result = await seed({
     sdk,

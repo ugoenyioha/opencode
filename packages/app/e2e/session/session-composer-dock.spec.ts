@@ -364,6 +364,7 @@ test("todo dock transitions and collapse behavior", async ({ page, sdk, gotoSess
           { content: "second task", status: "in_progress", priority: "medium" },
         ],
       })
+      await page.goto(page.url())
 
       await expect.poll(() => page.locator(sessionTodoDockSelector).count(), { timeout: 10_000 }).toBe(1)
       await expect(page.locator(sessionTodoListSelector)).toBeVisible()
@@ -381,6 +382,7 @@ test("todo dock transitions and collapse behavior", async ({ page, sdk, gotoSess
           { content: "second task", status: "cancelled", priority: "medium" },
         ],
       })
+      await page.goto(page.url())
 
       await expect.poll(() => page.locator(sessionTodoDockSelector).count(), { timeout: 10_000 }).toBe(0)
     })

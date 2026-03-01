@@ -68,7 +68,7 @@ export namespace Server {
 
   async function createRateLimitStore(): Promise<RateLimitStore> {
     try {
-      const config = await Config.get()
+      const config = await Config.getGlobal()
       const backend = config.server?.limits?.rate_limit_backend
       const driver = backend?.driver ?? "sqlite"
       if (driver === "memory") return new MemoryRateLimitStore()
@@ -99,7 +99,7 @@ export namespace Server {
   }
 
   function allowExternalRoutes(config: Config.Info) {
-    const value = Env.get("OPENCODE_ALLOW_EXTERNAL_ROUTES")
+    const value = process.env.OPENCODE_ALLOW_EXTERNAL_ROUTES
     if (value !== undefined) {
       const normalized = value.toLowerCase()
       return normalized === "1" || normalized === "true"
@@ -230,13 +230,13 @@ export namespace Server {
           rateLimitMiddleware(
             async () => {
               try {
-                const config = await Config.get()
+                const config = await Config.getGlobal()
                 return config.server?.limits?.rate_limit_rpm ?? 600
               } catch {
                 return 600
               }
             },
-            ["1", "true", "yes", "on"].includes((Env.get("OPENCODE_TRUST_PROXY_HEADERS") ?? "").trim().toLowerCase()),
+            ["1", "true", "yes", "on"].includes((process.env.OPENCODE_TRUST_PROXY_HEADERS ?? "").trim().toLowerCase()),
             { store: rateLimitStore() },
           ),
         )
@@ -380,7 +380,7 @@ export namespace Server {
             }
           } = {}
           const trustProxyHeaders = ["1", "true", "yes", "on"].includes(
-            (Env.get("OPENCODE_TRUST_PROXY_HEADERS") ?? "").trim().toLowerCase(),
+            (process.env.OPENCODE_TRUST_PROXY_HEADERS ?? "").trim().toLowerCase(),
           )
           const forwarded = trustProxyHeaders ? c.req.header("x-forwarded-for") : undefined
           const clientIP = trustProxyHeaders
