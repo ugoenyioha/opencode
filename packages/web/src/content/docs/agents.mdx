@@ -410,6 +410,25 @@ You can also use wildcards to control multiple tools at once. For example, to di
 
 ---
 
+### Isolation
+
+Use the `isolation` config to execute the agent in an isolated environment. Set this to `"worktree"` to spawn the agent in a dedicated git worktree branch.
+
+```json title="opencode.json" {4}
+{
+  "agent": {
+    "experiment": {
+      "isolation": "worktree",
+      "description": "Tests experimental approaches without modifying your working tree"
+    }
+  }
+}
+```
+
+This is especially useful for [Agent Teams](/docs/agent-teams) when running multiple subagents in parallel to prevent file collisions or accidental overwrites of your uncommitted work.
+
+---
+
 ### Permissions
 
 You can configure permissions to manage what actions an agent can take. Currently, the permissions for the `edit`, `bash`, and `webfetch` tools can be configured to:
