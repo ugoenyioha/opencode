@@ -1,12 +1,15 @@
 # Bring Your Own Relay: OpenCode Remote Control
 
 ## 1. Overview
+
 The "Bring Your Own Relay" Remote Control feature allows users to securely expose their locally running OpenCode agent to a remote Web UI Viewer. Rather than relying on a centralized SaaS proxy, developers can deploy their own lightweight relay (using Cloudflare Workers and Durable Objects) to bridge the gap between their local `workspace-serve` instance and a remote web browser.
 
 The key design principles are:
+
 - **Zero Trust & E2E Encryption:** The relay only passes encrypted bytes. It cannot read the payload.
 - **Self-Hostable:** Built on Cloudflare Workers for easy, nearly free self-hosting.
 - **Ephemeral Access:** Sessions are tied to short-lived credentials and specific connections.
+- **Local Native Support:** This exact architecture naturally works for viewing a local agent in a local browser—the encrypted traffic just loops back from the edge securely.
 
 ## 2. Architectural Design
 
@@ -29,6 +32,10 @@ The key design principles are:
    - Connects to the Cloudflare Relay via WebSocket.
    - Decrypts incoming state updates from the Host and encrypts outbound commands/actions using the key.
 
+4. **CLI Viewer (`opencode attach`)**
+   - The remote terminal interface (to be built after the Web UI).
+   - Operates identically to the Web Viewer, using the SDK to connect a terminal session on one machine to a Host on another.
+
 ### Data Flow
 
 ```text
@@ -38,7 +45,7 @@ The key design principles are:
 
 ## 3. Security Model
 
-- **E2E Encryption via URL Hash:** 
+- **E2E Encryption via URL Hash:**
   The CLI generates a strong symmetric key (e.g., AES-GCM) locally. When it generates the viewer URL, the key is placed in the URL fragment (`#key=...`). Browsers do not send fragments to the server, guaranteeing the Relay never sees the key. Both the CLI Host and the Web UI Viewer use this key to encrypt/decrypt all WebSocket messages.
 - **Ephemeral JWTs:**
   When the CLI initiates a session, it requests a short-lived connection token from the Relay. The Relay uses this token to authorize the WebSocket upgrade.
@@ -49,15 +56,16 @@ The key design principles are:
 
 ### Phase 1: Cloudflare Relay (`packages/relay`)
 
-1. **Setup Project:** 
+1. **Setup Project:**
    - Create `packages/relay` using the Cloudflare Workers + Durable Objects template (Wrangler).
    - Define the `SessionRelay` Durable Object.
 2. **API Routes:**
    - `POST /api/session/create`: Called by the CLI Host to create a new session room. Returns a session ID and an ephemeral JWT for the Host.
    - `POST /api/session/join`: Called by the Web Viewer to request a connection token, validating limits or passwords if configured.
-3. **WebSocket Handling:**
+3. **WebSocket Handling & State Buffering:**
    - Implement WebSocket upgrade endpoints for both Host and Viewer.
    - Inside the Durable Object, maintain references to the `hostWebSocket` and an array of `viewerWebSockets`.
+   - Use the Durable Object's built-in SQLite storage to buffer the last ~100 messages. This allows viewers who temporarily disconnect (e.g., refreshing the page) to receive missed events without a full state re-sync.
    - Forward messages from Host -> Viewers, and Viewer -> Host.
    - Handle disconnects cleanly (e.g., terminating the session if the Host disconnects).
 4. **Deployment:**
@@ -97,3 +105,12 @@ The key design principles are:
    - Spin up a local mock Relay.
    - Run the CLI host in test mode.
    - Connect the Web UI and verify that state synchronizes and that network inspection shows only opaque encrypted blobs.
+
+### Phase 4: CLI Attach Command (Terminal-to-Terminal)
+
+1. **`opencode attach <url>`:**
+   - Implement a new CLI command that acts as a Viewer.
+   - Parse the URL to extract the `relay`, `session`, `token`, and `#key`.
+   - Connect to the Relay via WebSocket using the SDK.
+   - Route incoming events to the local TUI to render output exactly as if it were a local session.
+   - Capture user prompts from the terminal and send them securely over the Relay to the Host.
