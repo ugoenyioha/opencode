@@ -14,6 +14,7 @@ import { CopilotAuthPlugin } from "./copilot"
 import { gitlabAuthPlugin as GitlabAuthPlugin } from "@gitlab/opencode-gitlab-auth"
 import { HttpAuthPlugin } from "./http-auth"
 import { A2APlugin } from "./a2a"
+import { ShellEnvPlugin } from "./shell-env"
 
 export namespace Plugin {
   const log = Log.create({ service: "plugin" })
@@ -27,6 +28,7 @@ export namespace Plugin {
     GitlabAuthPlugin,
     HttpAuthPlugin,
     A2APlugin,
+    ShellEnvPlugin,
   ]
 
   const state = Instance.state(async () => {

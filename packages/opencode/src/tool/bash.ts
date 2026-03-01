@@ -235,7 +235,7 @@ export const BashTool = Tool.define("bash", async () => {
       const shellEnv = await Plugin.trigger(
         "shell.env",
         { cwd, sessionID: ctx.sessionID, callID: ctx.callID },
-        { env: {} },
+        { env: {}, isSnapshotValid: false },
       )
       const config = await Config.get()
       const mode = config.sandbox?.bash ?? "none"
@@ -260,8 +260,10 @@ export const BashTool = Tool.define("bash", async () => {
       // Auto mode: degrade on availability only, not runtime failure
       const selectedMode = mode === "auto" ? available : mode
 
+      const shellFlags = shellEnv.isSnapshotValid ? "-c" : "-lc"
+
       const sandboxOpts = {
-        command: [shell, "-lc", params.command],
+        command: [shell, shellFlags, params.command],
         workdir: cwd,
         network: config.sandbox?.network ?? false,
         writable: [cwd, ...(config.sandbox?.writable ?? [])],

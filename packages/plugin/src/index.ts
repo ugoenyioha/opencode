@@ -262,7 +262,7 @@ export interface Hooks {
    *
    * | `output.decision` | Effect |
    * |---|---|
-    * | `undefined` (default) | No decision produced. Runtime denies request (fail-closed). |
+   * | `undefined` (default) | No decision produced. Runtime denies request (fail-closed). |
    * | `{ allow: true }` | Request is **allowed**. Hook chain stops immediately. |
    * | `{ allow: false, reason?, status_code? }` | Request is **denied**. First denying hook wins. |
    *
@@ -286,7 +286,7 @@ export interface Hooks {
    *     if (input.agent === "restricted-agent" && input.principal !== "spiffe://corp/svc") {
    *       output.decision = { allow: false, reason: "Access restricted", status_code: 403 }
    *     }
-    *     // If you do not set output.decision, runtime denies request (fail-closed)
+   *     // If you do not set output.decision, runtime denies request (fail-closed)
    *   },
    * })
    * ```
@@ -327,7 +327,7 @@ export interface Hooks {
   ) => Promise<void>
   "shell.env"?: (
     input: { cwd: string; sessionID?: string; callID?: string },
-    output: { env: Record<string, string> },
+    output: { env: Record<string, string>; isSnapshotValid?: boolean },
   ) => Promise<void>
   "tool.execute.after"?: (
     input: { tool: string; sessionID: string; callID: string; args: any },
