@@ -1,0 +1,13 @@
+diff --git a/dist/bun/mod.js b/dist/bun/mod.js
+index 64efca2a55d1f1bf5c3c9f71c7810b5e0dc0283a..ca7e349e99b200bf88cf533e4f7d8551d2132bb1 100644
+--- a/dist/bun/mod.js
++++ b/dist/bun/mod.js
+@@ -267,7 +267,7 @@ var CAPABILITIES = {
+   crossOriginChecksEnforced: false,
+   fsAccess: true,
+   hasWorkerCapability: true,
+-  supportsWasiPreview1: false,
++  supportsWasiPreview1: true,
+   supportsTimeouts: false,
+   extismStdoutEnvVarSet: Boolean(process.env.EXTISM_ENABLE_WASI_OUTPUT)
+ };
