@@ -18,17 +18,17 @@ export namespace GvisorSandbox {
     }
 
     const runsc = runscPath()!
-    const args = ["do", "--cwd", opts.workdir]
+    const args: string[] = ["--rootless"]
     args.push(opts.network ? "--network=host" : "--network=none")
+    args.push("do", "--cwd", opts.workdir)
 
     const writable = new Set([opts.workdir, ...(opts.writable ?? [])])
     for (const dir of writable) {
-      args.push("--volumes", `${dir}:${dir}`)
+      args.push("--volume", `${dir}:${dir}`)
     }
 
-    for (const [key, value] of Object.entries(opts.env ?? {})) {
-      args.push("--env", `${key}=${value}`)
-    }
+    // Environment is passed natively to the childSpawn process, runsc do inherits it
+    // No need to pass --env flags
 
     args.push("--", ...opts.command)
 

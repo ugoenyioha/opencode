@@ -22,6 +22,9 @@ import type { ChildProcess } from "child_process"
 import { Config } from "@/config/config"
 import { Sandbox } from "@/sandbox"
 import { FirecrackerSandbox } from "@/sandbox/firecracker"
+import { BwrapSandbox } from "@/sandbox/bwrap"
+import { LinuxSandbox } from "@/sandbox/linux"
+import { GvisorSandbox } from "@/sandbox/gvisor"
 
 const MAX_METADATA_LENGTH = 30_000
 const DEFAULT_TIMEOUT = Flag.OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
@@ -242,19 +245,19 @@ export const BashTool = Tool.define("bash", async () => {
       const available = Sandbox.available()
 
       // Explicit modes fail-fast, no silent downgrade
-      if (mode === "bwrap" && available !== "bwrap") {
+      if (mode === "bwrap" && !BwrapSandbox.available()) {
         throw new Error("Sandbox mode 'bwrap' requested but bubblewrap is not available on this platform")
       }
-      if (mode === "namespace" && available !== "namespace") {
+      if (mode === "namespace" && !LinuxSandbox.available()) {
         throw new Error(
           "Sandbox mode 'namespace' requested but Linux namespace sandbox is unavailable on this platform",
         )
       }
-      if (mode === "gvisor" && available !== "gvisor") {
+      if (mode === "gvisor" && !GvisorSandbox.available()) {
         throw new Error("Sandbox mode 'gvisor' requested but gVisor runsc binary is unavailable on this platform")
       }
-      if (mode === "firecracker" && available !== "firecracker") {
-        throw new Error(FirecrackerSandbox.unavailableMessage())
+      if (mode === "firecracker" && !FirecrackerSandbox.available()) {
+        throw new Error(FirecrackerSandbox.unavailableMessage?.() || "Firecracker is unavailable")
       }
 
       // Auto mode: degrade on availability only, not runtime failure
