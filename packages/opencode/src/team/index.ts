@@ -474,7 +474,7 @@ export namespace Team {
     teamName: string
     name: string
     parentSessionID: string
-    agent: { name: string; prompt?: string; skills?: string[] }
+    agent: { name: string; prompt?: string; skills?: string[]; isolation?: "none" | "worktree" }
     model: { providerID: string; modelID: string }
     prompt: string
     claimTask?: string
@@ -485,6 +485,7 @@ export namespace Team {
     const { Identifier } = await import("../id/id")
     const { Instance: Inst } = await import("../project/instance")
     const { TeamMessaging } = await import("./messaging")
+    const { Worktree } = await import("../worktree")
 
     const label = `${input.model.providerID}/${input.model.modelID}`
 
@@ -505,10 +506,23 @@ export namespace Team {
       )
     }
 
+    const sessionID = Identifier.ascending("session")
+    let directory = Inst.directory
+
+    if (input.agent.isolation === "worktree") {
+      try {
+        const worktree = await Worktree.create({ name: sessionID })
+        directory = worktree.directory
+      } catch (err) {
+        log.warn("failed to create worktree for isolated teammate, falling back to standard directory", { error: err })
+      }
+    }
+
     const session = await Session.createNext({
+      id: sessionID,
       parentID: input.parentSessionID,
       teammate: true,
-      directory: Inst.directory,
+      directory,
       title: `${input.name} (@${input.agent.name} teammate, ${label})${input.planApproval ? " [plan mode]" : ""}`,
       permission: rules,
     })
@@ -806,6 +820,22 @@ export namespace Team {
       teamName,
       team.members.map((m) => m.name),
     )
+
+    const { Session } = await import("../session")
+    const { Worktree } = await import("../worktree")
+    const { Instance: Inst } = await import("../project/instance")
+
+    for (const member of team.members) {
+      try {
+        const session = await Session.get(member.sessionID)
+        if (session.directory && session.directory !== Inst.directory) {
+          await Worktree.remove({ directory: session.directory })
+        }
+      } catch (err) {
+        log.warn("failed to clean up worktree for teammate", { memberName: member.name, error: err })
+      }
+    }
+
     await Storage.remove(configKey(teamName))
     await Storage.remove(tasksKey(teamName))
 

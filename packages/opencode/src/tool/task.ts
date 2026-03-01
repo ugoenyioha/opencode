@@ -10,6 +10,7 @@ import { iife } from "@/util/iife"
 import { defer } from "@/util/defer"
 import { Config } from "../config/config"
 import { PermissionNext } from "@/permission/next"
+import { Worktree } from "../worktree"
 
 /**
  * Calculate the subagent nesting depth for a session by walking up the parentID chain.
@@ -115,9 +116,23 @@ export const TaskTool = Tool.define("task", async (ctx) => {
           if (found) return found
         }
 
+        const sessionID = Identifier.ascending("session")
+        let directory: string | undefined
+
+        if (agent.isolation === "worktree") {
+          try {
+            const worktree = await Worktree.create({ name: sessionID })
+            directory = worktree.directory
+          } catch (err) {
+            console.warn("Failed to create isolated worktree, falling back to standard directory", err)
+          }
+        }
+
         return await Session.create({
+          id: sessionID,
           parentID: ctx.sessionID,
           title: params.description + ` (@${agent.name} subagent)`,
+          directory,
           permission: [
             // Inherit caller agent's permission rules (includes user config)
             ...(caller?.permission ?? []),

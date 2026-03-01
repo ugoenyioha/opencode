@@ -26,6 +26,7 @@ export namespace Agent {
       name: z.string(),
       description: z.string().optional(),
       mode: z.enum(["subagent", "primary", "all", "a2a"]),
+      isolation: z.enum(["none", "worktree"]).optional(),
       native: z.boolean().optional(),
       hidden: z.boolean().optional(),
       topP: z.number().optional(),
