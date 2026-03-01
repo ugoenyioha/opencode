@@ -26,7 +26,11 @@ export namespace WasmSandbox {
     const pages = opts.memory_pages ?? 256
     const plugin = await createPlugin(opts.wasm_path, {
       useWasi: opts.enable_wasi ?? true,
-      timeoutMs: timeout,
+      // Extism requires runInWorker: true to use timeoutMs. However, Bun currently panics
+      // if you try to use WASI inside a Worker thread.
+      // Until Bun fixes WASI in workers, we must omit timeoutMs here and rely purely
+      // on the Promise.race withTimeout wrapper below.
+      // timeoutMs: timeout,
       memory: {
         maxPages: pages,
       },

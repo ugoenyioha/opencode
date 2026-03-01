@@ -70,14 +70,16 @@ export namespace ToolRegistry {
   export const state = Instance.state(async () => {
     const custom = [] as Tool.Info[]
 
-    const files = await Config.directories().then((dirs) =>
-      dirs.flatMap((dir) =>
+    const files = await Config.directories().then((dirs) => {
+      console.log("[DEBUG] ToolRegistry scanning dirs", { dirs, instanceDir: Instance.directory })
+      return dirs.flatMap((dir) =>
         Glob.scanSync("{tool,tools}/*.{js,ts,wasm}", { cwd: dir, absolute: true, dot: true, symlink: true }),
-      ),
-    )
+      )
+    })
     if (files.length) await Config.waitForDependencies()
     for (const match of files.filter((file) => file.endsWith(".wasm"))) {
       const name = path.basename(match, path.extname(match))
+      console.log("[DEBUG] found wasm tool", { name, match })
       custom.push(fromWasm(name, match))
     }
     for (const match of files.filter((file) => !file.endsWith(".wasm"))) {

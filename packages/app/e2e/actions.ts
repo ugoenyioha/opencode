@@ -321,8 +321,9 @@ export async function withSession<T>(
   sdk: ReturnType<typeof createSdk>,
   title: string,
   callback: (session: { id: string; title: string }) => Promise<T>,
+  permission?: any,
 ): Promise<T> {
-  const session = await sdk.session.create({ title }).then((r) => r.data)
+  const session = await sdk.session.create({ title, permission }).then((r) => r.data)
   if (!session?.id) throw new Error("Session create did not return an id")
 
   try {

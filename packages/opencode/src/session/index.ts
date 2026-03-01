@@ -346,15 +346,10 @@ export namespace Session {
    * doesn't yet know which project the session belongs to.
    */
   export async function findDirectory(sessionID: string): Promise<string | undefined> {
-    const dir = path.join(Global.Path.data, "storage")
-    const glob = new Bun.Glob(`session/*/${sessionID}.json`)
-    for await (const match of glob.scan({ cwd: dir, absolute: true, onlyFiles: true })) {
-      const info = await Bun.file(match)
-        .json()
-        .catch(() => undefined)
-      if (info?.directory) return info.directory as string
-    }
-    return undefined
+    const row = Database.use((db) =>
+      db.select({ directory: SessionTable.directory }).from(SessionTable).where(eq(SessionTable.id, sessionID)).get(),
+    )
+    return row?.directory || undefined
   }
 
   export const get = fn(Identifier.schema("session"), async (id) => {

@@ -356,10 +356,12 @@ export namespace Server {
               directory = raw
             }
           }
+          console.log("[DEBUG] request headers:", { path: c.req.path, raw, directory })
           if (!directory) {
             // For session-scoped routes, resolve directory from the stored session
-            const match = c.req.path.match(/^\/session\/(ses_[^/]+)/)
+            const match = c.req.path.match(/(?:\/api\/v\d+)?\/session\/(ses_[^/]+)/)
             if (match) directory = await Session.findDirectory(match[1])
+            console.log("[DEBUG] resolved session directory:", { path: c.req.path, sessionID: match?.[1], directory })
           }
           if (!directory) directory = process.cwd()
           return Instance.provide({
