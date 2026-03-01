@@ -267,6 +267,8 @@ Linux `auto` selection order:
 
 Network is blocked by default for sandboxed bash runs. Set `sandbox.network` to `true` to opt in to network access.
 
+When network is restricted (`sandbox.network: false`), this isolation extends to OpenCode's internal host process as well, blocking the `webfetch` tool and preventing the agent from exfiltrating data via HTTP hooks.
+
 :::note
 On macOS, sandboxing uses `sandbox-exec`. Apple has deprecated it, but it is still used as the current backend. For Linux backend validation (`bwrap`, `gvisor`, `firecracker`), prefer running OpenCode inside OrbStack or another Linux environment.
 :::
