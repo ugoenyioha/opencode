@@ -3,6 +3,9 @@ import { Tool } from "./tool"
 import TurndownService from "turndown"
 import DESCRIPTION from "./webfetch.txt"
 import { abortAfterAny } from "../util/abort"
+import { isNetworkRestricted } from "../util/network"
+import { Instance } from "../project/instance"
+import { Sandbox } from "../sandbox"
 
 const MAX_RESPONSE_SIZE = 5 * 1024 * 1024 // 5MB
 const DEFAULT_TIMEOUT = 30 * 1000 // 30 seconds
@@ -22,6 +25,12 @@ export const WebFetchTool = Tool.define("webfetch", {
     // Validate URL
     if (!params.url.startsWith("http://") && !params.url.startsWith("https://")) {
       throw new Error("URL must start with http:// or https://")
+    }
+
+    if (await isNetworkRestricted()) {
+      throw new Error(
+        "Network access is blocked by sandbox configuration (config.sandbox.network is false). The webfetch tool cannot be used.",
+      )
     }
 
     await ctx.ask({
