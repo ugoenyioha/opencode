@@ -10,7 +10,9 @@ const shellSnapshot = Instance.state(async () => {
   try {
     const shell = Shell.acceptable()
     const script = `console.log(JSON.stringify(process.env))`
-    const cmd = `${process.execPath} -e '${script}'`
+    // Build command string with proper quoting for paths with spaces
+    // The shell's -lc flag requires the command as a single string argument
+    const cmd = `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`
 
     // Use an interactive login shell to ensure all profiles (.bashrc, .zshrc, etc) are sourced
     const text = await $`${shell} -lc ${cmd}`.text()

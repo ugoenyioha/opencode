@@ -192,12 +192,20 @@ export namespace Worktree {
   }
 
   function slug(input: string) {
-    return input
+    const slugged = input
       .trim()
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+/, "")
       .replace(/-+$/, "")
+
+    // Validate git branch name rules: no .., no ~, no ^, no :, no \, no *, no ?, no [
+    // Also prevent shell metacharacters that could escape even with proper quoting
+    if (slugged.includes("..") || /[~^:\\*?\[\]$`]/.test(slugged)) {
+      throw new Error(`Invalid branch name: ${slugged}`)
+    }
+
+    return slugged
   }
 
   function randomName() {
@@ -342,7 +350,14 @@ export namespace Worktree {
     const base = input?.name ? slug(input.name) : ""
     const info = await candidate(root, base || undefined)
 
-    const created = await $`git worktree add --no-checkout -b ${info.branch} ${info.directory}`
+    // Validate that the worktree directory is within the expected root (prevent path traversal)
+    const canonicalRoot = await canonical(root)
+    const canonicalDir = await canonical(info.directory)
+    if (!canonicalDir.startsWith(`${canonicalRoot}${path.sep}`)) {
+      throw new CreateFailedError({ message: "Worktree directory must be within the project worktree root" })
+    }
+
+    const created = await $`git worktree add --no-checkout -b ${info.branch} -- ${info.directory}`
       .quiet()
       .nothrow()
       .cwd(Instance.worktree)
@@ -496,7 +511,8 @@ export namespace Worktree {
 
     const branch = entry.branch?.replace(/^refs\/heads\//, "")
     if (branch) {
-      const deleted = await $`git branch -D ${branch}`.quiet().nothrow().cwd(Instance.worktree)
+      // Use -- to prevent branch name from being interpreted as a flag
+      const deleted = await $`git branch -D -- ${branch}`.quiet().nothrow().cwd(Instance.worktree)
       if (deleted.exitCode !== 0) {
         throw new RemoveFailedError({ message: errorText(deleted) || "Failed to delete worktree branch" })
       }
