@@ -429,6 +429,28 @@ This is especially useful for [Agent Teams](/docs/agent-teams) when running mult
 
 ---
 
+### Sandbox
+
+You can override global [Sandbox](/docs/config#sandbox) configurations on a per-agent basis. This allows you to apply strict restrictions to specific agents while keeping your primary agents unconstrained.
+
+Agent-level overrides can only make the sandbox **more restrictive**, never less. For example, if the global `sandbox.network` is `false`, an agent cannot enable it.
+
+```json title="opencode.json" {4-7}
+{
+  "agent": {
+    "untrusted-experiment": {
+      "sandbox": {
+        "bash": "bwrap",
+        "network": false
+      },
+      "description": "Runs code in an isolated and networked-blocked environment"
+    }
+  }
+}
+```
+
+---
+
 ### Permissions
 
 You can configure permissions to manage what actions an agent can take. Currently, the permissions for the `edit`, `bash`, and `webfetch` tools can be configured to:

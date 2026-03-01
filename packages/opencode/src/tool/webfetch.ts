@@ -27,7 +27,7 @@ export const WebFetchTool = Tool.define("webfetch", {
       throw new Error("URL must start with http:// or https://")
     }
 
-    if (await isNetworkRestricted()) {
+    if (await isNetworkRestricted(ctx.agent)) {
       throw new Error(
         "Network access is blocked by sandbox configuration (config.sandbox.network is false). The webfetch tool cannot be used.",
       )

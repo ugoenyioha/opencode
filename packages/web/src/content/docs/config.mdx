@@ -269,6 +269,10 @@ Network is blocked by default for sandboxed bash runs. Set `sandbox.network` to 
 
 When network is restricted (`sandbox.network: false`), this isolation extends to OpenCode's internal host process as well, blocking the `webfetch` tool and preventing the agent from exfiltrating data via HTTP hooks.
 
+:::tip
+Sandbox settings can be overridden on a per-agent basis to apply strict restrictions to specific subagents. See the [Agent Sandbox Configuration](/docs/agents#sandbox) for more details.
+:::
+
 :::note
 On macOS, sandboxing uses `sandbox-exec`. Apple has deprecated it, but it is still used as the current backend. For Linux backend validation (`bwrap`, `gvisor`, `firecracker`), prefer running OpenCode inside OrbStack or another Linux environment.
 :::

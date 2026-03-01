@@ -237,8 +237,8 @@ export const BashTool = Tool.define("bash", async () => {
         { cwd, sessionID: ctx.sessionID, callID: ctx.callID },
         { env: {}, isSnapshotValid: false },
       )
-      const config = await Config.get()
-      const mode = config.sandbox?.bash ?? "none"
+      const sandboxConfig = await Sandbox.getEffectiveConfig(ctx.agent)
+      const mode = sandboxConfig.bash ?? "none"
       const available = Sandbox.available()
 
       // Explicit modes fail-fast, no silent downgrade
@@ -265,10 +265,10 @@ export const BashTool = Tool.define("bash", async () => {
       const sandboxOpts = {
         command: [shell, shellFlags, params.command],
         workdir: cwd,
-        network: config.sandbox?.network ?? false,
-        writable: [cwd, ...(config.sandbox?.writable ?? [])],
-        memory: config.sandbox?.memory_mb,
-        cpu: config.sandbox?.cpu_percent,
+        network: sandboxConfig.network ?? false,
+        writable: [cwd, ...(sandboxConfig.writable ?? [])],
+        memory: sandboxConfig.memory_mb,
+        cpu: sandboxConfig.cpu_percent,
         env: {
           ...process.env,
           ...shellEnv.env,
