@@ -784,6 +784,47 @@ export namespace Config {
       .catchall(z.any()),
   ])
 
+  const SandboxWasm = z
+    .object({
+      enabled: z.boolean().default(false),
+      timeout_ms: z.number().int().positive().default(30000),
+      memory_pages: z.number().int().positive().default(256),
+      network: z.boolean().default(false),
+      allowed_hosts: z.array(z.string()).optional(),
+      allowed_paths: z.array(z.string()).optional(),
+    })
+    .strict()
+
+  export const Sandbox = z
+    .object({
+      wasm: SandboxWasm.optional(),
+      bash: z
+        .enum(["none", "namespace", "bwrap", "gvisor", "firecracker", "auto"])
+        .optional()
+        .describe(
+          "Sandbox mode for bash tool. 'firecracker' requires Linux with firecracker assets, 'gvisor' requires Linux with runsc, 'namespace' uses Linux namespaces, 'bwrap' uses bubblewrap (Linux), 'sandbox-exec' (macOS). 'auto' picks best available. Default: 'none'.",
+        ),
+      network: z.boolean().optional().describe("Allow network access in sandboxed bash. Default: false."),
+      writable: z
+        .array(z.string())
+        .optional()
+        .describe("Additional directories writable inside the sandbox. Project directory is always writable."),
+      memory_mb: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Memory limit in MB for sandboxed processes (Linux only, requires cgroups v2). Default: 256."),
+      cpu_percent: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .optional()
+        .describe("CPU limit as percentage for sandboxed processes (Linux only). Default: 100."),
+    })
+    .strict()
+
   export const Agent = z
     .object({
       model: ModelId.optional(),
@@ -798,6 +839,7 @@ export namespace Config {
       disable: z.boolean().optional(),
       description: z.string().optional().describe("Description of when to use the agent"),
       mode: z.enum(["subagent", "primary", "all", "a2a"]).optional(),
+      isolation: z.enum(["none", "worktree"]).optional().describe("Execution isolation mode (default: none)"),
       a2a: z
         .object({
           baseUrl: z.string().optional().describe("Public base URL for this agent's A2A endpoints"),
@@ -844,6 +886,7 @@ export namespace Config {
         .describe("Maximum number of agentic iterations before forcing text-only response"),
       maxSteps: z.number().int().positive().optional().describe("@deprecated Use 'steps' field instead."),
       skills: z.array(z.string()).optional().describe("Skill names to preload into the agent's context at startup"),
+      sandbox: Sandbox.optional().describe("Agent-specific sandbox overrides"),
       permission: Permission.optional(),
     })
     .catchall(z.any())
@@ -1082,47 +1125,6 @@ export namespace Config {
       .optional()
       .describe("Control diff rendering style: 'auto' adapts to terminal width, 'stacked' always shows single column"),
   })
-
-  const SandboxWasm = z
-    .object({
-      enabled: z.boolean().default(false),
-      timeout_ms: z.number().int().positive().default(30000),
-      memory_pages: z.number().int().positive().default(256),
-      network: z.boolean().default(false),
-      allowed_hosts: z.array(z.string()).optional(),
-      allowed_paths: z.array(z.string()).optional(),
-    })
-    .strict()
-
-  const Sandbox = z
-    .object({
-      wasm: SandboxWasm.optional(),
-      bash: z
-        .enum(["none", "namespace", "bwrap", "gvisor", "firecracker", "auto"])
-        .optional()
-        .describe(
-          "Sandbox mode for bash tool. 'firecracker' requires Linux with firecracker assets, 'gvisor' requires Linux with runsc, 'namespace' uses Linux namespaces, 'bwrap' uses bubblewrap (Linux), 'sandbox-exec' (macOS). 'auto' picks best available. Default: 'none'.",
-        ),
-      network: z.boolean().optional().describe("Allow network access in sandboxed bash. Default: false."),
-      writable: z
-        .array(z.string())
-        .optional()
-        .describe("Additional directories writable inside the sandbox. Project directory is always writable."),
-      memory_mb: z
-        .number()
-        .int()
-        .positive()
-        .optional()
-        .describe("Memory limit in MB for sandboxed processes (Linux only, requires cgroups v2). Default: 256."),
-      cpu_percent: z
-        .number()
-        .int()
-        .min(1)
-        .max(100)
-        .optional()
-        .describe("CPU limit as percentage for sandboxed processes (Linux only). Default: 100."),
-    })
-    .strict()
 
   // Server-level A2A config (references A2AAuth, A2ASecurityScheme, ExtAuthzConfig defined above)
   const A2A = z

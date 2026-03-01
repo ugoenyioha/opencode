@@ -44,6 +44,7 @@ export namespace Agent {
       options: z.record(z.string(), z.any()),
       steps: z.number().int().positive().optional(),
       skills: z.array(z.string()).optional(),
+      sandbox: Config.Sandbox.optional(),
       a2a: z
         .object({
           baseUrl: z.string().optional(),
@@ -239,6 +240,7 @@ export namespace Agent {
       item.name = value.name ?? item.name
       item.steps = value.steps ?? item.steps
       item.skills = value.skills ?? item.skills
+      item.sandbox = value.sandbox ?? item.sandbox
       item.a2a = value.a2a ?? item.a2a
       item.options = mergeDeep(item.options, value.options ?? {})
       item.permission = PermissionNext.merge(item.permission, PermissionNext.fromConfig(value.permission ?? {}))
