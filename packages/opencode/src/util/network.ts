@@ -1,4 +1,3 @@
-import { Config } from "../config/config"
 import { Sandbox } from "../sandbox"
 
 /**
@@ -8,19 +7,17 @@ import { Sandbox } from "../sandbox"
  * 1. A sandbox mode is active (not "none")
  * 2. And the sandbox configuration explicitly disables networking (`network: false`)
  */
-export async function isNetworkRestricted(): Promise<boolean> {
+export async function isNetworkRestricted(agentName?: string): Promise<boolean> {
   try {
-    const config = await Config.get()
-    const mode = config.sandbox?.bash ?? "none"
+    const config = await Sandbox.getEffectiveConfig(agentName)
+    const mode = config.bash ?? "none"
     const available = Sandbox.available()
 
-    const selectedMode = mode === "auto" ? available : mode
-
-    if (selectedMode === "none") {
+    if ((mode === "auto" ? available : mode) === "none") {
       return false
     }
 
-    return config.sandbox?.network === false
+    return config.network === false
   } catch {
     // Default fail-open for network if we can't read config
     return false
