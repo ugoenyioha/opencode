@@ -54,7 +54,7 @@ export default function RemoteControl() {
         // Wait for the server.connected event from the host, then navigate to the remote session view
         // For now, just a small delay before assuming it works and navigating
         setTimeout(() => {
-          navigate(`/-/session`) // Special directory route for remote viewing
+          navigate(`/-/session/${session}`) // Special directory route for remote viewing
         }, 1000)
       },
       onError: (err) => {
