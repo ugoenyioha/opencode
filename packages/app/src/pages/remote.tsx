@@ -13,15 +13,18 @@ export default function RemoteControl() {
   onMount(() => {
     // We must read the #key from the hash manually, as SolidJS router doesn't parse it out
     // natively if we just want the raw string, and we need to immediately strip it from the URL bar
-    const hash = window.location.hash
-    const keyMatch = hash.match(/#key=(.+)/)
+    const params = new URLSearchParams(window.location.search)
+    let key = params.get("key")
+    if (!key) {
+      const hashMatch = window.location.hash.match(/#?key=(.+)/)
+      key = hashMatch ? hashMatch[1] : null
+    }
 
-    if (!keyMatch) {
+    if (!key) {
       setError("Missing encryption key in URL hash. This link is invalid.")
       return
     }
 
-    const key = keyMatch[1]
     const relay = Array.isArray(searchParams.relay) ? searchParams.relay[0] : searchParams.relay
     const session = Array.isArray(searchParams.session) ? searchParams.session[0] : searchParams.session
 

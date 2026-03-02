@@ -24,7 +24,11 @@
       "types": "./dist/v2/gen/client/index.d.ts",
       "default": "./src/v2/gen/client/index.ts"
     },
-    "./v2/server": "./src/v2/server.ts"
+    "./v2/server": "./src/v2/server.ts",
+    "./v2/remote": {
+      "types": "./dist/v2/remote.d.ts",
+      "default": "./src/v2/remote.ts"
+    }
   },
   "files": [
     "dist"

@@ -1,9 +1,10 @@
 import { createSimpleContext } from "@opencode-ai/ui/context"
-import { type Accessor, batch, createEffect, createMemo, onCleanup } from "solid-js"
+import { type Accessor, batch, createEffect, createMemo, onCleanup, createSignal } from "solid-js"
 import { createStore } from "solid-js/store"
 import { usePlatform } from "@/context/platform"
 import { Persist, persisted } from "@/utils/persist"
 import { checkServerHealth } from "@/utils/server-health"
+import { importRemoteKey } from "@opencode-ai/sdk/v2/remote"
 
 type StoredProject = { worktree: string; expanded: boolean }
 type StoredServer = string | ServerConnection.HttpBase | ServerConnection.Http
@@ -78,6 +79,7 @@ export namespace ServerConnection {
     sessionId: string
     token: string
     encryptionKeyBase64: string
+    encryptionKey: CryptoKey
     // We still need a dummy http block for compatibility with generic health checks
     http: HttpBase
   } & Base
@@ -123,6 +125,8 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
 
     const url = (x: StoredServer) => (typeof x === "string" ? x : "type" in x ? x.http.url : x.url)
 
+    const [ephemeralServers, setEphemeralServers] = createSignal<ServerConnection.Any[]>([])
+
     const allServers = createMemo((): Array<ServerConnection.Any> => {
       const servers = [
         ...(props.servers ?? []),
@@ -134,6 +138,7 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
               }
             : value,
         ),
+        ...ephemeralServers(),
       ]
 
       const deduped = new Map(
@@ -154,6 +159,11 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
     const healthy = () => state.healthy
 
     function startHealthPolling(conn: ServerConnection.Any) {
+      if (conn.type === "remote") {
+        setState("healthy", true)
+        return () => {}
+      }
+
       let alive = true
       let busy = false
 
@@ -255,8 +265,10 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
           if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to join session`)
           return res.json()
         })
-        .then((data: any) => {
+        .then(async (data: any) => {
           if (!data.token) throw new Error("No token returned from relay")
+
+          const encryptionKey = await importRemoteKey(opts.encryptionKeyBase64)
 
           const conn: ServerConnection.Remote = {
             type: "remote",
@@ -264,17 +276,15 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
             sessionId: opts.sessionId,
             token: data.token,
             encryptionKeyBase64: opts.encryptionKeyBase64,
+            encryptionKey,
             http: { url: `remote://${opts.sessionId}` }, // Dummy URL for generic logic
           }
 
           batch(() => {
-            // Replace any existing remote connection for this session
-            const existing = store.list.findIndex((x) => url(x) === conn.http.url)
-            if (existing !== -1) {
-              setStore("list", existing, conn as any)
-            } else {
-              setStore("list", store.list.length, conn as any)
-            }
+            setEphemeralServers((prev) => [
+              ...prev.filter((s) => ServerConnection.key(s) !== ServerConnection.key(conn)),
+              conn,
+            ])
             setState("active", ServerConnection.key(conn))
           })
 
