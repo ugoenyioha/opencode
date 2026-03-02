@@ -16,7 +16,9 @@ import { DialogModel, useConnected } from "@tui/component/dialog-model"
 import { DialogMcp } from "@tui/component/dialog-mcp"
 import { DialogStatus } from "@tui/component/dialog-status"
 import { DialogThemeList } from "@tui/component/dialog-theme-list"
+import { DialogPrompt } from "./ui/dialog-prompt"
 import { DialogHelp } from "./ui/dialog-help"
+import { DialogRemoteControl } from "./ui/dialog-remote-control"
 import { CommandProvider, useCommandDialog } from "@tui/component/dialog-command"
 import { DialogAgent } from "@tui/component/dialog-agent"
 import { DialogSessionList } from "@tui/component/dialog-session-list"
@@ -648,6 +650,37 @@ function App() {
       },
       onSelect: () => {
         dialog.replace(() => <DialogHelp />)
+      },
+      category: "System",
+    },
+    {
+      title: "Remote Control",
+      value: "remote.control",
+      slash: {
+        name: "remote",
+        aliases: ["share-remote"],
+      },
+      onSelect: async (dialog) => {
+        let relayUrl = process.env.OPENCODE_RELAY_URL
+        if (!relayUrl) {
+          const result = await DialogPrompt.show(dialog, "Custom Relay URL", {
+            placeholder: "https://your-relay.workers.dev",
+            description: () => (
+              <text fg={useTheme().theme.textMuted}>
+                No OPENCODE_RELAY_URL environment variable found.{"\n"}
+                Enter your custom Cloudflare Relay URL or leave empty to use the default loopback relay (for testing).
+              </text>
+            ),
+          })
+
+          if (result === null) {
+            // Cancelled
+            return
+          }
+          relayUrl = result.trim() || "http://127.0.0.1:8787"
+        }
+
+        dialog.replace(() => <DialogRemoteControl overrideRelayUrl={relayUrl} />)
       },
       category: "System",
     },
