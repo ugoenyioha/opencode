@@ -1,0 +1,12 @@
+$ wrangler dev
+
+ ⛅️ wrangler 4.69.0
+───────────────────
+Using vars defined in .dev.vars
+Your Worker has access to the following bindings:
+Binding                               Resource                  Mode
+env.SESSION_RELAY (SessionRelay)      Durable Object            local
+env.JWT_SECRET ("(hidden)")           Environment Variable      local
+
+⎔ Starting local server...
+[wrangler:info] Ready on http://localhost:8788

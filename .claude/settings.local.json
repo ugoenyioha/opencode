@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(opencode:*)",
+      "Bash(sqlite3:*)",
+      "Bash(ls:*)"
+    ]
+  },
+  "disabledMcpjsonServers": [
+    "playwright"
+  ]
+}

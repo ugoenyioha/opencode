@@ -81,7 +81,6 @@ export function DialogMessage(props: {
               sessionID: props.sessionID,
               modelID: selectedModel.modelID,
               providerID: selectedModel.providerID,
-              boundaryMessageID: props.messageID,
             })
             dialog.clear()
           },

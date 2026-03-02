@@ -210,11 +210,12 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
 
     function remove(key: ServerConnection.Key) {
       const list = store.list.filter((x) => url(x) !== key)
+      const next = allServers().find((x) => ServerConnection.key(x) !== key)
       batch(() => {
         setStore("list", list)
+        setEphemeralServers((prev) => prev.filter((x) => ServerConnection.key(x) !== key))
         if (state.active === key) {
-          const next = list[0]
-          setState("active", next ? ServerConnection.Key.make(url(next)) : props.defaultServer)
+          setState("active", next ? ServerConnection.key(next) : props.defaultServer)
         }
       })
     }
@@ -249,11 +250,13 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
       onConnect?: () => void
       onError?: (err: Error) => void
     }) {
+      const key = ServerConnection.Key.make(`remote:${opts.sessionId}`)
+      let closed = false
       // 1. We will exchange the anonymous viewer url for a valid Viewer token by calling the Relay
       const relayUrl = normalizeServerUrl(opts.relayUrl)
       if (!relayUrl) {
         opts.onError?.(new Error("Invalid relay URL"))
-        return
+        return () => {}
       }
 
       fetch(`${relayUrl}/api/session/join`, {
@@ -265,10 +268,11 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
           if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to join session`)
           return res.json()
         })
-        .then(async (data: any) => {
+        .then(async (data: { token?: string }) => {
           if (!data.token) throw new Error("No token returned from relay")
 
           const encryptionKey = await importRemoteKey(opts.encryptionKeyBase64)
+          if (closed) return
 
           const conn: ServerConnection.Remote = {
             type: "remote",
@@ -291,8 +295,14 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
           opts.onConnect?.()
         })
         .catch((err) => {
-          opts.onError?.(err)
+          if (closed) return
+          opts.onError?.(err instanceof Error ? err : new Error(String(err)))
         })
+
+      return () => {
+        closed = true
+        remove(key)
+      }
     }
 
     return {

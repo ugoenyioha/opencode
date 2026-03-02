@@ -164,9 +164,12 @@ export namespace ACP {
     private async runEventSubscription() {
       while (true) {
         if (this.eventAbort.signal.aborted) return
-        const events = await this.sdk.global.event({
-          signal: this.eventAbort.signal,
-        })
+        const events = await this.sdk.global.event(
+          {},
+          {
+            signal: this.eventAbort.signal,
+          },
+        )
         for await (const event of events.stream) {
           if (this.eventAbort.signal.aborted) return
           const payload = (event as any)?.payload
@@ -1415,7 +1418,7 @@ export namespace ACP {
 
         return {
           stopReason: "end_turn" as const,
-          usage: msg ? buildUsage(msg) : undefined,
+          usage: msg?.role === "assistant" ? buildUsage(msg) : undefined,
           _meta: {},
         }
       }
@@ -1438,7 +1441,7 @@ export namespace ACP {
 
         return {
           stopReason: "end_turn" as const,
-          usage: msg ? buildUsage(msg) : undefined,
+          usage: msg?.role === "assistant" ? buildUsage(msg) : undefined,
           _meta: {},
         }
       }

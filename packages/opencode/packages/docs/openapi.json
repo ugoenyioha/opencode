@@ -1,0 +1,345 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "theme": {
+      "type": "string"
+    },
+    "keybinds": {
+      "type": "object",
+      "properties": {
+        "leader": {
+          "type": "string"
+        },
+        "app_exit": {
+          "type": "string"
+        },
+        "editor_open": {
+          "type": "string"
+        },
+        "theme_list": {
+          "type": "string"
+        },
+        "sidebar_toggle": {
+          "type": "string"
+        },
+        "scrollbar_toggle": {
+          "type": "string"
+        },
+        "username_toggle": {
+          "type": "string"
+        },
+        "status_view": {
+          "type": "string"
+        },
+        "session_export": {
+          "type": "string"
+        },
+        "session_new": {
+          "type": "string"
+        },
+        "session_list": {
+          "type": "string"
+        },
+        "session_timeline": {
+          "type": "string"
+        },
+        "session_fork": {
+          "type": "string"
+        },
+        "session_rename": {
+          "type": "string"
+        },
+        "session_delete": {
+          "type": "string"
+        },
+        "stash_delete": {
+          "type": "string"
+        },
+        "model_provider_list": {
+          "type": "string"
+        },
+        "model_favorite_toggle": {
+          "type": "string"
+        },
+        "session_share": {
+          "type": "string"
+        },
+        "session_unshare": {
+          "type": "string"
+        },
+        "session_interrupt": {
+          "type": "string"
+        },
+        "session_compact": {
+          "type": "string"
+        },
+        "messages_page_up": {
+          "type": "string"
+        },
+        "messages_page_down": {
+          "type": "string"
+        },
+        "messages_line_up": {
+          "type": "string"
+        },
+        "messages_line_down": {
+          "type": "string"
+        },
+        "messages_half_page_up": {
+          "type": "string"
+        },
+        "messages_half_page_down": {
+          "type": "string"
+        },
+        "messages_first": {
+          "type": "string"
+        },
+        "messages_last": {
+          "type": "string"
+        },
+        "messages_next": {
+          "type": "string"
+        },
+        "messages_previous": {
+          "type": "string"
+        },
+        "messages_last_user": {
+          "type": "string"
+        },
+        "messages_copy": {
+          "type": "string"
+        },
+        "messages_undo": {
+          "type": "string"
+        },
+        "messages_redo": {
+          "type": "string"
+        },
+        "messages_toggle_conceal": {
+          "type": "string"
+        },
+        "tool_details": {
+          "type": "string"
+        },
+        "model_list": {
+          "type": "string"
+        },
+        "model_cycle_recent": {
+          "type": "string"
+        },
+        "model_cycle_recent_reverse": {
+          "type": "string"
+        },
+        "model_cycle_favorite": {
+          "type": "string"
+        },
+        "model_cycle_favorite_reverse": {
+          "type": "string"
+        },
+        "command_list": {
+          "type": "string"
+        },
+        "agent_list": {
+          "type": "string"
+        },
+        "agent_cycle": {
+          "type": "string"
+        },
+        "agent_cycle_reverse": {
+          "type": "string"
+        },
+        "variant_cycle": {
+          "type": "string"
+        },
+        "input_clear": {
+          "type": "string"
+        },
+        "input_paste": {
+          "type": "string"
+        },
+        "input_submit": {
+          "type": "string"
+        },
+        "input_newline": {
+          "type": "string"
+        },
+        "input_move_left": {
+          "type": "string"
+        },
+        "input_move_right": {
+          "type": "string"
+        },
+        "input_move_up": {
+          "type": "string"
+        },
+        "input_move_down": {
+          "type": "string"
+        },
+        "input_select_left": {
+          "type": "string"
+        },
+        "input_select_right": {
+          "type": "string"
+        },
+        "input_select_up": {
+          "type": "string"
+        },
+        "input_select_down": {
+          "type": "string"
+        },
+        "input_line_home": {
+          "type": "string"
+        },
+        "input_line_end": {
+          "type": "string"
+        },
+        "input_select_line_home": {
+          "type": "string"
+        },
+        "input_select_line_end": {
+          "type": "string"
+        },
+        "input_visual_line_home": {
+          "type": "string"
+        },
+        "input_visual_line_end": {
+          "type": "string"
+        },
+        "input_select_visual_line_home": {
+          "type": "string"
+        },
+        "input_select_visual_line_end": {
+          "type": "string"
+        },
+        "input_buffer_home": {
+          "type": "string"
+        },
+        "input_buffer_end": {
+          "type": "string"
+        },
+        "input_select_buffer_home": {
+          "type": "string"
+        },
+        "input_select_buffer_end": {
+          "type": "string"
+        },
+        "input_delete_line": {
+          "type": "string"
+        },
+        "input_delete_to_line_end": {
+          "type": "string"
+        },
+        "input_delete_to_line_start": {
+          "type": "string"
+        },
+        "input_backspace": {
+          "type": "string"
+        },
+        "input_delete": {
+          "type": "string"
+        },
+        "input_undo": {
+          "type": "string"
+        },
+        "input_redo": {
+          "type": "string"
+        },
+        "input_word_forward": {
+          "type": "string"
+        },
+        "input_word_backward": {
+          "type": "string"
+        },
+        "input_select_word_forward": {
+          "type": "string"
+        },
+        "input_select_word_backward": {
+          "type": "string"
+        },
+        "input_delete_word_forward": {
+          "type": "string"
+        },
+        "input_delete_word_backward": {
+          "type": "string"
+        },
+        "history_previous": {
+          "type": "string"
+        },
+        "history_next": {
+          "type": "string"
+        },
+        "session_child_first": {
+          "type": "string"
+        },
+        "session_child_cycle": {
+          "type": "string"
+        },
+        "session_child_cycle_reverse": {
+          "type": "string"
+        },
+        "session_parent": {
+          "type": "string"
+        },
+        "terminal_suspend": {
+          "type": "string"
+        },
+        "terminal_title_toggle": {
+          "type": "string"
+        },
+        "tips_toggle": {
+          "type": "string"
+        },
+        "display_thinking": {
+          "type": "string"
+        },
+        "team_show": {
+          "type": "string"
+        },
+        "team_next": {
+          "type": "string"
+        },
+        "team_previous": {
+          "type": "string"
+        },
+        "team_delegate": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "scroll_speed": {
+      "description": "TUI scroll speed",
+      "type": "number",
+      "minimum": 0.001
+    },
+    "scroll_acceleration": {
+      "description": "Scroll acceleration settings",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Enable scroll acceleration",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "enabled"
+      ],
+      "additionalProperties": false
+    },
+    "diff_style": {
+      "description": "Control diff rendering style: 'auto' adapts to terminal width, 'stacked' always shows single column",
+      "type": "string",
+      "enum": [
+        "auto",
+        "stacked"
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "allowComments": true,
+  "allowTrailingCommas": true
+}

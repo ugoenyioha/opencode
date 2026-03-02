@@ -1,0 +1,11 @@
+$ vite --port "5173"
+Port 5173 is in use, trying another one...
+
+  VITE v7.1.4  ready in 365 ms
+
+  ➜  Local:   http://localhost:5174/
+  ➜  Network: http://172.16.123.1:5174/
+  ➜  Network: http://192.168.5.58:5174/
+  ➜  Network: http://192.168.139.3:5174/
+  ➜  Network: http://192.168.64.1:5174/
+  ➜  Network: http://192.168.194.0:5174/

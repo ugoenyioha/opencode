@@ -16,7 +16,7 @@ export function createSdkForServer({
       sessionId: server.sessionId,
       token: server.token,
       encryptionKey: server.encryptionKey,
-    } as any) as unknown as OpencodeClient
+    })
   }
 
   const auth = (() => {

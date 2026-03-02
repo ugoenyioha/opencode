@@ -1,5 +1,5 @@
 import { useNavigate, useSearchParams } from "@solidjs/router"
-import { createEffect, createSignal, onMount, Show } from "solid-js"
+import { createSignal, onCleanup, onMount, Show } from "solid-js"
 import { useServer } from "@/context/server"
 
 export default function RemoteControl() {
@@ -34,13 +34,18 @@ export default function RemoteControl() {
     }
 
     // Immediately remove the key from the URL bar to prevent accidental sharing
-    window.history.replaceState(null, "", window.location.pathname + window.location.search)
+    const sanitized = new URL(window.location.href)
+    sanitized.searchParams.delete("key")
+    if (sanitized.hash.startsWith("#key=")) {
+      sanitized.hash = ""
+    }
+    window.history.replaceState(null, "", sanitized.pathname + sanitized.search + sanitized.hash)
 
     setStatus("Connecting to Relay...")
 
     // Tell the Server context to switch to a remote connection mode
     // We will need to update the Server context to handle this new type of connection
-    server.connectRemote({
+    const cleanup = server.connectRemote({
       relayUrl: relay,
       sessionId: session,
       encryptionKeyBase64: key,
@@ -55,6 +60,10 @@ export default function RemoteControl() {
       onError: (err) => {
         setError(err.message)
       },
+    })
+
+    onCleanup(() => {
+      cleanup?.()
     })
   })
 
