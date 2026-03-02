@@ -184,7 +184,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       input.onNewSessionWorktreeReset?.()
     }
 
-    let session = input.info()
+    let session = input.info() || (params.id ? { id: params.id } : undefined)
     if (!session && isNewSession) {
       session = await client.session
         .create()
