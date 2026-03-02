@@ -30,6 +30,7 @@ import { PrCommand } from "./cli/cmd/pr"
 import { SessionCommand } from "./cli/cmd/session"
 import { DbCommand } from "./cli/cmd/db"
 import { RemoteControlCommand } from "./cli/cmd/remote-control"
+import { RemoteAttachCommand } from "./cli/cmd/remote-attach"
 import path from "path"
 import { Global } from "./global"
 import { JsonMigration } from "./storage/json-migration"
@@ -144,6 +145,7 @@ let cli = yargs(hideBin(process.argv))
   .command(SessionCommand)
   .command(DbCommand)
   .command(RemoteControlCommand)
+  .command(RemoteAttachCommand)
 
 if (Installation.isLocal()) {
   cli = cli.command(WorkspaceServeCommand)
