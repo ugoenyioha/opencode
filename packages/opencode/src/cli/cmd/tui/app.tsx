@@ -665,12 +665,26 @@ function App() {
         if (!relayUrl) {
           const result = await DialogPrompt.show(dialog, "Custom Relay URL", {
             placeholder: "https://your-relay.workers.dev",
-            description: () => (
-              <text fg={useTheme().theme.textMuted}>
-                No OPENCODE_RELAY_URL environment variable found.{"\n"}
-                Enter your custom Cloudflare Relay URL or leave empty to use the default loopback relay (for testing).
-              </text>
-            ),
+            description: () => {
+              const { theme } = useTheme()
+              return (
+                <box flexDirection="column" gap={1}>
+                  <text fg={theme.textMuted}>No OPENCODE_RELAY_URL environment variable found.</text>
+                  <text fg={theme.text}>
+                    To securely share this session over the internet, you must deploy your own free Cloudflare Worker
+                    Relay.{"\n"}
+                    Learn how:{" "}
+                    <span style={{ fg: theme.primary }}>
+                      https://github.com/usable-apps/opencode-ng/tree/dev/packages/relay
+                    </span>
+                  </text>
+                  <text fg={theme.textMuted}>
+                    Enter your custom Cloudflare Relay URL below, or leave empty to use the local loopback relay (for
+                    testing).
+                  </text>
+                </box>
+              )
+            },
           })
 
           if (result === null) {
