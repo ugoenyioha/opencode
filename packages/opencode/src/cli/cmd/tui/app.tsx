@@ -707,7 +707,7 @@ function App() {
       },
       category: "System",
     },
-    ...(sync.data.config.experimental?.remote_control
+    ...(sync.data.config.experimental?.remote_control || Flag.OPENCODE_EXPERIMENTAL_REMOTE_CONTROL
       ? [
           {
             title: "Remote Control",
