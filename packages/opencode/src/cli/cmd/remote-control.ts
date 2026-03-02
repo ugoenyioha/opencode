@@ -8,6 +8,49 @@ import { resolveNetworkOptions } from "../network"
 import { UI } from "../ui"
 
 const ALGORITHM = "aes-256-gcm"
+const MAX_WS_MESSAGE_BYTES = 64 * 1024
+const MAX_BODY_BYTES = 256 * 1024
+const MAX_BUFFERED_BYTES = 1_000_000
+const FETCH_TIMEOUT_MS = 10_000
+const RATE_PER_SECOND = 30
+const RATE_BURST = 60
+const ALLOWED_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"])
+const ALLOWED_PATH_PREFIXES = [
+  "/session",
+  "/event",
+  "/project",
+  "/config",
+  "/agent",
+  "/tool",
+  "/file",
+  "/provider",
+  "/mcp",
+  "/team",
+  "/permission",
+  "/question",
+  "/vcs",
+  "/path",
+  "/command",
+  "/lsp",
+  "/formatter",
+  "/api/",
+]
+const BLOCKED_HEADERS = new Set([
+  "host",
+  "connection",
+  "upgrade",
+  "transfer-encoding",
+  "content-length",
+  "cookie",
+  "authorization",
+])
+
+type RemoteCommand = {
+  method: string
+  path: string
+  headers: Record<string, string>
+  body?: string
+}
 
 function encrypt(text: string, key: Buffer) {
   const iv = randomBytes(12)
@@ -25,6 +68,94 @@ function decrypt(data: Buffer, key: Buffer) {
   const decipher = createDecipheriv(ALGORITHM, key, iv)
   decipher.setAuthTag(authTag)
   return decipher.update(encrypted) + decipher.final("utf8")
+}
+
+function containsControl(input: string) {
+  return /[\u0000-\u001f\u007f]/.test(input)
+}
+
+function bodySize(input: unknown) {
+  if (input === undefined) return 0
+  if (typeof input === "string") {
+    return Buffer.byteLength(input)
+  }
+  return Buffer.byteLength(JSON.stringify(input))
+}
+
+function parseHeaders(input: unknown) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return {}
+  const entries = Object.entries(input)
+  const next: Record<string, string> = {}
+  for (const [rawKey, rawValue] of entries) {
+    if (typeof rawValue !== "string") {
+      throw new Error("Invalid header value")
+    }
+    const key = rawKey.toLowerCase()
+    if (key.startsWith("sec-websocket-") || key.startsWith("proxy-") || key.startsWith("x-forwarded-")) {
+      continue
+    }
+    if (BLOCKED_HEADERS.has(key)) {
+      continue
+    }
+    next[key] = rawValue
+  }
+  return next
+}
+
+function allowedPath(path: string) {
+  return ALLOWED_PATH_PREFIXES.some((prefix) => path === prefix || path.startsWith(prefix))
+}
+
+function parseCommand(input: string): RemoteCommand {
+  const decoded = JSON.parse(input) as unknown
+  if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) {
+    throw new Error("Invalid command payload")
+  }
+
+  const method = (decoded as { method?: unknown }).method
+  const path = (decoded as { path?: unknown }).path
+  const headers = parseHeaders((decoded as { headers?: unknown }).headers)
+  const body = (decoded as { body?: unknown }).body
+
+  if (typeof method !== "string") {
+    throw new Error("Missing method")
+  }
+  const nextMethod = method.toUpperCase()
+  if (!ALLOWED_METHODS.has(nextMethod)) {
+    throw new Error("Method not allowed")
+  }
+
+  if (typeof path !== "string") {
+    throw new Error("Missing path")
+  }
+  if (!path.startsWith("/") || path.startsWith("//") || path.includes("\\") || containsControl(path)) {
+    throw new Error("Invalid path")
+  }
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(path)) {
+    throw new Error("Absolute paths are not allowed")
+  }
+  if (!allowedPath(path)) {
+    throw new Error("Path not allowed")
+  }
+
+  if (bodySize(body) > MAX_BODY_BYTES) {
+    throw new Error("Body too large")
+  }
+
+  const nextBody = body === undefined ? undefined : typeof body === "string" ? body : JSON.stringify(body)
+  return {
+    method: nextMethod,
+    path,
+    headers,
+    body: nextBody,
+  }
+}
+
+function toBuffer(data: WebSocket.RawData) {
+  if (typeof data === "string") return Buffer.from(data)
+  if (Buffer.isBuffer(data)) return data
+  if (Array.isArray(data)) return Buffer.concat(data)
+  return Buffer.from(data)
 }
 
 export const RemoteControlCommand = cmd({
@@ -76,10 +207,10 @@ export const RemoteControlCommand = cmd({
     const { sessionId, token } = sessionData
 
     // 4. Connect to Relay via WebSocket
-    const wsUrl = new URL(`/relay/${sessionId}?role=host`, args.relay)
+    const wsUrl = new URL(`/relay/${sessionId}`, args.relay)
     wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:"
 
-    const ws = new WebSocket(wsUrl.toString(), {
+    const ws = new WebSocket(wsUrl.toString(), ["oc-v1"], {
       headers: {
         Authorization: `Bearer ${token}`,
       },
@@ -92,9 +223,17 @@ export const RemoteControlCommand = cmd({
     // 5. Intercept local GlobalBus events and forward them securely to the Relay
     const localEventHandler = (event: { directory?: string; payload: unknown }) => {
       if (ws.readyState === WebSocket.OPEN) {
+        if (ws.bufferedAmount > MAX_BUFFERED_BYTES) {
+          log.warn("dropping remote event due to websocket backpressure")
+          return
+        }
         try {
           const payloadStr = JSON.stringify(event.payload)
           const encrypted = encrypt(payloadStr, rawKey)
+          if (encrypted.byteLength > MAX_WS_MESSAGE_BYTES) {
+            log.warn("dropping oversized remote event")
+            return
+          }
           ws.send(encrypted)
         } catch (e) {
           log.warn("failed to encrypt and send event", { e })
@@ -117,29 +256,58 @@ export const RemoteControlCommand = cmd({
       ws.send(connectedEvent)
     })
 
+    let rateTokens = RATE_BURST
+    let rateAt = Date.now()
+    const consume = () => {
+      const now = Date.now()
+      rateTokens = Math.min(RATE_BURST, rateTokens + ((now - rateAt) / 1000) * RATE_PER_SECOND)
+      rateAt = now
+      if (rateTokens < 1) return false
+      rateTokens -= 1
+      return true
+    }
+
     // 6. Receive encrypted commands from Viewer -> proxy them to the local API
-    ws.on("message", async (data: Buffer) => {
+    ws.on("message", async (data: WebSocket.RawData) => {
+      const packet = toBuffer(data)
+      if (packet.byteLength > MAX_WS_MESSAGE_BYTES) {
+        ws.close(1009, "Message too large")
+        return
+      }
+      if (!consume()) {
+        ws.close(1008, "Rate limit exceeded")
+        return
+      }
       try {
-        const decryptedStr = decrypt(data, rawKey)
-        const command = JSON.parse(decryptedStr) as { method: string; path: string; body?: any; headers?: any }
+        const decryptedStr = decrypt(packet, rawKey)
+        const command = parseCommand(decryptedStr)
 
         // Proxy the request to the local server
         const proxyUrl = new URL(command.path, localBaseUrl)
+        const controller = new AbortController()
+        const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
         const fetchOpts: RequestInit = {
           method: command.method,
-          headers: command.headers || { "Content-Type": "application/json" },
+          headers: {
+            ...command.headers,
+            ...(command.body ? { "content-type": command.headers["content-type"] ?? "application/json" } : {}),
+          },
+          signal: controller.signal,
         }
         if (command.body && (command.method === "POST" || command.method === "PUT" || command.method === "PATCH")) {
-          fetchOpts.body = typeof command.body === "string" ? command.body : JSON.stringify(command.body)
+          fetchOpts.body = command.body
         }
-
-        const proxyRes = await fetch(proxyUrl, fetchOpts)
+        await fetch(proxyUrl, fetchOpts).finally(() => clearTimeout(timeout))
 
         // We do not need to send the response back via the WebSocket!
         // The local server emits standard GlobalBus events for state changes, which we are
         // already intercepting and forwarding via `localEventHandler` above.
         // If the viewer needs synchronous responses for specific RPCs, we can add a reply mechanism later.
       } catch (e) {
+        if (e instanceof Error && /not allowed|Invalid|Missing|too large/i.test(e.message)) {
+          ws.close(1008, "Invalid command")
+          return
+        }
         log.warn("failed to process incoming remote command", { error: (e as Error).message })
       }
     })
