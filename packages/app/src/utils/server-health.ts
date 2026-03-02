@@ -71,8 +71,9 @@ export async function checkServerHealth(
       .catch(() => ({ healthy: false }))
   }
   const attempt = (count: number): Promise<ServerHealth> =>
+    // We mock a standard HTTP server object since health check logic is universal
     createSdkForServer({
-      server,
+      server: { type: "http", http: server },
       fetch,
       signal,
     })

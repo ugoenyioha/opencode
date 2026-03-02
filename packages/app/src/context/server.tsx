@@ -71,8 +71,20 @@ export namespace ServerConnection {
     http: HttpBase
   } & Base
 
+  // Relay connection for Remote Control
+  export type Remote = {
+    type: "remote"
+    relayUrl: string
+    sessionId: string
+    token: string
+    encryptionKeyBase64: string
+    // We still need a dummy http block for compatibility with generic health checks
+    http: HttpBase
+  } & Base
+
   export type Any =
     | Http
+    | Remote
     // All these are desktop-only
     | (Sidecar | Ssh)
 
@@ -86,6 +98,8 @@ export namespace ServerConnection {
       }
       case "ssh":
         return Key.make(`ssh:${conn.host}`)
+      case "remote":
+        return Key.make(`remote:${conn.sessionId}`)
     }
   }
 
@@ -218,6 +232,59 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
       return (c?.type === "sidecar" && c.variant === "base") || (c?.type === "http" && isLocalHost(c.http.url))
     })
 
+    function connectRemote(opts: {
+      relayUrl: string
+      sessionId: string
+      encryptionKeyBase64: string
+      onConnect?: () => void
+      onError?: (err: Error) => void
+    }) {
+      // 1. We will exchange the anonymous viewer url for a valid Viewer token by calling the Relay
+      const relayUrl = normalizeServerUrl(opts.relayUrl)
+      if (!relayUrl) {
+        opts.onError?.(new Error("Invalid relay URL"))
+        return
+      }
+
+      fetch(`${relayUrl}/api/session/join`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: opts.sessionId }),
+      })
+        .then((res) => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to join session`)
+          return res.json()
+        })
+        .then((data: any) => {
+          if (!data.token) throw new Error("No token returned from relay")
+
+          const conn: ServerConnection.Remote = {
+            type: "remote",
+            relayUrl,
+            sessionId: opts.sessionId,
+            token: data.token,
+            encryptionKeyBase64: opts.encryptionKeyBase64,
+            http: { url: `remote://${opts.sessionId}` }, // Dummy URL for generic logic
+          }
+
+          batch(() => {
+            // Replace any existing remote connection for this session
+            const existing = store.list.findIndex((x) => url(x) === conn.http.url)
+            if (existing !== -1) {
+              setStore("list", existing, conn as any)
+            } else {
+              setStore("list", store.list.length, conn as any)
+            }
+            setState("active", ServerConnection.key(conn))
+          })
+
+          opts.onConnect?.()
+        })
+        .catch((err) => {
+          opts.onError?.(err)
+        })
+    }
+
     return {
       ready: isReady,
       healthy,
@@ -236,6 +303,7 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
       },
       setActive,
       add,
+      connectRemote,
       remove,
       projects: {
         list: projectsList,

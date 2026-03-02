@@ -35,7 +35,7 @@ export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleCo
     const eventSdk = createSdkForServer({
       signal: abort.signal,
       fetch: eventFetch,
-      server: currentServer.http,
+      server: currentServer,
     })
     const emitter = createGlobalEmitter<{
       [key: string]: Event
@@ -128,9 +128,9 @@ export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleCo
         }
         abort.signal.addEventListener("abort", onAbort)
         try {
-          const events = await eventSdk.global.event({
+          const events = await eventSdk.global.event(undefined, {
             signal: attempt.signal,
-            onSseError: (error) => {
+            onSseError: (error: any) => {
               if (aborted(error)) return
               if (streamErrorLogged) return
               streamErrorLogged = true
@@ -207,7 +207,7 @@ export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleCo
     })
 
     const sdk = createSdkForServer({
-      server: server.current.http,
+      server: server.current,
       fetch: platform.fetch,
       throwOnError: true,
     })
@@ -220,7 +220,7 @@ export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleCo
         const s = server.current
         if (!s) throw new Error("Server not available")
         return createSdkForServer({
-          server: s.http,
+          server: s,
           fetch: platform.fetch,
           ...opts,
         })

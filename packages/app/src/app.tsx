@@ -31,11 +31,18 @@ import { ErrorPage } from "./pages/error"
 
 const Home = lazy(() => import("@/pages/home"))
 const Session = lazy(() => import("@/pages/session"))
+const RemoteControl = lazy(() => import("@/pages/remote"))
 const Loading = () => <div class="size-full" />
 
 const HomeRoute = () => (
   <Suspense fallback={<Loading />}>
     <Home />
+  </Suspense>
+)
+
+const RemoteRoute = () => (
+  <Suspense fallback={<Loading />}>
+    <RemoteControl />
   </Suspense>
 )
 
@@ -154,6 +161,7 @@ export function AppInterface(props: {
               root={(routerProps) => <RouterRoot appChildren={props.children}>{routerProps.children}</RouterRoot>}
             >
               <Route path="/" component={HomeRoute} />
+              <Route path="/remote" component={RemoteRoute} />
               <Route path="/:dir" component={DirectoryLayout}>
                 <Route path="/" component={SessionIndexRoute} />
                 <Route path="/session/:id?" component={SessionRoute} />
