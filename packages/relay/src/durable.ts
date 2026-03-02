@@ -5,7 +5,7 @@ export class SessionRelay {
   env: Env
   readonly MAX_VIEWERS = 64
   readonly MAX_MESSAGE_BYTES = 64 * 1024
-  readonly MAX_BUFFER_SIZE = 100
+  readonly MAX_BUFFER_SIZE = 25
   readonly MAX_BACKLOG_BYTES = 1_000_000
   readonly RATE_PER_SECOND = 30
   readonly RATE_BURST = 60
@@ -17,8 +17,10 @@ export class SessionRelay {
 
   // Ring buffer for the last N messages to support viewer reconnection
   messageBuffer: Array<string | ArrayBuffer> = []
+  latestState: string | ArrayBuffer | null = null
   persistPending: Promise<void> | null = null
   persistQueued = false
+  sessionGeneration = 0
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state
@@ -31,6 +33,10 @@ export class SessionRelay {
       const stored = await this.state.storage.get<Array<string | ArrayBuffer>>("messageBuffer")
       if (stored) {
         this.messageBuffer = stored
+      }
+      const storedState = await this.state.storage.get<string | ArrayBuffer>("latestState")
+      if (storedState) {
+        this.latestState = storedState
       }
     })
   }
@@ -62,15 +68,27 @@ export class SessionRelay {
         this.hostSocket.close(1000, "New host connected")
       }
       this.hostSocket = server
+      this.sessionGeneration += 1
 
       // Clear the buffer when a new host connects (it's a fresh session run)
       this.messageBuffer = []
-      await this.state.storage.delete("messageBuffer")
+      this.latestState = null
+      await this.state.storage.delete(["messageBuffer", "latestState"])
     } else if (role === "viewer") {
       this.viewerSockets.add(server)
       this.viewerRate.set(server, { tokens: this.RATE_BURST, t: Date.now() })
 
       // Immediately flush the history buffer to the new viewer so they catch up on state
+      if (this.latestState) {
+        try {
+          server.send(this.latestState)
+        } catch {
+          this.viewerSockets.delete(server)
+          this.viewerRate.delete(server)
+          return new Response(null, { status: 101, webSocket: client }) // Need to return, but let the block end
+        }
+      }
+
       for (const msg of this.messageBuffer) {
         try {
           server.send(msg)
@@ -117,8 +135,17 @@ export class SessionRelay {
       return
     }
 
-    this.persistPending = this.state.storage
-      .put("messageBuffer", this.messageBuffer)
+    const generation = this.sessionGeneration
+    const buffer = [...this.messageBuffer]
+    const state = this.latestState
+
+    this.persistPending = Promise.resolve()
+      .then(async () => {
+        if (generation !== this.sessionGeneration) {
+          return
+        }
+        await this.state.storage.put({ messageBuffer: buffer, latestState: state })
+      })
       .catch(() => {})
       .then(() => {
         this.persistPending = null
@@ -141,9 +168,25 @@ export class SessionRelay {
 
     if (isHost) {
       // 1. Buffer the message
-      this.messageBuffer.push(message)
-      if (this.messageBuffer.length > this.MAX_BUFFER_SIZE) {
-        this.messageBuffer.shift() // Remove oldest message
+      try {
+        const payloadStr = typeof message === "string" ? message : new TextDecoder().decode(message)
+        // Check if this is the handshake state and pin it
+        if (payloadStr.includes('"type":"server.connected"')) {
+          this.latestState = message
+        } else if (payloadStr.includes('"type":"server.heartbeat"')) {
+          // don't buffer heartbeats
+        } else {
+          this.messageBuffer.push(message)
+          if (this.messageBuffer.length > this.MAX_BUFFER_SIZE) {
+            this.messageBuffer.shift() // Remove oldest message
+          }
+        }
+      } catch {
+        // Fallback for purely binary frames
+        this.messageBuffer.push(message)
+        if (this.messageBuffer.length > this.MAX_BUFFER_SIZE) {
+          this.messageBuffer.shift() // Remove oldest message
+        }
       }
       this.persistBuffer()
 
@@ -172,10 +215,14 @@ export class SessionRelay {
       }
       // Forward viewer messages (commands) strictly to the host
       if (this.hostSocket) {
+        const host = this.hostSocket
         try {
-          this.hostSocket.send(message)
+          host.send(message)
         } catch {
-          this.hostSocket = null
+          host.close(1011, "Host send failed")
+          if (this.hostSocket === host) {
+            this.hostSocket = null
+          }
         }
       }
     }
@@ -184,7 +231,15 @@ export class SessionRelay {
   async webSocketClose(ws: WebSocket, code: number, reason: string, wasClean: boolean) {
     const tags = this.state.getTags(ws)
     if (tags.includes("host")) {
-      this.hostSocket = null
+      if (this.hostSocket === ws) {
+        this.hostSocket = null
+        // Explicitly disconnect viewers so UI does not hang
+        for (const viewer of this.viewerSockets) {
+          viewer.close(1011, "Host disconnected")
+        }
+        this.viewerSockets.clear()
+        this.viewerRate.clear()
+      }
     } else {
       this.viewerSockets.delete(ws)
       this.viewerRate.delete(ws)
@@ -194,7 +249,15 @@ export class SessionRelay {
   async webSocketError(ws: WebSocket, error: unknown) {
     const tags = this.state.getTags(ws)
     if (tags.includes("host")) {
-      this.hostSocket = null
+      if (this.hostSocket === ws) {
+        this.hostSocket = null
+        // Explicitly disconnect viewers so UI does not hang
+        for (const viewer of this.viewerSockets) {
+          viewer.close(1011, "Host error")
+        }
+        this.viewerSockets.clear()
+        this.viewerRate.clear()
+      }
     } else {
       this.viewerSockets.delete(ws)
       this.viewerRate.delete(ws)

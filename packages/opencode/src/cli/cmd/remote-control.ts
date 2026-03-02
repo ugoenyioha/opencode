@@ -46,6 +46,7 @@ const BLOCKED_HEADERS = new Set([
 ])
 
 type RemoteCommand = {
+  id: string
   method: string
   path: string
   headers: Record<string, string>
@@ -103,7 +104,10 @@ function parseHeaders(input: unknown) {
 }
 
 function allowedPath(path: string) {
-  return ALLOWED_PATH_PREFIXES.some((prefix) => path === prefix || path.startsWith(prefix))
+  return ALLOWED_PATH_PREFIXES.some((prefix) => {
+    const normalizedPrefix = prefix.endsWith("/") ? prefix.slice(0, -1) : prefix
+    return path === normalizedPrefix || path.startsWith(`${normalizedPrefix}/`)
+  })
 }
 
 function parseCommand(input: string): RemoteCommand {
@@ -112,11 +116,15 @@ function parseCommand(input: string): RemoteCommand {
     throw new Error("Invalid command payload")
   }
 
+  const id = (decoded as { id?: unknown }).id
   const method = (decoded as { method?: unknown }).method
   const path = (decoded as { path?: unknown }).path
   const headers = parseHeaders((decoded as { headers?: unknown }).headers)
   const body = (decoded as { body?: unknown }).body
 
+  if (typeof id !== "string") {
+    throw new Error("Missing request id")
+  }
   if (typeof method !== "string") {
     throw new Error("Missing method")
   }
@@ -134,7 +142,9 @@ function parseCommand(input: string): RemoteCommand {
   if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(path)) {
     throw new Error("Absolute paths are not allowed")
   }
-  if (!allowedPath(path)) {
+  const resolvedPath = new URL(path, "http://localhost")
+  const nextPath = resolvedPath.pathname + resolvedPath.search
+  if (!allowedPath(resolvedPath.pathname)) {
     throw new Error("Path not allowed")
   }
 
@@ -144,8 +154,9 @@ function parseCommand(input: string): RemoteCommand {
 
   const nextBody = body === undefined ? undefined : typeof body === "string" ? body : JSON.stringify(body)
   return {
+    id,
     method: nextMethod,
-    path,
+    path: nextPath,
     headers,
     body: nextBody,
   }
@@ -188,7 +199,14 @@ export const RemoteControlCommand = cmd({
 
     // 2. Start local OpenCode server (this binds the necessary routes and local API)
     // We bind it locally so that we can process SDK commands via the standard HTTP layer
-    const networkOpts = await resolveNetworkOptions({ port: args.port, host: "127.0.0.1" } as any)
+    const networkOpts = await resolveNetworkOptions({
+      port: args.port,
+      hostname: "127.0.0.1",
+      unix: undefined,
+      mdns: false,
+      "mdns-domain": "opencode.local",
+      cors: [],
+    })
     const server = await Server.listen(networkOpts)
     const localBaseUrl = `http://${server.hostname}:${server.port}`
 
@@ -297,12 +315,29 @@ export const RemoteControlCommand = cmd({
         if (command.body && (command.method === "POST" || command.method === "PUT" || command.method === "PATCH")) {
           fetchOpts.body = command.body
         }
-        await fetch(proxyUrl, fetchOpts).finally(() => clearTimeout(timeout))
 
-        // We do not need to send the response back via the WebSocket!
-        // The local server emits standard GlobalBus events for state changes, which we are
-        // already intercepting and forwarding via `localEventHandler` above.
-        // If the viewer needs synchronous responses for specific RPCs, we can add a reply mechanism later.
+        const proxyRes = await fetch(proxyUrl, fetchOpts).finally(() => clearTimeout(timeout))
+
+        // Read response body as text if possible
+        const resContentType = proxyRes.headers.get("content-type") || ""
+        let resBody: string | undefined
+        if (resContentType.includes("application/json") || resContentType.includes("text/")) {
+          resBody = await proxyRes.text().catch(() => undefined)
+        }
+
+        // Package the RPC response
+        const rpcPayload = {
+          type: "rpc_response",
+          id: command.id,
+          status: proxyRes.status,
+          headers: Object.fromEntries(proxyRes.headers.entries()),
+          body: resBody,
+        }
+
+        if (ws.readyState === WebSocket.OPEN) {
+          const encryptedRes = encrypt(JSON.stringify(rpcPayload), rawKey)
+          ws.send(encryptedRes)
+        }
       } catch (e) {
         if (e instanceof Error && /not allowed|Invalid|Missing|too large/i.test(e.message)) {
           ws.close(1008, "Invalid command")

@@ -37,61 +37,69 @@ async function decryptPayload(data: ArrayBuffer, key: CryptoKey): Promise<string
   return new TextDecoder().decode(decrypted)
 }
 
-export function createRemoteClient(config: RemoteClientConfig) {
-  // 1. Establish WebSocket connection to the Relay
+export function createRemoteFetch(config: RemoteClientConfig): typeof fetch {
   const wsUrl = new URL(`/relay/${config.sessionId}`, config.relayUrl)
   wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:"
   const protocols = ["oc-v1", `auth.${config.token}`]
 
   let ws: WebSocket | null = null
-  // Browser standard websocket API
   if (typeof window !== "undefined" && window.WebSocket) {
     ws = new WebSocket(wsUrl.toString(), protocols)
     ws.binaryType = "arraybuffer"
   } else {
-    // We are running in Node/Bun context (e.g. CLI attach command)
-    // We expect the consumer to provide a global WebSocket polyfill or we handle it gracefully
-    const WsCtor = (globalThis as any).WebSocket
-    if (WsCtor) {
-      ws = new WsCtor(wsUrl.toString(), protocols)
-      if (ws) ws.binaryType = "arraybuffer"
-    } else {
+    const wsCtor = (globalThis as { WebSocket?: typeof WebSocket }).WebSocket
+    if (!wsCtor) {
       throw new Error("No WebSocket constructor available in the global scope.")
     }
+    ws = new wsCtor(wsUrl.toString(), protocols)
+    ws.binaryType = "arraybuffer"
   }
 
-  // 2. Event emitter for SSE stream simulation
   type Listener = (event: MessageEvent) => void
   const listeners = new Set<Listener>()
 
-  if (ws) {
-    ws.onmessage = async (event: MessageEvent) => {
-      try {
-        if (!(event.data instanceof ArrayBuffer)) {
-          console.warn("Received non-binary data on remote WebSocket")
-          return
-        }
-        const decryptedStr = await decryptPayload(event.data, config.encryptionKey)
-        const payload = JSON.parse(decryptedStr)
+  // A map of pending RPC requests waiting for a response from the host
+  const pendingRequests = new Map<string, { resolve: (res: Response) => void; reject: (err: Error) => void }>()
 
-        // This simulates the SSE stream behavior that the OpenCode app expects
-        // It creates a mock MessageEvent with the decrypted data
-        const mockEvent = new MessageEvent("message", {
-          data: JSON.stringify(payload),
-        })
-
-        for (const listener of listeners) {
-          listener(mockEvent)
-        }
-      } catch (e) {
-        console.error("Failed to decrypt or process remote message", e)
+  ws.onmessage = async (event: MessageEvent) => {
+    try {
+      if (!(event.data instanceof ArrayBuffer)) {
+        console.warn("Received non-binary data on remote WebSocket")
+        return
       }
+      const decryptedStr = await decryptPayload(event.data, config.encryptionKey)
+      const payload = JSON.parse(decryptedStr)
+
+      // Handle RPC responses (standard HTTP proxy results)
+      if (payload.type === "rpc_response") {
+        const pending = pendingRequests.get(payload.id)
+        if (pending) {
+          pendingRequests.delete(payload.id)
+          pending.resolve(
+            new Response(payload.body, {
+              status: payload.status,
+              headers: payload.headers,
+            }),
+          )
+        }
+        return
+      }
+
+      // Handle standard SSE stream events from the global bus
+      const mockEvent = new MessageEvent("message", {
+        data: JSON.stringify(payload),
+      })
+
+      for (const listener of listeners) {
+        listener(mockEvent)
+      }
+    } catch (e) {
+      console.error("Failed to decrypt or process remote message", e)
     }
   }
 
-  // 3. Custom fetch implementation that routes requests over the WebSocket
-  const remoteFetch: any = async (req: Request) => {
-    // Intercept SSE /event connection requests
+  const remoteFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const req = input instanceof Request ? input : new Request(input, init)
     if (req.url.endsWith("/event")) {
       const mockStream = new ReadableStream({
         start(controller) {
@@ -101,7 +109,6 @@ export function createRemoteClient(config: RemoteClientConfig) {
           }
           listeners.add(streamListener)
 
-          // Provide a way to cleanup on abort
           req.signal?.addEventListener("abort", () => {
             listeners.delete(streamListener)
             controller.close()
@@ -118,48 +125,60 @@ export function createRemoteClient(config: RemoteClientConfig) {
       })
     }
 
-    // For standard API requests, we send them over the WebSocket as commands
-    return new Promise(async (resolve, reject) => {
+    return new Promise((resolve, reject) => {
       if (!ws || ws.readyState !== ws.OPEN) {
         return reject(new Error("WebSocket is not connected"))
       }
 
-      const urlObj = new URL(req.url)
-      let body = undefined
-      if (req.body) {
-        const reader = req.body.getReader()
-        const { value } = await reader.read()
-        if (value) body = new TextDecoder().decode(value)
-      }
+      const processRequest = async () => {
+        let body: string | undefined
+        if (req.body) {
+          const reader = req.body.getReader()
+          const { value } = await reader.read()
+          if (value) body = new TextDecoder().decode(value)
+        }
 
-      const command = {
-        method: req.method,
-        path: urlObj.pathname + urlObj.search,
-        body: body ? JSON.parse(body) : undefined,
-        headers: Object.fromEntries((req.headers as any).entries()),
-      }
+        const urlObj = new URL(req.url)
+        const id = crypto.randomUUID()
 
-      try {
+        const command = {
+          id,
+          method: req.method,
+          path: urlObj.pathname + urlObj.search,
+          body: body ? JSON.parse(body) : undefined,
+          headers: Object.fromEntries(req.headers.entries()),
+        }
+
         const encrypted = await encryptPayload(JSON.stringify(command), config.encryptionKey)
-        ws.send(encrypted)
+        ws!.send(encrypted)
 
-        // In this dumb-pipe RPC model, the remote host performs the action and emits the result
-        // as an SSE event via the message bus, so we don't strictly need to wait for a 1-to-1 HTTP response.
-        // We can return a generic 200 OK to unblock the caller.
-        resolve(
-          new Response(JSON.stringify({ status: "ok" }), {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          }),
-        )
-      } catch (e) {
-        reject(e)
+        // Wait up to 15 seconds for an RPC response
+        const timeout = setTimeout(() => {
+          pendingRequests.delete(id)
+          reject(new Error("Remote proxy request timed out"))
+        }, 15000)
+
+        pendingRequests.set(id, {
+          resolve: (res) => {
+            clearTimeout(timeout)
+            resolve(res)
+          },
+          reject: (err) => {
+            clearTimeout(timeout)
+            reject(err)
+          },
+        })
       }
-    })
-  }
 
-  const baseConfig = { ...config, fetch: remoteFetch }
-  const client = createClient(baseConfig)
+      processRequest().catch(reject)
+    })
+  }) as unknown as typeof fetch
+
+  return remoteFetch
+}
+
+export function createRemoteClient(config: RemoteClientConfig) {
+  const client = createClient({ ...config, fetch: createRemoteFetch(config) })
   return new OpencodeClient({ client })
 }
 
