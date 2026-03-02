@@ -34,16 +34,9 @@ export namespace DarwinSandbox {
       throw new Error("macOS sandbox is unavailable: missing 'sandbox-exec' binary")
     }
 
-    if (opts.network !== false) {
-      return childSpawn(opts.command[0], opts.command.slice(1), {
-        cwd: opts.workdir,
-        env: opts.env,
-        stdio: ["ignore", "pipe", "pipe"],
-        detached: process.platform !== "win32",
-      })
-    }
+    const profileString = profile(opts)
 
-    return childSpawn("sandbox-exec", ["-n", "no-network", "--", ...opts.command], {
+    return childSpawn("sandbox-exec", ["-p", profileString, "--", ...opts.command], {
       cwd: opts.workdir,
       env: opts.env,
       stdio: ["ignore", "pipe", "pipe"],
