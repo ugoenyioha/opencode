@@ -2427,6 +2427,10 @@ export type Config = {
      */
     mcp_timeout?: number
     /**
+     * Enable the experimental Remote Control feature (requires /remote)
+     */
+    remote_control?: boolean
+    /**
      * Maximum number of turns (LLM calls) per session before auto-stopping. Safety guard against infinite loops.
      */
     max_turns?: number

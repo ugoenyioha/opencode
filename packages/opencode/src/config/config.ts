@@ -1513,6 +1513,10 @@ export namespace Config {
             .positive()
             .optional()
             .describe("Timeout in milliseconds for model context protocol (MCP) requests"),
+          remote_control: z
+            .boolean()
+            .optional()
+            .describe("Enable the experimental Remote Control feature (requires /remote)"),
           max_turns: z
             .number()
             .int()

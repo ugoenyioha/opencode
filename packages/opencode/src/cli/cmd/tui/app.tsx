@@ -707,16 +707,55 @@ function App() {
       },
       category: "System",
     },
-    {
-      title: "Exit the app",
-      value: "app.exit",
-      slash: {
-        name: "exit",
-        aliases: ["quit", "q"],
-      },
-      onSelect: () => exit(),
-      category: "System",
-    },
+    ...(sync.data.config.experimental?.remote_control
+      ? [
+          {
+            title: "Remote Control",
+            value: "remote.control",
+            slash: {
+              name: "remote",
+              aliases: ["share-remote"],
+            },
+            onSelect: async (dialog: any) => {
+              let relayUrl = process.env.OPENCODE_RELAY_URL
+              if (!relayUrl) {
+                const result = await DialogPrompt.show(dialog, "Custom Relay URL", {
+                  placeholder: "https://your-relay.workers.dev",
+                  description: () => {
+                    const { theme } = useTheme()
+                    return (
+                      <box flexDirection="column" gap={1}>
+                        <text fg={theme.textMuted}>No OPENCODE_RELAY_URL environment variable found.</text>
+                        <text fg={theme.text}>
+                          To securely share this session over the internet, you must deploy your own free Cloudflare
+                          Worker Relay.{"\n"}
+                          Learn how:{" "}
+                          <span style={{ fg: theme.primary }}>
+                            https://github.com/usable-apps/opencode-ng/tree/dev/packages/relay
+                          </span>
+                        </text>
+                        <text fg={theme.textMuted}>
+                          Enter your custom Cloudflare Relay URL below, or leave empty to use the local loopback relay
+                          (for testing).
+                        </text>
+                      </box>
+                    )
+                  },
+                })
+
+                if (result === null) {
+                  // Cancelled
+                  return
+                }
+                relayUrl = result.trim() || "http://127.0.0.1:8787"
+              }
+
+              dialog.replace(() => <DialogRemoteControl overrideRelayUrl={relayUrl} />)
+            },
+            category: "System",
+          },
+        ]
+      : []),
     {
       title: "Toggle debug panel",
       category: "System",
