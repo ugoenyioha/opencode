@@ -10,3 +10,14 @@ env.JWT_SECRET ("(hidden)")           Environment Variable      local
 
 ⎔ Starting local server...
 [wrangler:info] Ready on http://localhost:8788
+[wrangler:info] HEAD /api/session/create 404 Not Found (2ms)
+[wrangler:info] HEAD /health 200 OK (1ms)
+[wrangler:info] POST /api/session/create 200 OK (3ms)
+[wrangler:info] GET /relay/212bdcbc-1ec8-4135-848d-89fa96e2f840 101 Switching Protocols (6ms)
+[wrangler:info] POST /api/session/join 200 OK (1ms)
+[wrangler:info] POST /api/session/create 200 OK (1ms)
+[wrangler:info] GET /relay/a5d90a1a-fd9d-4fc9-a5b8-cc6ef62ee5fe 101 Switching Protocols (4ms)
+[wrangler:info] POST /api/session/create 200 OK (1ms)
+[wrangler:info] GET /relay/9c5ba562-572d-4662-921e-40162710073a 101 Switching Protocols (3ms)
+[wrangler:info] POST /api/session/create 200 OK (2ms)
+[wrangler:info] GET /relay/a47c21f6-fa23-45da-8f80-7f76138700a0 101 Switching Protocols (6ms)
