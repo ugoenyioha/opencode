@@ -386,7 +386,7 @@ export namespace Server {
             }
           } = {}
           const trustProxyHeaders = ["1", "true", "yes", "on"].includes(
-            (process.env.OPENCODE_TRUST_PROXY_HEADERS ?? "").trim().toLowerCase(),
+            (Env.get("OPENCODE_TRUST_PROXY_HEADERS") ?? "").trim().toLowerCase(),
           )
           const forwarded = trustProxyHeaders ? c.req.header("x-forwarded-for") : undefined
           const clientIP = trustProxyHeaders
