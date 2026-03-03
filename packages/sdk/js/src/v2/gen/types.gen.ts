@@ -5888,6 +5888,47 @@ export type TuiControlResponseResponses = {
 
 export type TuiControlResponseResponse = TuiControlResponseResponses[keyof TuiControlResponseResponses]
 
+export type InstanceRemoteStartData = {
+  body?: {
+    relay: string
+    viewer: string
+  }
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/instance/remote/start"
+}
+
+export type InstanceRemoteStartResponses = {
+  /**
+   * Remote control started
+   */
+  200: {
+    url: string
+  }
+}
+
+export type InstanceRemoteStartResponse = InstanceRemoteStartResponses[keyof InstanceRemoteStartResponses]
+
+export type InstanceRemoteStopData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/instance/remote/stop"
+}
+
+export type InstanceRemoteStopResponses = {
+  /**
+   * Remote control stopped
+   */
+  200: boolean
+}
+
+export type InstanceRemoteStopResponse = InstanceRemoteStopResponses[keyof InstanceRemoteStopResponses]
+
 export type InstanceDisposeData = {
   body?: never
   path?: never

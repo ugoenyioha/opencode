@@ -55,6 +55,10 @@ import { MemoryRateLimitStore, SqliteRateLimitStore, type RateLimitStore } from 
 // @ts-ignore This global is needed to prevent ai-sdk from logging warnings to stdout https://github.com/vercel/ai/blob/2dc67e0ef538307f21368db32d5a12345d98831b/packages/ai/src/logger/log-warnings.ts#L85
 globalThis.AI_SDK_LOG_WARNINGS = false
 
+import { RemoteHost } from "@/remote/host"
+
+let activeRemoteHost: RemoteHost | null = null
+
 export namespace Server {
   const log = Log.create({ service: "server" })
 
@@ -442,6 +446,65 @@ export namespace Server {
         .route("/mcp", McpRoutes())
         .route("/team", TeamRoutes())
         .route("/tui", TuiRoutes())
+        .post(
+          "/instance/remote/start",
+          describeRoute({
+            summary: "Start remote control",
+            description: "Starts a secure remote control session.",
+            operationId: "instance.remote.start",
+            responses: {
+              200: {
+                description: "Remote control started",
+                content: {
+                  "application/json": {
+                    schema: resolver(z.object({ url: z.string() })),
+                  },
+                },
+              },
+            },
+          }),
+          validator("json", z.object({ relay: z.string(), viewer: z.string() })),
+          async (c) => {
+            if (activeRemoteHost) {
+              await activeRemoteHost.stop()
+            }
+            const { relay, viewer } = c.req.valid("json")
+            activeRemoteHost = new RemoteHost({
+              relay,
+              viewer,
+              onDisconnect: () => {
+                activeRemoteHost = null
+              },
+            })
+            const url = await activeRemoteHost.start()
+            return c.json({ url })
+          },
+        )
+        .post(
+          "/instance/remote/stop",
+          describeRoute({
+            summary: "Stop remote control",
+            description: "Stops the active remote control session.",
+            operationId: "instance.remote.stop",
+            responses: {
+              200: {
+                description: "Remote control stopped",
+                content: {
+                  "application/json": {
+                    schema: resolver(z.boolean()),
+                  },
+                },
+              },
+            },
+          }),
+          async (c) => {
+            if (activeRemoteHost) {
+              await activeRemoteHost.stop()
+              activeRemoteHost = null
+            }
+            return c.json(true)
+          },
+        )
         .post(
           "/instance/dispose",
           describeRoute({

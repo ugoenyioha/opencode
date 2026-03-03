@@ -4,23 +4,23 @@ import { useTheme } from "@tui/context/theme"
 import { useDialog } from "./dialog"
 import { useKeyboard } from "@opentui/solid"
 import { useKeybind } from "@tui/context/keybind"
-import { Process } from "../../../../util/process"
 import { Clipboard } from "../util/clipboard"
-import type { ChildProcess } from "child_process"
 import { useToast } from "./toast"
+import { useSDK } from "../context/sdk"
 
 // Global state for the TUI session so it persists if the dialog is closed and reopened
-let activeRemoteProcess: ReturnType<typeof Process.spawn> | null = null
 let activeViewerUrl: string | null = null
+let isRemoteActive = false
 
 export function DialogRemoteControl(props: { overrideRelayUrl?: string }) {
   const dialog = useDialog()
   const { theme } = useTheme()
   const keybind = useKeybind()
   const toast = useToast()
+  const sdk = useSDK()
 
   const [url, setUrl] = createSignal<string | null>(activeViewerUrl)
-  const [loading, setLoading] = createSignal(!activeViewerUrl && !activeRemoteProcess)
+  const [loading, setLoading] = createSignal(!activeViewerUrl && !isRemoteActive)
 
   useKeyboard((evt) => {
     if (evt.name === "escape") {
@@ -33,48 +33,37 @@ export function DialogRemoteControl(props: { overrideRelayUrl?: string }) {
   })
 
   onMount(() => {
-    if (activeViewerUrl || activeRemoteProcess) return
+    if (activeViewerUrl || isRemoteActive) return
 
     setLoading(true)
+    isRemoteActive = true
 
-    // Run the command using current opencode binary
-    // Using process.argv to reconstruct the current execution context
-    const isLocal = process.env.OPENCODE_BIN === "true" || process.argv[1]?.endsWith("src/index.ts")
-    const baseArgs = isLocal ? ["run", process.argv[1], "remote-control"] : ["remote-control"]
-    const args = props.overrideRelayUrl ? [...baseArgs, "--relay", props.overrideRelayUrl] : baseArgs
-    const bin = isLocal ? "bun" : process.argv[0]
+    const relay = props.overrideRelayUrl || process.env.OPENCODE_RELAY_URL || "http://127.0.0.1:8787"
+    const viewer = process.env.OPENCODE_VIEWER_URL || "http://localhost:5173"
 
-    const proc = Process.spawn([bin, ...args], {
-      stdout: "pipe",
-      stderr: "pipe",
-    })
-
-    activeRemoteProcess = proc
-
-    proc.stdout?.on("data", (data: Buffer) => {
-      const text = data.toString()
-      // Extract URL from output: http://.../remote?relay=...#key=...
-      const match = text.match(/(https?:\/\/[^\s]+remote\?relay=[^\s]+#key=[^\s]+)/)
-      if (match) {
-        activeViewerUrl = match[1]
-        setUrl(match[1])
+    sdk.client.instance.remote
+      .start({ relay, viewer })
+      .then((generatedUrl: any) => {
+        if (!generatedUrl.data) throw new Error("No URL returned")
+        activeViewerUrl = generatedUrl.data.url
+        setUrl(generatedUrl.data.url)
         setLoading(false)
-      }
-    })
-
-    proc.exited.finally(() => {
-      activeRemoteProcess = null
-      activeViewerUrl = null
-      setUrl(null)
-      setLoading(false)
-    })
+      })
+      .catch((err: any) => {
+        toast.show({ message: "Failed to start remote session", variant: "error" })
+        isRemoteActive = false
+        activeViewerUrl = null
+        setUrl(null)
+        setLoading(false)
+      })
   })
 
   onCleanup(() => {
     // If the dialog closes but process is still starting up without a URL, kill it
-    if (activeRemoteProcess && !activeViewerUrl) {
-      activeRemoteProcess.kill("SIGINT")
-      activeRemoteProcess = null
+    if (isRemoteActive && !activeViewerUrl) {
+      sdk.client.instance.remote.stop().catch(() => {})
+      isRemoteActive = false
+      activeViewerUrl = null
     }
   })
 
@@ -88,9 +77,9 @@ export function DialogRemoteControl(props: { overrideRelayUrl?: string }) {
   }
 
   const handleStop = () => {
-    if (activeRemoteProcess) {
-      activeRemoteProcess.kill("SIGINT")
-      activeRemoteProcess = null
+    if (isRemoteActive) {
+      sdk.client.instance.remote.stop().catch(() => {})
+      isRemoteActive = false
       activeViewerUrl = null
       setUrl(null)
     }

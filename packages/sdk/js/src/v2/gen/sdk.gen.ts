@@ -47,6 +47,8 @@ import type {
   GlobalEventResponses,
   GlobalHealthResponses,
   InstanceDisposeResponses,
+  InstanceRemoteStartResponses,
+  InstanceRemoteStopResponses,
   LspStatusResponses,
   McpAddErrors,
   McpAddResponses,
@@ -3444,6 +3446,64 @@ export class Tui extends HeyApiClient {
   }
 }
 
+export class Remote extends HeyApiClient {
+  /**
+   * Start remote control
+   *
+   * Starts a secure remote control session.
+   */
+  public start<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      relay?: string
+      viewer?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "body", key: "relay" },
+            { in: "body", key: "viewer" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<InstanceRemoteStartResponses, unknown, ThrowOnError>({
+      url: "/instance/remote/start",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Stop remote control
+   *
+   * Stops the active remote control session.
+   */
+  public stop<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "directory" }] }])
+    return (options?.client ?? this.client).post<InstanceRemoteStopResponses, unknown, ThrowOnError>({
+      url: "/instance/remote/stop",
+      ...options,
+      ...params,
+    })
+  }
+}
+
 export class Instance extends HeyApiClient {
   /**
    * Dispose instance
@@ -3462,6 +3522,11 @@ export class Instance extends HeyApiClient {
       ...options,
       ...params,
     })
+  }
+
+  private _remote?: Remote
+  get remote(): Remote {
+    return (this._remote ??= new Remote({ client: this.client }))
   }
 }
 
