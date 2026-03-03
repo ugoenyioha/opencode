@@ -39,7 +39,17 @@
 
 [![OpenCode Terminal UI](packages/web/src/assets/lander/screenshot.png)](https://opencode.ai)
 
+
+### Advanced Features & Security
+
+- **Tiered Sandboxing:** Opt-in to hardware-level or OS-level process isolation (e.g., `bwrap`, `darwin`, `gvisor`, `firecracker`) for safe tool execution.
+- **Worktree & Network Isolation:** Prevent agents from escaping specified Git worktrees or exfiltrating data via restricted HTTP hooks.
+- **Secure Remote Control:** Connect to your local OpenCode agent from a browser via an E2E-encrypted Cloudflare Relay.
+- **Agent-to-Agent (A2A) Routing:** Compose workflows using delegated authz plugins and SPIFFE workload identity.
+
 ---
+
+
 
 ### Installasjon
 

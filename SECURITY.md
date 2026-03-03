@@ -12,11 +12,32 @@ submit one that will be an automatic ban from the project.
 
 OpenCode is an AI-powered coding assistant that runs locally on your machine. It provides an agent system with access to powerful tools including shell execution, file operations, and web access.
 
-### No Sandbox
+### Execution Sandboxing
 
-OpenCode does **not** sandbox the agent. The permission system exists as a UX feature to help users stay aware of what actions the agent is taking - it prompts for confirmation before executing commands, writing files, etc. However, it is not designed to provide security isolation.
+OpenCode provides an optional, tiered sandboxing system to isolate agents and tool execution:
 
-If you need true isolation, run OpenCode inside a Docker container or VM.
+- **bwrap**: Default on Linux. Uses unprivileged user namespaces.
+- **darwin**: Default on macOS. Uses Apple Seatbelt (`sandbox-exec`).
+- **gvisor**: Stronger kernel isolation for Linux.
+- **firecracker**: MicroVM isolation for full multi-tenant environments.
+- **wasm**: Zero-trust execution for WebAssembly tools.
+
+By default, the agent runs with permissions configured in the UI. If you require strict system isolation, you **must** configure a sandbox tier via the CLI flag (e.g., `--sandbox bwrap`) or run OpenCode inside a Docker container.
+
+### Worktree and Network Isolation
+
+To restrict an agent's lateral movement and data exfiltration:
+
+- **Agent Worktree Isolation:** Confines the agent to a specific git worktree directory.
+- **HTTP Hook Network Isolation:** Egress traffic from tools can be blocked or routed through specific proxies.
+
+### Agent-to-Agent (A2A) Security
+
+For distributed agent workflows, OpenCode enforces security via:
+
+- **SPIFFE Workload Identity:** A2A communication uses SPIFFE JWT-SVID for rigorous identity verification (`X-Opencode-Workload`).
+- **Delegated Plugin Authz:** Authorization decisions for A2A endpoints can be delegated to external plugins with strict fail-closed timeouts.
+- **Separated API Keys:** The `OPENCODE_A2A_API_KEY` is explicitly separate from external LLM tool keys.
 
 ### Server Mode
 

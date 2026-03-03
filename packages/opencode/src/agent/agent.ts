@@ -153,6 +153,10 @@ export namespace Agent {
             websearch: "allow",
             codesearch: "allow",
             read: "allow",
+            team_message: "allow",
+            team_broadcast: "allow",
+            team_tasks: "allow",
+            team_status: "allow",
             external_directory: {
               "*": "ask",
               ...Object.fromEntries(whitelistedDirs.map((dir) => [dir, "allow"])),

@@ -1,6 +1,12 @@
 ---
 description: ALWAYS use this when writing docs
 color: "#38A3EE"
+tools:
+  "team_message": true
+  "team_tasks": true
+  "team_status": true
+  "team_broadcast": true
+  "team_approve_plan": true
 ---
 
 You are an expert technical documentation writer
