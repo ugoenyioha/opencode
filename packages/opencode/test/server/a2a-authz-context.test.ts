@@ -10,6 +10,7 @@ import { Env } from "../../src/env"
 import { Plugin } from "../../src/plugin"
 import { Log } from "../../src/util/log"
 import * as Spiffe from "../../src/server/spiffe"
+import * as CompatAuth from "../../src/server/compat/auth"
 
 Log.init({ print: false })
 
@@ -270,6 +271,100 @@ describe("a2a plugin authz context", () => {
           delete process.env["OPENCODE_A2A_TRUST_WORKLOAD_HEADER"]
           delete process.env["OPENCODE_SPIFFE_AUDIENCE"]
           delete process.env["OPENCODE_SPIFFE_ALLOWED_IDS"]
+        }
+      },
+    })
+  })
+
+  test("accepts trusted workload header JWT when allowlisted", async () => {
+    await using tmp = await projectWithPluginAuthz()
+    await Instance.disposeAll()
+    await Instance.provide({
+      directory: tmp.path,
+      init: async () => {
+        Env.set("ANTHROPIC_API_KEY", "test-key")
+        process.env["OPENCODE_A2A_TRUST_WORKLOAD_HEADER"] = "true"
+        process.env["OPENCODE_WORKLOAD_JWT_ALLOWED_SUBS"] = "workload-runner-1"
+        delete process.env["OPENCODE_SPIFFE_AUDIENCE"]
+        delete process.env["OPENCODE_SPIFFE_ALLOWED_IDS"]
+      },
+      fn: async () => {
+        let captured: any
+        const base = Plugin.trigger.bind(Plugin)
+        const jwtSpy = spyOn(CompatAuth, "verifyBearerForStrategy").mockResolvedValue({ sub: "workload-runner-1" } as any)
+        const triggerSpy = spyOn(Plugin, "trigger").mockImplementation(async (name: any, input: any, output: any) => {
+          if (name === "a2a.authz") {
+            captured = input
+            output.decision = { allow: true }
+            return output
+          }
+          return base(name, input, output)
+        })
+        try {
+          const app = Server.App()
+          const response = await app.request("/a2a/neo-sidecar/tasks", {
+            method: "GET",
+            headers: {
+              "x-opencode-directory": tmp.path,
+              "x-opencode-workload": "Bearer trusted-workload-jwt",
+              ...AUTH_HEADER,
+            },
+          })
+          expect(response.status).toBe(200)
+          expect(captured.workload_principal).toBe("workload-runner-1")
+          expect(jwtSpy).toHaveBeenCalledWith("jwt", "trusted-workload-jwt", expect.any(Object))
+        } finally {
+          jwtSpy.mockRestore()
+          triggerSpy.mockRestore()
+          delete process.env["OPENCODE_A2A_TRUST_WORKLOAD_HEADER"]
+          delete process.env["OPENCODE_WORKLOAD_JWT_ALLOWED_SUBS"]
+        }
+      },
+    })
+  })
+
+  test("fails closed when trusted workload header JWT sub is not allowlisted", async () => {
+    await using tmp = await projectWithPluginAuthz()
+    await Instance.disposeAll()
+    await Instance.provide({
+      directory: tmp.path,
+      init: async () => {
+        Env.set("ANTHROPIC_API_KEY", "test-key")
+        process.env["OPENCODE_A2A_TRUST_WORKLOAD_HEADER"] = "true"
+        process.env["OPENCODE_WORKLOAD_JWT_ALLOWED_SUBS"] = "workload-runner-allow"
+        delete process.env["OPENCODE_SPIFFE_AUDIENCE"]
+        delete process.env["OPENCODE_SPIFFE_ALLOWED_IDS"]
+      },
+      fn: async () => {
+        let captured: any
+        const base = Plugin.trigger.bind(Plugin)
+        const jwtSpy = spyOn(CompatAuth, "verifyBearerForStrategy").mockResolvedValue({ sub: "workload-runner-deny" } as any)
+        const triggerSpy = spyOn(Plugin, "trigger").mockImplementation(async (name: any, input: any, output: any) => {
+          if (name === "a2a.authz") {
+            captured = input
+            output.decision = { allow: true }
+            return output
+          }
+          return base(name, input, output)
+        })
+        try {
+          const app = Server.App()
+          const response = await app.request("/a2a/neo-sidecar/tasks", {
+            method: "GET",
+            headers: {
+              "x-opencode-directory": tmp.path,
+              "x-opencode-workload": "Bearer trusted-workload-jwt",
+              ...AUTH_HEADER,
+            },
+          })
+          expect(response.status).toBe(200)
+          expect(captured.workload_principal).toBeUndefined()
+          expect(jwtSpy).toHaveBeenCalled()
+        } finally {
+          jwtSpy.mockRestore()
+          triggerSpy.mockRestore()
+          delete process.env["OPENCODE_A2A_TRUST_WORKLOAD_HEADER"]
+          delete process.env["OPENCODE_WORKLOAD_JWT_ALLOWED_SUBS"]
         }
       },
     })
