@@ -1038,10 +1038,21 @@ export const A2APlugin: Plugin = async () => {
           })
           return undefined
         }
+        const workloadIssuer = process.env["OPENCODE_WORKLOAD_JWT_ISSUER"]?.trim() || undefined
+        const workloadAudienceRaw = process.env["OPENCODE_WORKLOAD_JWT_AUDIENCE"]
+        const workloadAudience = workloadAudienceRaw
+          ?.split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
         const verified = await verifyBearerForStrategy("jwt", token, {
           surface: "a2a",
           route: `a2a.${agentId}` as any,
           source: "centralized",
+        }, {
+          jwt: {
+            issuer: workloadIssuer,
+            audience: workloadAudience && workloadAudience.length > 0 ? workloadAudience : null,
+          },
         })
         if (typeof verified !== "object" || !verified?.sub) {
           log.warn("trusted workload header token failed JWT verification", {

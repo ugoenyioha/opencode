@@ -96,6 +96,11 @@ export type VerifiedToken = {
   sub?: string
 }
 
+type JWTVerifyOptions = {
+  issuer?: string
+  audience?: string | string[] | null
+}
+
 type IntrospectionResponse = {
   active?: boolean
   sub?: string
@@ -162,32 +167,6 @@ function hasRequiredAnyScope(required: string[], granted: string[]) {
   if (!granted.length) return false
   const grantedSet = new Set(granted)
   return required.some((scope) => grantedSet.has(scope))
-}
-
-function claimChecks(payload: JWTPayload) {
-  const now = Math.floor(Date.now() / 1000)
-  const skew = Number(Env.get("OPENCODE_COMPAT_JWT_CLOCK_SKEW_SECONDS")) || JWT_CLOCK_SKEW_SECONDS
-  const exp = payload.exp
-  if (typeof exp === "number" && now >= exp + skew) return false
-  const nbf = payload.nbf
-  if (typeof nbf === "number" && now < nbf - skew) return false
-
-  const issuer = Env.get("OPENCODE_COMPAT_JWT_ISSUER")
-  if (issuer && payload.iss !== issuer) return false
-
-  const audience = Env.get("OPENCODE_COMPAT_JWT_AUDIENCE")
-  if (audience) {
-    const aud = payload.aud
-    if (typeof aud === "string") {
-      if (aud !== audience) return false
-    } else if (Array.isArray(aud)) {
-      if (!aud.includes(audience)) return false
-    } else {
-      return false
-    }
-  }
-
-  return true
 }
 
 function claimChecksWithExpected(
@@ -270,10 +249,23 @@ async function verifyRS256Signature(parsed: ParsedJWT, jwksURL: string, context:
   }
 }
 
-async function verifyRS256JWT(parsed: ParsedJWT, jwksURL: string, context: AuthObserveContext): Promise<VerifiedToken | false> {
+async function verifyRS256JWT(
+  parsed: ParsedJWT,
+  jwksURL: string,
+  context: AuthObserveContext,
+  options?: JWTVerifyOptions,
+): Promise<VerifiedToken | false> {
   const signatureOk = await verifyRS256Signature(parsed, jwksURL, context)
   if (!signatureOk) return false
-  if (!claimChecks(parsed.payload)) return false
+  const issuer = options?.issuer ?? Env.get("OPENCODE_COMPAT_JWT_ISSUER")
+  const audience =
+    options?.audience === null
+      ? undefined
+      : options?.audience ?? (() => {
+          const values = parseList(Env.get("OPENCODE_COMPAT_JWT_AUDIENCE"))
+          return values.length ? values : undefined
+        })()
+  if (!claimChecksWithExpected(parsed.payload, issuer, audience)) return false
   return { sub: parsed.payload.sub }
 }
 
@@ -807,7 +799,7 @@ async function verifyIntrospectionToken(token: string, context: AuthObserveConte
   }
 }
 
-async function verifyJWT(token: string, context: AuthObserveContext): Promise<VerifiedToken | false> {
+async function verifyJWT(token: string, context: AuthObserveContext, options?: JWTVerifyOptions): Promise<VerifiedToken | false> {
   const parsed = parseJWT(token)
   if (!parsed) return false
   if (parsed.header.alg === "none") return false
@@ -818,7 +810,7 @@ async function verifyJWT(token: string, context: AuthObserveContext): Promise<Ve
     if (!jwksURL) return false
     const validatedJWKSURL = enforceAuthURLPolicy(jwksURL)
     if (!validatedJWKSURL) return false
-    return verifyRS256JWT(parsed, validatedJWKSURL.toString(), context)
+    return verifyRS256JWT(parsed, validatedJWKSURL.toString(), context, options)
   }
   return false
 }
@@ -827,9 +819,12 @@ export async function verifyBearerForStrategy(
   strategy: StrictBearerStrategy,
   token: string,
   context: AuthObserveContext = { surface: "server", route: "other", source: "centralized" },
+  options?: {
+    jwt?: JWTVerifyOptions
+  },
 ): Promise<VerifiedToken | false> {
   try {
-    if (strategy === "jwt") return verifyJWT(token, context)
+    if (strategy === "jwt") return verifyJWT(token, context, options?.jwt)
     if (strategy === "oidc") return verifyOIDCJWT(token, context)
     return verifyIntrospectionToken(token, context)
   } catch {
