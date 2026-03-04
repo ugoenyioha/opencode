@@ -231,6 +231,78 @@ describe("compat core routes", () => {
     }
   })
 
+  test("openai accepts valid RS256 bearer jwt when JWT audience env is comma-separated", async () => {
+    await using tmp = await project({
+      server: {
+        compat: {
+          openai: {
+            enabled: true,
+          },
+        },
+      },
+    })
+    await Instance.disposeAll()
+    const { privateKey, publicKey } = generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+      publicKeyEncoding: { format: "pem", type: "spki" },
+      privateKeyEncoding: { format: "pem", type: "pkcs8" },
+    })
+    const kid = "kid-aud-list"
+    const jwk = createPublicKey(publicKey).export({ format: "jwk" }) as Record<string, unknown>
+    const server = createServer((req, res) => {
+      if (req.url !== "/.well-known/jwks.json") {
+        res.statusCode = 404
+        res.end()
+        return
+      }
+      res.setHeader("content-type", "application/json")
+      res.end(JSON.stringify({ keys: [{ ...jwk, use: "sig", alg: "RS256", kid }] }))
+    })
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()))
+    try {
+      const address = server.address()
+      if (!address || typeof address === "string") throw new Error("failed to start jwks server")
+      const jwksUrl = `http://127.0.0.1:${address.port}/.well-known/jwks.json`
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const prevJwks = process.env.OPENCODE_COMPAT_JWT_JWKS_URL
+          const prevIssuer = process.env.OPENCODE_COMPAT_JWT_ISSUER
+          const prevAudience = process.env.OPENCODE_COMPAT_JWT_AUDIENCE
+          try {
+            Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
+            Env.set("OPENCODE_COMPAT_JWT_JWKS_URL", jwksUrl)
+            const token = signRS256(
+              { exp: Math.floor(Date.now() / 1000) + 300, iss: "issuer-rs", aud: "aud-rs-2" },
+              privateKey,
+              kid,
+            )
+            Env.set("OPENCODE_COMPAT_JWT_ISSUER", "issuer-rs")
+            Env.set("OPENCODE_COMPAT_JWT_AUDIENCE", "aud-rs-1, aud-rs-2")
+            const app = Server.App()
+            const response = await app.request("/v1/models", {
+              headers: {
+                authorization: `Bearer ${token}`,
+                "x-opencode-directory": tmp.path,
+              },
+            })
+            expect(response.status).toBe(200)
+          } finally {
+            if (prevJwks === undefined) delete process.env.OPENCODE_COMPAT_JWT_JWKS_URL
+            else process.env.OPENCODE_COMPAT_JWT_JWKS_URL = prevJwks
+            if (prevIssuer === undefined) delete process.env.OPENCODE_COMPAT_JWT_ISSUER
+            else process.env.OPENCODE_COMPAT_JWT_ISSUER = prevIssuer
+            if (prevAudience === undefined) delete process.env.OPENCODE_COMPAT_JWT_AUDIENCE
+            else process.env.OPENCODE_COMPAT_JWT_AUDIENCE = prevAudience
+          }
+        },
+      })
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())))
+    }
+  })
+
   test("openai fails closed when bearer is invalid even with valid x-api-key", async () => {
     await using tmp = await project({
       server: {

@@ -1751,7 +1751,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
    * Does not match when preceded by word characters or backticks (to avoid email addresses and quoted references)
    */
 
-  export async function command(input: CommandInput) {
+  export async function command(value: CommandInput) {
+    const input = CommandInput.parse(value)
     log.info("command", input)
     const command = await Command.get(input.command)
     const agentName = command.agent ?? input.agent ?? (await Agent.defaultAgent())
