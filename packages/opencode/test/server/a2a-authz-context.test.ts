@@ -160,11 +160,9 @@ describe("a2a plugin authz context", () => {
           })
           expect(response.status).toBe(200)
           expect(captured.workload_principal).toBe("spiffe://trust.domain/ns/default/sa/caller")
-          expect(spiffeSpy).toHaveBeenCalledWith(
-            "trusted-workload-jwt-svid",
-            "test-audience",
-            ["spiffe://trust.domain/ns/default/sa/caller"],
-          )
+          expect(spiffeSpy).toHaveBeenCalledWith("trusted-workload-jwt-svid", "test-audience", [
+            "spiffe://trust.domain/ns/default/sa/caller",
+          ])
           expect(captured.headers["x-opencode-workload"]).toBe("[redacted]")
         } finally {
           spiffeSpy.mockRestore()
@@ -212,11 +210,9 @@ describe("a2a plugin authz context", () => {
           })
           expect(response.status).toBe(200)
           expect(captured.workload_principal).toBeUndefined()
-          expect(spiffeSpy).toHaveBeenCalledWith(
-            "invalid-workload-token",
-            "test-audience",
-            ["spiffe://trust.domain/ns/default/sa/caller"],
-          )
+          expect(spiffeSpy).toHaveBeenCalledWith("invalid-workload-token", "test-audience", [
+            "spiffe://trust.domain/ns/default/sa/caller",
+          ])
           expect(captured.headers["x-opencode-workload"]).toBe("[redacted]")
         } finally {
           spiffeSpy.mockRestore()
@@ -291,7 +287,9 @@ describe("a2a plugin authz context", () => {
       fn: async () => {
         let captured: any
         const base = Plugin.trigger.bind(Plugin)
-        const jwtSpy = spyOn(CompatAuth, "verifyBearerForStrategy").mockResolvedValue({ sub: "workload-runner-1" } as any)
+        const jwtSpy = spyOn(CompatAuth, "verifyBearerForStrategy").mockResolvedValue({
+          sub: "workload-runner-1",
+        } as any)
         const triggerSpy = spyOn(Plugin, "trigger").mockImplementation(async (name: any, input: any, output: any) => {
           if (name === "a2a.authz") {
             captured = input
@@ -312,7 +310,7 @@ describe("a2a plugin authz context", () => {
           })
           expect(response.status).toBe(200)
           expect(captured.workload_principal).toBe("workload-runner-1")
-          expect(jwtSpy).toHaveBeenCalledWith("jwt", "trusted-workload-jwt", expect.any(Object))
+          expect(jwtSpy).toHaveBeenCalledWith("jwt", "trusted-workload-jwt", expect.any(Object), expect.any(Object))
         } finally {
           jwtSpy.mockRestore()
           triggerSpy.mockRestore()
@@ -338,7 +336,9 @@ describe("a2a plugin authz context", () => {
       fn: async () => {
         let captured: any
         const base = Plugin.trigger.bind(Plugin)
-        const jwtSpy = spyOn(CompatAuth, "verifyBearerForStrategy").mockResolvedValue({ sub: "workload-runner-deny" } as any)
+        const jwtSpy = spyOn(CompatAuth, "verifyBearerForStrategy").mockResolvedValue({
+          sub: "workload-runner-deny",
+        } as any)
         const triggerSpy = spyOn(Plugin, "trigger").mockImplementation(async (name: any, input: any, output: any) => {
           if (name === "a2a.authz") {
             captured = input
