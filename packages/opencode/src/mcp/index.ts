@@ -19,6 +19,7 @@ import { withTimeout } from "@/util/timeout"
 import { McpOAuthProvider } from "./oauth-provider"
 import { McpOAuthCallback } from "./oauth-callback"
 import { McpAuth } from "./auth"
+import { scrubEnv } from "../util/env"
 import { BusEvent } from "../bus/bus-event"
 import { Bus } from "@/bus"
 import { TuiEvent } from "@/cli/cmd/tui/event"
@@ -414,7 +415,7 @@ export namespace MCP {
         args,
         cwd,
         env: {
-          ...process.env,
+          ...scrubEnv(process.env),
           ...(cmd === "opencode" ? { BUN_BE_BUN: "1" } : {}),
           ...mcp.environment,
         },
