@@ -758,7 +758,7 @@ test("resolves scoped npm plugins in config", async () => {
 })
 
 test("merges plugin arrays from global and local configs", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       // Create a nested project structure with local .opencode config
       const projectDir = path.join(dir, "project")
@@ -836,7 +836,7 @@ Helper subagent prompt`,
 })
 
 test("merges instructions arrays from global and local configs", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       const projectDir = path.join(dir, "project")
       const opencodeDir = path.join(projectDir, ".opencode")
@@ -875,7 +875,7 @@ test("merges instructions arrays from global and local configs", async () => {
 })
 
 test("deduplicates duplicate instructions from global and local configs", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       const projectDir = path.join(dir, "project")
       const opencodeDir = path.join(projectDir, ".opencode")
@@ -917,7 +917,7 @@ test("deduplicates duplicate instructions from global and local configs", async 
 })
 
 test("deduplicates duplicate plugins from global and local configs", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       // Create a nested project structure with local .opencode config
       const projectDir = path.join(dir, "project")

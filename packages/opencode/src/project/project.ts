@@ -14,6 +14,7 @@ import { GlobalBus } from "@/bus/global"
 import { existsSync } from "fs"
 import { git } from "../util/git"
 import { Glob } from "../util/glob"
+import crypto from "crypto"
 
 export namespace Project {
   const log = Log.create({ service: "project" })
@@ -91,6 +92,8 @@ export namespace Project {
     log.info("fromDirectory", { directory })
 
     const data = await iife(async () => {
+      const getLocalId = (dir: string) => `local_${crypto.createHash("sha256").update(dir).digest("hex").slice(0, 16)}`
+
       const matches = Filesystem.up({ targets: [".git"], start: directory })
       const dotgit = await matches.next().then((x) => x.value)
       await matches.return()
@@ -106,7 +109,7 @@ export namespace Project {
 
         if (!gitBinary) {
           return {
-            id: id ?? "global",
+            id: id ?? getLocalId(sandbox),
             worktree: sandbox,
             sandbox: sandbox,
             vcs: Info.shape.vcs.parse(Flag.OPENCODE_FAKE_VCS),
@@ -129,7 +132,7 @@ export namespace Project {
 
           if (!roots) {
             return {
-              id: "global",
+              id: getLocalId(sandbox),
               worktree: sandbox,
               sandbox: sandbox,
               vcs: Info.shape.vcs.parse(Flag.OPENCODE_FAKE_VCS),
@@ -144,7 +147,7 @@ export namespace Project {
 
         if (!id) {
           return {
-            id: "global",
+            id: getLocalId(sandbox),
             worktree: sandbox,
             sandbox: sandbox,
             vcs: "git",
@@ -196,9 +199,9 @@ export namespace Project {
       }
 
       return {
-        id: "global",
-        worktree: "/",
-        sandbox: "/",
+        id: getLocalId(directory),
+        worktree: directory,
+        sandbox: directory,
         vcs: Info.shape.vcs.parse(Flag.OPENCODE_FAKE_VCS),
       }
     })
