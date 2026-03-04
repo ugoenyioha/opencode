@@ -2,6 +2,7 @@ import type { Plugin } from "@opencode-ai/plugin"
 import { Shell } from "../shell/shell"
 import { Instance } from "../project/instance"
 import { Log } from "../util/log"
+import { scrubEnv } from "../util/env"
 import { $ } from "bun"
 
 const log = Log.create({ service: "shell-env-plugin" })
@@ -21,7 +22,7 @@ const shellSnapshot = Instance.state(async () => {
     const match = text.match(/\{.*\}/s)
     if (match) {
       const env = JSON.parse(match[0])
-      return { env, valid: true }
+      return { env: scrubEnv(env), valid: true }
     }
   } catch (error) {
     log.error("failed to capture shell snapshot", { error })
