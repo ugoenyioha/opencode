@@ -1,87 +1,88 @@
 # Why We Chose Cloudflare WebSockets over WebRTC for Remote Controlling AI Agents
 
-Building a remote control interface for local AI CLI agents is a notoriously hard problem.
+If you build developer tools, you eventually run into the NAT traversal problem.
 
-You want a sleek web UI to monitor and control an agent running on a developer's laptop. That laptop is sitting behind strict NATs and corporate firewalls. It has no static IP address. It cannot accept incoming connections.
+We wanted to build a sleek web dashboard to monitor and control local OpenCode CLI agents. The problem: the CLI agent is running on a laptop behind a corporate firewall, and the web viewer is running in a browser somewhere else. The laptop has no static IP and cannot accept incoming connections.
 
-We needed a way to securely bridge a browser to a local CLI process. We evaluated peer-to-peer and relay architectures. Here is why we ultimately chose a WebSocket relay on Cloudflare over WebRTC.
+The conventional wisdom for this is WebRTC. We tried it. We hated it. We ripped it out.
 
----
+Here is why we abandoned WebRTC for a Cloudflare-backed WebSocket Relay architecture—and how we implemented End-to-End encryption and SQLite state buffering to make it bulletproof.
 
-## The NAT Traversal Challenge
+## The WebRTC Mirage
 
-A local CLI agent initiates its own outbound connections easily.
+WebRTC is the undisputed king of peer-to-peer browser communication. It uses STUN to figure out your public IP, and ICE to negotiate a direct connection between peers. When it works, you get a beautiful, low-latency, encrypted data channel without routing traffic through a central server.
 
-Getting a remote web dashboard to talk back to it is the hard part. The dashboard runs in a browser somewhere else. The CLI agent has no publicly routable address. Port forwarding is a non-starter for developer tools.
+It sounds perfect. In practice outside the browser, it is a nightmare.
 
-We needed a system that traverses NAT boundaries reliably and handles real-time state synchronization.
+1. **The Native Dependency Hell:** Browsers have WebRTC built-in. Node.js and compiled CLI binaries do not. Pulling in `node-webrtc` or compiling native Google WebRTC C++ bindings into our local agent bloated our binary and created an endless stream of platform-specific build failures.
+2. **The Symmetric NAT Trap:** In strict corporate environments, symmetric NATs change the external port for every outbound connection. STUN fails. The WebRTC ICE negotiation fails.
+3. **The Silent Fallback:** When WebRTC fails to establish a P2P connection, it falls back to a TURN server to relay the traffic anyway.
 
----
+If our traffic was going to end up relayed through a central server 40% of the time, why were we paying the massive complexity tax of the WebRTC state machine?
 
-## Evaluate WebRTC
+## The WebSocket Relay Pivot
 
-WebRTC is the standard for real-time peer-to-peer browser communication.
+We ripped out the WebRTC code and replaced it with a dead-simple architecture: both the CLI agent and the web viewer make outbound standard WebSocket connections to a central Relay server.
 
-It handles NAT traversal using STUN and TURN servers. When it works, you get a direct, low-latency, encrypted data channel between the browser and the local process. This sounded perfect for a remote control interface.
+Because both sides are initiating outbound HTTP/Upgrade requests, corporate firewalls rarely block them.
 
-The reality of WebRTC outside the browser is painful.
+```typescript
+// The local CLI connects out to the relay
+const relay = new WebSocket(`wss://relay.opencode.local/v1/agent/${session_id}`)
 
----
+// The Web UI connects out to the same relay
+const viewer = new WebSocket(`wss://relay.opencode.local/v1/viewer/${session_id}`)
+```
 
-## The WebRTC Reality
+But a naive relay server introduces two new massive problems: **State Synchronization** and **Privacy**.
 
-Running WebRTC inside a Node.js or native CLI process requires heavy C++ dependencies.
+## Handling State with Cloudflare Durable Objects
 
-Building and distributing cross-platform binaries with WebRTC bindings is a maintenance nightmare. Furthermore, WebRTC connection establishment (ICE negotiation) is slow and complex. In many corporate environments with symmetric NATs, WebRTC fails to establish a direct connection anyway.
+If the CLI agent emits a `task_completed` event while the web viewer is refreshing the page (a 1-second disconnect), the event is lost into the void. WebSockets don't guarantee delivery across reconnects.
 
-When WebRTC fails to find a direct path, it silently falls back to relaying traffic through a TURN server.
+We couldn't just use Redis; we wanted the relay to be globally distributed so latency remained low no matter where the developer was.
 
----
+We built the "Bring Your Own Relay" (BYOR) system using **Cloudflare Workers** and **Durable Objects**.
 
-## Choose Relay Architecture
+Durable Objects guarantee strict, single-threaded execution for a given entity (like a Session ID). Better yet, they come with embedded SQLite.
 
-If WebRTC often falls back to a relay server, why not just build a better relay from the start?
+```typescript
+// Inside the Cloudflare Durable Object
+async function handleAgentMessage(msg) {
+  // 1. Buffer the message to embedded SQLite
+  await this.ctx.storage.sql.exec(`INSERT INTO messages (id, payload) VALUES (?, ?)`, [msg.id, msg.data])
 
-We decided to skip the P2P complexity and build a dedicated relay service. Both the local CLI agent and the remote web dashboard connect out to a central relay via standard WebSockets. WebSockets easily traverse corporate firewalls.
+  // 2. Broadcast to connected viewers
+  for (const viewer of this.viewers) {
+    viewer.send(msg.data)
+  }
+}
+```
 
-This architecture is simpler to implement and far easier to debug.
+When a viewer reconnects, the Durable Object queries the SQLite buffer and replays any missed messages, providing true async RPC guarantees over a flaky connection.
 
----
+## End-to-End (E2E) Encryption
 
-## Build Bring Your Own Relay
+Routing terminal output through Cloudflare introduces an unacceptable privacy risk. The relay server is in the middle, which means it could theoretically read the agent's output (which might include source code or API keys).
 
-We built a "Bring Your Own Relay" (BYOR) system using Cloudflare Workers.
+We solved this by treating the Cloudflare relay as a zero-trust dumb pipe.
 
-Cloudflare Workers provide a massive, globally distributed edge network. The CLI agent and the web viewer connect to the nearest edge node. This keeps latency low.
+Before the CLI agent and the web viewer connect to the relay, they establish a shared secret locally. We use `libsodium` to encrypt every WebSocket payload _before_ it leaves the machine.
 
-Developers can host their own relay instance on their Cloudflare account for complete privacy.
+```typescript
+// Agent Side: Encrypt before sending
+const nonce = crypto.randomBytes(24)
+const ciphertext = sodium.crypto_secretbox_easy(JSON.stringify(payload), nonce, sharedSecret)
 
----
+relay.send(JSON.stringify({ nonce: nonce.toString("hex"), data: ciphertext }))
+```
 
-## Handle State With Durable Objects
+The Cloudflare Worker never sees the JSON payload. It only sees opaque ciphertext. It buffers the ciphertext into SQLite and broadcasts it to the web viewer, which decrypts it locally in the browser.
 
-Relaying real-time messages is easy, but handling state and async RPC is hard.
+## The Takeaway
 
-If the web viewer briefly disconnects, it misses critical state updates from the agent. We solved this using Cloudflare Durable Objects. Durable Objects guarantee strict consistency and provide persistent SQLite storage.
+WebRTC is amazing for video conferencing, but for deterministic CLI-to-Web control channels, it is often a trap.
 
-The relay buffers messages and syncs the agent's state so clients can seamlessly reconnect.
+By embracing a WebSocket relay backed by Cloudflare Durable Objects, we traded theoretical P2P efficiency for absolute connection reliability. By layering `libsodium` on top, we retained the zero-trust privacy that P2P promised.
 
----
-
-## Achieve End-to-End Encryption
-
-Routing traffic through a central relay introduces a privacy concern.
-
-The relay server could potentially inspect the command channel. We solved this by implementing true End-to-End (E2E) encryption. The CLI agent and the web dashboard exchange public keys out of band, usually via a shared configuration or a secure link.
-
-All WebSocket messages are encrypted using libsodium before they hit the relay. The Cloudflare Worker only routes opaque ciphertext.
-
----
-
-## Solve A Hard Problem
-
-Synchronizing real-time state across NAT boundaries is a notoriously hard problem.
-
-By embracing a WebSocket relay over WebRTC, we traded theoretical P2P efficiency for unmatched reliability. Cloudflare Workers and Durable Objects gave us a robust, low-latency infrastructure. E2E encryption ensured we didn't compromise on security.
-
-Our AI agents are now securely controllable from anywhere.
+Sometimes, the simplest network topology is the best one.

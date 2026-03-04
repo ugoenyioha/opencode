@@ -1,74 +1,86 @@
----
-title: Global State Trap
-description: Fix cross-folder AI session bleed
----
+# The Global State Trap: Stopping AI Sessions from Bleeding Across Git Worktrees
 
-# Global State Trap
+Picture this: You are deep in the zone. You open a fresh terminal window in a new, empty directory to write a quick shell script. You type `opencode -c` (continue) to pick up where you left off on an AI coding session from earlier.
 
-Picture this. You open a fresh terminal window in a new project.
+Instead of a blank slate or an error, the AI cheerfully resumes a conversation about a massive Next.js refactor from a completely different project.
 
-You type `opencode -c` to continue your last AI session.
+This is context bleed. For local-first developer tools, it is the ultimate sin.
 
-Instead of helping with your current code, the AI cheerfully resumes a conversation about a completely different project. This is context bleed.
+We recently squashed a bug in the OpenCode CLI that caused this exact scenario. Here is how a seemingly harmless piece of fallback logic created a "global state trap", and how we fixed it.
 
-It is the stuff of nightmares for local-first developer tools.
+## The Flawed Architecture
 
-We recently squashed a bug in the OpenCode CLI that caused this exact scenario. Here is how a seemingly harmless fallback created a global state trap.
+When you run OpenCode, it stores your chat history in a local SQLite database (`~/.local/share/opencode`). To figure out which chat history to show you, the CLI needs to identify which "Project" you are currently working in.
 
----
+Our original logic for `Project.fromDirectory()` did this:
 
-## Understand the flaw
+1. Walk up the directory tree to find a `.git` folder.
+2. If found, run `git rev-list --max-parents=0 HEAD` to get the root commit hash of the repository, and use that as the Project ID.
+3. If no `.git` folder is found, fallback to returning the hardcoded string `"global"`.
 
-When you run OpenCode, it stores your chat history in a local SQLite database. To resume a session, the CLI needs to know which project you are currently in.
+At first glance, this seems elegant. But it created two massive blind spots that collided in the worst way possible.
 
-Our original logic for generating a project ID was deeply flawed. If you were in a git repository, it used the root commit hash.
+### Trap 1: The Git Root Hash Collision
 
-If you were not in a git repo, it fell back to a hardcoded string called global.
+Relying on the git root commit hash is a trap.
 
-At first glance this seems reasonable. It actually created two massive blind spots.
+If you use `git worktree`, you have multiple independent directories pointing to the exact same repository. Because they share the same root commit hash, our CLI treated them as the exact same Project. If you were fixing a bug in `worktree-a` and running an AI session, and then switched to `worktree-b` to review a PR, your AI sessions would silently bleed into each other.
 
----
+Worse, if you clone a popular boilerplate (like a `create-react-app` starter template) multiple times for different clients, all those separate client projects share the _same initial root commit_. The CLI merged them all together.
 
-## Avoid worktree collisions
+### Trap 2: The Global Dumping Ground
 
-Relying on the git root commit hash is dangerous. If you use git worktrees, you have multiple directories pointing to the same repository.
+The fallback for non-git directories was catastrophic.
 
-If you clone a boilerplate starter template multiple times, all those separate projects share the same root commit hash. Our CLI treated them as the exact same project.
+Every random script folder, every scratchpad, every downloaded ZIP file that wasn't a git repo defaulted to the `"global"` ID.
 
-Running the continue command in one folder would gladly resurrect the session from another.
+This meant every non-git folder on your entire machine shared a single, chaotic AI session history. If you asked a question about parsing JSON in `~/tmp/scriptA`, it would show up when you opened `~/tmp/scriptB`.
 
----
-
-## Eliminate dumping grounds
-
-The fallback for non-git directories was even worse. Every random script folder or scratchpad defaulted to the global ID.
-
-Every non-git folder on your entire machine shared a single chaotic AI session history. If you asked a question in a temporary script, it would show up when you opened your notes folder.
-
----
-
-## Hash the folder
+## The Fix: Deterministic Hashing and Strict Filtering
 
 Global fallbacks in local tools are almost always a mistake. We needed to tie sessions to strict physical disk boundaries.
 
-We ripped out the global fallback and the root commit hash logic. Instead we migrated to deterministic local folder hashing.
+Here is the three-step fix we implemented:
 
-We now generate the project ID by hashing the absolute path of the current workspace.
+### 1. Hash the Absolute Path
 
----
+We ripped out the `"global"` fallback entirely. If a directory isn't part of a git repo, we now generate a deterministic ID by hashing the absolute path of the current workspace.
 
-## Filter the interface
+```typescript
+// Old: The trap
+if (!roots) return { id: "global", worktree: directory }
 
-Generating a better ID was only half the battle. We also updated the Terminal UI to strictly filter the session list.
+// New: Strict physical isolation
+import crypto from "crypto"
 
-It now guarantees that when you ask for history, you only see sessions that originated from your exact working directory.
+const getLocalId = (dir: string) => `local_${crypto.createHash("sha256").update(dir).digest("hex").slice(0, 16)}`
 
----
+if (!roots) return { id: getLocalId(directory), worktree: directory }
+```
 
-## Respect the boundary
+Now, `~/tmp/scriptA` and `~/tmp/scriptB` get entirely distinct Project IDs.
 
-Developer tools must respect the physical boundary of the directory you are working in.
+### 2. Handle Git Worktrees Properly
 
-Avoid the temptation to group unknown contexts into a global bucket. State should always be scoped as narrowly as possible.
+We couldn't just abandon the git root hash entirely without breaking backward compatibility for existing users. But we needed to stop the worktree bleed.
 
-The absolute path on disk is the only source of truth that actually matters.
+We solved this in the Terminal UI bootstrap sequence. When you run `opencode -c`, we grab the list of all sessions for the current Project ID. But before we resume the most recent one, we apply a strict filter against the physical working directory:
+
+```tsx
+// The strict context-aware filter
+const match = sync.data.session
+  .toSorted((a, b) => b.time.updated - a.time.updated)
+  .find(
+    (session) => session.parentID === undefined && session.directory === sync.data.path.directory, // Strict exact match
+  )?.id
+```
+
+Even if two worktrees share the same Project ID (because of the root commit hash), the UI will aggressively refuse to resume a session that was initiated in a different physical directory path.
+
+## Respect the Physical Boundary
+
+The absolute path on disk is the only source of truth that actually matters for a developer.
+
+When building CLI tools, avoid the temptation to group unknown contexts into a generic "global" bucket. State should always be scoped as narrowly as possible. If you can't identify a logical project boundary, default to the physical directory boundary.
+
+Never guess what context the user wants. Enforce the boundary they are standing in.
