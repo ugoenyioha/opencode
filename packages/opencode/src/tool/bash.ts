@@ -17,6 +17,7 @@ import { Shell } from "@/shell/shell"
 import { BashArity } from "@/permission/arity"
 import { Truncate } from "./truncation"
 import { Plugin } from "@/plugin"
+import { scrubEnv } from "@/util/env"
 import { TaskManager } from "@/task"
 import type { ChildProcess } from "child_process"
 import { Config } from "@/config/config"
@@ -273,7 +274,7 @@ export const BashTool = Tool.define("bash", async () => {
         memory: sandboxConfig.memory_mb,
         cpu: sandboxConfig.cpu_percent,
         env: {
-          ...process.env,
+          ...scrubEnv(process.env),
           ...shellEnv.env,
         },
       }
@@ -284,7 +285,7 @@ export const BashTool = Tool.define("bash", async () => {
               shell,
               cwd,
               env: {
-                ...process.env,
+                ...scrubEnv(process.env),
                 ...shellEnv.env,
               },
               stdio: ["ignore", "pipe", "pipe"],
