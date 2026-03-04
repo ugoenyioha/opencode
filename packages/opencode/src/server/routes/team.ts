@@ -3,6 +3,7 @@ import z from "zod"
 import { describeRoute, validator, resolver } from "hono-openapi"
 import { Team, TeamTasks, TeamInfoSchema, TeamTaskSchema, WRITE_TOOLS } from "@/team"
 import { Session } from "@/session"
+import { Identifier } from "@/id/id"
 import { lazy } from "../../util/lazy"
 import { errors } from "../error"
 
@@ -76,7 +77,7 @@ export const TeamRoutes = lazy(() =>
           200: { description: "Team info with role and tasks" },
         },
       }),
-      validator("param", z.object({ sessionID: z.string() })),
+      validator("param", z.object({ sessionID: Identifier.schema("session") })),
       async (c) => {
         const result = await Team.findBySession(c.req.valid("param").sessionID)
         if (!result) return c.json(null)

@@ -14,7 +14,12 @@ export namespace Identifier {
   } as const
 
   export function schema(prefix: keyof typeof prefixes) {
-    return z.string().startsWith(prefixes[prefix])
+    return z
+      .string()
+      .regex(new RegExp(`^${prefixes[prefix]}_[A-Za-z0-9_]+$`), `Invalid ${prefix} identifier format`)
+      .refine((value) => !/[\u0000-\u001F\u007F]/.test(value), {
+        message: `${prefix} identifier contains disallowed control characters`,
+      })
   }
 
   const LENGTH = 26

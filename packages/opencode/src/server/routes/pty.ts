@@ -3,6 +3,7 @@ import { describeRoute, validator, resolver } from "hono-openapi"
 import { upgradeWebSocket } from "hono/bun"
 import z from "zod"
 import { Pty } from "@/pty"
+import { Identifier } from "@/id/id"
 import { NotFoundError } from "../../storage/db"
 import { errors } from "../error"
 import { lazy } from "../../util/lazy"
@@ -72,7 +73,7 @@ export const PtyRoutes = lazy(() =>
           ...errors(404),
         },
       }),
-      validator("param", z.object({ ptyID: z.string() })),
+      validator("param", z.object({ ptyID: Identifier.schema("pty") })),
       async (c) => {
         const info = Pty.get(c.req.valid("param").ptyID)
         if (!info) {
@@ -99,7 +100,7 @@ export const PtyRoutes = lazy(() =>
           ...errors(400),
         },
       }),
-      validator("param", z.object({ ptyID: z.string() })),
+      validator("param", z.object({ ptyID: Identifier.schema("pty") })),
       validator("json", Pty.UpdateInput),
       async (c) => {
         const info = await Pty.update(c.req.valid("param").ptyID, c.req.valid("json"))
@@ -124,7 +125,7 @@ export const PtyRoutes = lazy(() =>
           ...errors(404),
         },
       }),
-      validator("param", z.object({ ptyID: z.string() })),
+      validator("param", z.object({ ptyID: Identifier.schema("pty") })),
       async (c) => {
         await Pty.remove(c.req.valid("param").ptyID)
         return c.json(true)
@@ -148,7 +149,7 @@ export const PtyRoutes = lazy(() =>
           ...errors(404),
         },
       }),
-      validator("param", z.object({ ptyID: z.string() })),
+      validator("param", z.object({ ptyID: Identifier.schema("pty") })),
       upgradeWebSocket((c) => {
         const id = c.req.param("ptyID")
         const cursor = (() => {
