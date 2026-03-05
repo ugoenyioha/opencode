@@ -72,14 +72,14 @@ This forced us to design a multi-tiered defense-in-depth approach. Along the way
 
 ## The Architecture
 
-![OpenCode Sandbox Architecture — C4 Container Diagram](https://raw.githubusercontent.com/ugoenyioha/devto-blog-assets/main/zero-trust-sandbox/c4-container.png)
-_Figure 1: C4 Container-level diagram — User prompts flow through the HTTP server, agent loop, and permission layer into the sandbox dispatch. The dispatch probes for available backends (Firecracker → gVisor → bwrap → Seatbelt → none) and spawns the most restrictive option. Cross-cutting concerns (Worktree Isolation and HTTP Hook Network Isolation) apply across all backends._
+[![OpenCode Sandbox Architecture — C4 Container Diagram](https://raw.githubusercontent.com/ugoenyioha/devto-blog-assets/main/zero-trust-sandbox/c4-container.png)](https://raw.githubusercontent.com/ugoenyioha/devto-blog-assets/main/zero-trust-sandbox/c4-container.svg)
+_Figure 1: C4 Container-level diagram — User prompts flow through the HTTP server, agent loop, and permission layer into the sandbox dispatch. The dispatch probes for available backends (Firecracker → gVisor → bwrap → Seatbelt → none) and spawns the most restrictive option. Click to open full-resolution SVG._
 
-![OpenCode Sandbox Subsystem — C4 Component Diagram](https://raw.githubusercontent.com/ugoenyioha/devto-blog-assets/main/zero-trust-sandbox/c4-component.png)
-_Figure 2: C4 Component-level diagram — Zooming into the sandbox subsystem. Global and agent configs are merged via the restrictiveness lattice (agents can only escalate, never downgrade). The platform probe detects available backends, and the mode dispatcher enforces fail-fast semantics on explicit requests._
+[![OpenCode Sandbox Subsystem — C4 Component Diagram](https://raw.githubusercontent.com/ugoenyioha/devto-blog-assets/main/zero-trust-sandbox/c4-component.png)](https://raw.githubusercontent.com/ugoenyioha/devto-blog-assets/main/zero-trust-sandbox/c4-component.svg)
+_Figure 2: C4 Component-level diagram — Zooming into the sandbox subsystem. Global and agent configs are merged via the restrictiveness lattice (agents can only escalate, never downgrade). Click to open full-resolution SVG._
 
-![Threat Vector to Defense Layer Mapping](https://raw.githubusercontent.com/ugoenyioha/devto-blog-assets/main/zero-trust-sandbox/threat-defense.png)
-_Figure 3: Threat-to-defense mapping — Each attack vector (command injection, path traversal, SSRF, kernel CVEs, supply chain, config downgrade, parallel corruption) is mapped to the specific defense layers that block it._
+[![Threat Vector to Defense Layer Mapping](https://raw.githubusercontent.com/ugoenyioha/devto-blog-assets/main/zero-trust-sandbox/threat-defense.png)](https://raw.githubusercontent.com/ugoenyioha/devto-blog-assets/main/zero-trust-sandbox/threat-defense.svg)
+_Figure 3: Threat-to-defense mapping — Each attack vector is mapped to the specific defense layers that block it. Click to open full-resolution SVG._
 
 ---
 
