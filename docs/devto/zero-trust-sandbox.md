@@ -72,65 +72,14 @@ This forced us to design a multi-tiered defense-in-depth approach. Along the way
 
 ## The Architecture
 
-```mermaid
-flowchart TB
-    subgraph User["User / Client"]
-        U([User Prompt])
-    end
+![OpenCode Sandbox Architecture — Container Level](https://raw.githubusercontent.com/ugoenyioha/devto-blog-assets/main/zero-trust-sandbox/container.png)
+_Figure 1: C4 Container-level view — User prompt flows through the server, agent loop, permission layer, and sandbox dispatch into the appropriate backend. Cross-cutting concerns (Worktree Isolation and HTTP Hook Network Isolation) apply across all backends._
 
-    subgraph Server["OpenCode Server (Bun HTTP)"]
-        direction TB
-        ACP[ACP / HTTP Handler]
-        Session[Session Processor]
-        Agent[Agent Loop\nLLM + Tool Dispatch]
-    end
+![OpenCode Sandbox Architecture — Component Level](https://raw.githubusercontent.com/ugoenyioha/devto-blog-assets/main/zero-trust-sandbox/component.png)
+_Figure 2: C4 Component-level view — The restrictiveness lattice (0-5), config merge logic, platform probe waterfall, and per-backend constraint details._
 
-    subgraph PermissionLayer["Permission & Config Layer"]
-        direction LR
-        Perm[Permission Gate\nctx.ask]
-        ConfigMerge[Config Merge\nSandbox.getEffectiveConfig\nglobal + agent overrides]
-        NetCheck[Network Check\nisNetworkRestricted]
-    end
-
-    subgraph SandboxLayer["Sandbox Dispatch Layer\nsrc/sandbox/index.ts"]
-        direction TB
-        Available["Sandbox.available()\nPlatform probe: firecracker → gvisor\n→ bwrap → namespace → sandbox-exec → none"]
-        SpawnWith["Sandbox.spawnWith(mode, opts)\nFail-fast on explicit mode"]
-    end
-
-    subgraph Backends["Sandbox Backends"]
-        direction LR
-        FC["Firecracker\nKVM microVM\nLinux only"]
-        GV["gVisor\nrunsc app kernel\nLinux only"]
-        BW["Bubblewrap\nuser namespaces\nLinux only"]
-        SE["Seatbelt\nsandbox-exec\nmacOS only"]
-        NONE["none\nDirect spawn\nno isolation"]
-    end
-
-    subgraph CrossCutting["Cross-Cutting Concerns"]
-        direction LR
-        Worktree["Worktree Isolation\ngit worktree per agent\nisolated branch + dir"]
-        HTTPHook["HTTP Hook Network Isolation\nblocks webfetch + bash egress"]
-    end
-
-    U --> ACP --> Session --> Agent
-    Agent --> Perm
-    Agent --> ConfigMerge
-    Agent --> NetCheck
-
-    ConfigMerge --> SandboxLayer
-    SandboxLayer --> Backends
-
-    Worktree -. "workdir binding" .-> BW
-    Worktree -. "workdir binding" .-> SE
-    Worktree -. "workdir binding" .-> GV
-    HTTPHook -. "network: false" .-> Backends
-
-    style CrossCutting fill:#fff3cd,stroke:#ffc107,color:#333
-    style Backends fill:#d4edda,stroke:#28a745,color:#333
-    style SandboxLayer fill:#cce5ff,stroke:#004085,color:#333
-    style PermissionLayer fill:#f8d7da,stroke:#721c24,color:#333
-```
+![Threat to Defense Mapping](https://raw.githubusercontent.com/ugoenyioha/devto-blog-assets/main/zero-trust-sandbox/threat-matrix.png)
+_Figure 3: Attack vector to defense layer mapping — showing which sandbox backend mitigates which specific threat._
 
 ---
 
