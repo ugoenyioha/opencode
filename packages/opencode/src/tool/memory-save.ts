@@ -3,6 +3,7 @@ import path from "path"
 import { Tool } from "./tool"
 import { Instance } from "../project/instance"
 import { InstructionPrompt } from "../session/instruction"
+import { sanitizeForStorage } from "../util/input-sanitization"
 import DESCRIPTION from "./memory-save.txt"
 
 export const MemorySaveTool = Tool.define("memory_save", {
@@ -10,11 +11,17 @@ export const MemorySaveTool = Tool.define("memory_save", {
   parameters: z.object({
     fact: z
       .string()
-      .describe(
-        "The specific fact or piece of information to remember. Should be a clear, self-contained statement.",
-      ),
+      .describe("The specific fact or piece of information to remember. Should be a clear, self-contained statement."),
   }),
   async execute(params, ctx) {
+    // G4 Security Fix: Validate content before saving to prevent cross-session infection
+    // Rejects: invisible Unicode, code fences, HTML tags, YAML frontmatter
+    // See: /tmp/audit-input-v2.md Pattern 2.3, /tmp/master-remediation-plan.md Phase 5
+    const validation = sanitizeForStorage(params.fact)
+    if (!validation.valid) {
+      throw new Error(`Cannot save fact: ${validation.reason}`)
+    }
+
     await ctx.ask({
       permission: "memory_save",
       patterns: ["*"],
@@ -30,24 +37,23 @@ export const MemorySaveTool = Tool.define("memory_save", {
       .text()
       .catch(() => "")
 
-    // Sanitize: strip newlines to prevent YAML frontmatter injection (--- delimiters)
-    // and collapse to a single-line bullet point
-    const sanitized = params.fact.replace(/\r?\n/g, " ").replace(/^---/g, "").trim()
+    // Use the sanitized content (newlines already collapsed, content validated)
     const timestamp = new Date().toISOString().split("T")[0]
-    const entry = `- ${sanitized} (${timestamp})`
+    const entry = `- ${validation.sanitized} (${timestamp})`
     const newContent = existing ? existing.trimEnd() + "\n" + entry + "\n" : entry + "\n"
 
     await Bun.write(memoryFile, newContent)
 
     // Invalidate cached rules so the new memory entry is picked up immediately
+    // This is safe now because we've validated the content above
     InstructionPrompt.invalidateRules()
 
     return {
       title: "Saved to memory",
-      output: `Saved to ${memoryFile}: ${params.fact}`,
+      output: `Saved to ${memoryFile}: ${validation.sanitized}`,
       metadata: {
         file: memoryFile,
-        fact: params.fact,
+        fact: validation.sanitized,
       },
     }
   },

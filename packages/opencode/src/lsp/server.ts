@@ -12,6 +12,9 @@ import { Instance } from "../project/instance"
 import { Flag } from "../flag/flag"
 import { Archive } from "../util/archive"
 import { Process } from "../util/process"
+import { Checksum } from "../util/checksum"
+import { Config } from "../config/config"
+import { hardenedMode } from "../flag/hardened"
 
 export namespace LSPServer {
   const log = Log.create({ service: "lsp.server" })
@@ -20,6 +23,59 @@ export namespace LSPServer {
       .stat(p)
       .then(() => true)
       .catch(() => false)
+
+  const checksumSuffixes = [".sha256", ".sha256sum", ".sha256.txt", ".sha256sums", ".SHA256SUMS"]
+
+  const checksumFromAssets = (assets: Array<{ name?: string; browser_download_url?: string }>, assetName: string) => {
+    for (const suffix of checksumSuffixes) {
+      const direct = assets.find((asset) => asset.name === `${assetName}${suffix}`)
+      if (direct?.browser_download_url) return direct.browser_download_url
+    }
+
+    const sums = assets.find((asset) => asset.name?.toLowerCase().includes("sha256sums"))
+    if (sums?.browser_download_url) return sums.browser_download_url
+
+    return undefined
+  }
+
+  const verifyChecksum = async (opts: { path: string; checksumUrl?: string; assetName: string; context: string }) => {
+    if (!opts.checksumUrl) {
+      log.error("Missing SHA256 checksum", { context: opts.context, asset: opts.assetName })
+      return false
+    }
+    const expected = await Checksum.fetch(opts.checksumUrl, opts.assetName)
+    if (!expected) {
+      log.error("Failed to fetch SHA256 checksum", {
+        context: opts.context,
+        asset: opts.assetName,
+        checksumUrl: opts.checksumUrl,
+      })
+      return false
+    }
+    try {
+      await Checksum.verify(opts.path, expected)
+      return true
+    } catch (error) {
+      log.error("SHA256 checksum verification failed", {
+        context: opts.context,
+        asset: opts.assetName,
+        error,
+      })
+      return false
+    }
+  }
+
+  const isWorkspace = async (input: string) => {
+    let root = Filesystem.normalizePath(path.resolve(Instance.worktree))
+    let target = Filesystem.normalizePath(path.resolve(input))
+    try {
+      root = Filesystem.normalizePath(await fs.realpath(root))
+    } catch {}
+    try {
+      target = Filesystem.normalizePath(await fs.realpath(target))
+    } catch {}
+    return Filesystem.contains(root, target)
+  }
 
   export interface Handle {
     process: ChildProcessWithoutNullStreams
@@ -178,11 +234,21 @@ export namespace LSPServer {
       if (!(await Filesystem.exists(serverPath))) {
         if (Flag.OPENCODE_DISABLE_LSP_DOWNLOAD) return
         log.info("downloading and building VS Code ESLint server")
-        const response = await fetch("https://github.com/microsoft/vscode-eslint/archive/refs/heads/main.zip")
+        const downloadUrl = "https://github.com/microsoft/vscode-eslint/archive/refs/heads/main.zip"
+        const response = await fetch(downloadUrl)
         if (!response.ok) return
 
         const zipPath = path.join(Global.Path.bin, "vscode-eslint.zip")
         if (response.body) await Filesystem.writeStream(zipPath, response.body)
+
+        const assetName = path.basename(new URL(downloadUrl).pathname)
+        const checksumOk = await verifyChecksum({
+          path: zipPath,
+          checksumUrl: `${downloadUrl}.sha256`,
+          assetName,
+          context: "vscode-eslint",
+        })
+        if (!checksumOk) return
 
         const ok = await Archive.extractZip(zipPath, Global.Path.bin)
           .then(() => true)
@@ -238,11 +304,13 @@ export namespace LSPServer {
     extensions: [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".vue", ".astro", ".svelte"],
     async spawn(root) {
       const ext = process.platform === "win32" ? ".cmd" : ""
+      const hardened = await hardenedMode()
 
       const serverTarget = path.join("node_modules", ".bin", "oxc_language_server" + ext)
       const lintTarget = path.join("node_modules", ".bin", "oxlint" + ext)
 
       const resolveBin = async (target: string) => {
+        if (hardened) return
         const localBin = path.join(root, target)
         if (await Filesystem.exists(localBin)) return localBin
 
@@ -261,7 +329,7 @@ export namespace LSPServer {
       let lintBin = await resolveBin(lintTarget)
       if (!lintBin) {
         const found = Bun.which("oxlint")
-        if (found) lintBin = found
+        if (found && (!hardened || !(await isWorkspace(found)))) lintBin = found
       }
 
       if (lintBin) {
@@ -282,7 +350,7 @@ export namespace LSPServer {
       let serverBin = await resolveBin(serverTarget)
       if (!serverBin) {
         const found = Bun.which("oxc_language_server")
-        if (found) serverBin = found
+        if (found && (!hardened || !(await isWorkspace(found)))) serverBin = found
       }
       if (serverBin) {
         return {
@@ -328,22 +396,25 @@ export namespace LSPServer {
       ".html",
     ],
     async spawn(root) {
+      const hardened = await hardenedMode()
       const localBin = path.join(root, "node_modules", ".bin", "biome")
       let bin: string | undefined
-      if (await Filesystem.exists(localBin)) bin = localBin
+      if (!hardened && (await Filesystem.exists(localBin))) bin = localBin
       if (!bin) {
         const found = Bun.which("biome")
-        if (found) bin = found
+        if (found && (!hardened || !(await isWorkspace(found)))) bin = found
       }
 
       let args = ["lsp-proxy", "--stdio"]
 
-      if (!bin) {
+      if (!bin && !hardened) {
         const resolved = await Bun.resolve("biome", root).catch(() => undefined)
         if (!resolved) return
         bin = BunProc.which()
         args = ["x", "biome", "lsp-proxy", "--stdio"]
       }
+
+      if (!bin) return
 
       const proc = spawn(bin, args, {
         cwd: root,
@@ -686,6 +757,8 @@ export namespace LSPServer {
           return
         }
 
+        const checksumUrl = checksumFromAssets(release.assets ?? [], assetName)
+
         const downloadUrl = asset.browser_download_url
         const downloadResponse = await fetch(downloadUrl)
         if (!downloadResponse.ok) {
@@ -695,6 +768,14 @@ export namespace LSPServer {
 
         const tempPath = path.join(Global.Path.bin, assetName)
         if (downloadResponse.body) await Filesystem.writeStream(tempPath, downloadResponse.body)
+
+        const checksumOk = await verifyChecksum({
+          path: tempPath,
+          checksumUrl,
+          assetName,
+          context: "zls",
+        })
+        if (!checksumOk) return
 
         if (ext === "zip") {
           const ok = await Archive.extractZip(tempPath, Global.Path.bin)
@@ -977,6 +1058,8 @@ export namespace LSPServer {
         return
       }
 
+      const checksumUrl = checksumFromAssets(assets, asset.name)
+
       const name = asset.name
       const downloadResponse = await fetch(asset.browser_download_url)
       if (!downloadResponse.ok) {
@@ -991,6 +1074,14 @@ export namespace LSPServer {
         return
       }
       await Filesystem.write(archive, Buffer.from(buf))
+
+      const checksumOk = await verifyChecksum({
+        path: archive,
+        checksumUrl,
+        assetName: name,
+        context: "clangd",
+      })
+      if (!checksumOk) return
 
       const zip = name.endsWith(".zip")
       const tar = name.endsWith(".tar.xz")
@@ -1160,11 +1251,23 @@ export namespace LSPServer {
         const archiveName = "release.tar.gz"
 
         log.info("Downloading JDTLS archive", { url: releaseURL, dest: distPath })
-        const curlResult = await $`curl -L -o ${archiveName} '${releaseURL}'`.cwd(distPath).quiet().nothrow()
-        if (curlResult.exitCode !== 0) {
-          log.error("Failed to download JDTLS", { exitCode: curlResult.exitCode, stderr: curlResult.stderr.toString() })
+        const downloadResponse = await fetch(releaseURL)
+        if (!downloadResponse.ok) {
+          log.error("Failed to download JDTLS")
           return
         }
+
+        const archivePath = path.join(distPath, archiveName)
+        if (downloadResponse.body) await Filesystem.writeStream(archivePath, downloadResponse.body)
+
+        const assetName = path.basename(new URL(releaseURL).pathname)
+        const checksumOk = await verifyChecksum({
+          path: archivePath,
+          checksumUrl: `${releaseURL}.sha256`,
+          assetName,
+          context: "jdtls",
+        })
+        if (!checksumOk) return
 
         log.info("Extracting JDTLS archive")
         const tarResult = await $`tar -xzf ${archiveName}`.cwd(distPath).quiet().nothrow()
@@ -1173,7 +1276,7 @@ export namespace LSPServer {
           return
         }
 
-        await fs.rm(path.join(distPath, archiveName), { force: true })
+        await fs.rm(archivePath, { force: true })
         log.info("JDTLS download and extraction completed")
       }
       const jarFileName = await $`ls org.eclipse.equinox.launcher_*.jar`
@@ -1293,7 +1396,20 @@ export namespace LSPServer {
 
         await fs.mkdir(distPath, { recursive: true })
         const archivePath = path.join(distPath, "kotlin-ls.zip")
-        await $`curl -L -o '${archivePath}' '${releaseURL}'`.quiet().nothrow()
+        const downloadResponse = await fetch(releaseURL)
+        if (!downloadResponse.ok) {
+          log.error("Failed to download Kotlin LS")
+          return
+        }
+        if (downloadResponse.body) await Filesystem.writeStream(archivePath, downloadResponse.body)
+
+        const checksumOk = await verifyChecksum({
+          path: archivePath,
+          checksumUrl: `${releaseURL}.sha256`,
+          assetName,
+          context: "kotlin-ls",
+        })
+        if (!checksumOk) return
         const ok = await Archive.extractZip(archivePath, distPath)
           .then(() => true)
           .catch((error) => {
@@ -1435,6 +1551,8 @@ export namespace LSPServer {
           return
         }
 
+        const checksumUrl = checksumFromAssets(release.assets ?? [], assetName)
+
         const downloadUrl = asset.browser_download_url
         const downloadResponse = await fetch(downloadUrl)
         if (!downloadResponse.ok) {
@@ -1444,6 +1562,14 @@ export namespace LSPServer {
 
         const tempPath = path.join(Global.Path.bin, assetName)
         if (downloadResponse.body) await Filesystem.writeStream(tempPath, downloadResponse.body)
+
+        const checksumOk = await verifyChecksum({
+          path: tempPath,
+          checksumUrl,
+          assetName,
+          context: "lua-language-server",
+        })
+        if (!checksumOk) return
 
         // Unlike zls which is a single self-contained binary,
         // lua-language-server needs supporting files (meta/, locale/, etc.)
@@ -1680,6 +1806,11 @@ export namespace LSPServer {
           return
         }
 
+        const assetName = path.basename(new URL(build.url).pathname)
+        const checksumUrl = release.version
+          ? `https://releases.hashicorp.com/terraform-ls/${release.version}/terraform-ls_${release.version}_SHA256SUMS`
+          : undefined
+
         const downloadResponse = await fetch(build.url)
         if (!downloadResponse.ok) {
           log.error("Failed to download terraform-ls")
@@ -1688,6 +1819,14 @@ export namespace LSPServer {
 
         const tempPath = path.join(Global.Path.bin, "terraform-ls.zip")
         if (downloadResponse.body) await Filesystem.writeStream(tempPath, downloadResponse.body)
+
+        const checksumOk = await verifyChecksum({
+          path: tempPath,
+          checksumUrl,
+          assetName,
+          context: "terraform-ls",
+        })
+        if (!checksumOk) return
 
         const ok = await Archive.extractZip(tempPath, Global.Path.bin)
           .then(() => true)

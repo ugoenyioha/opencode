@@ -13,6 +13,8 @@ import { Bus } from "@/bus"
 import { Session } from "@/session"
 import { Discovery } from "./discovery"
 import { Glob } from "../util/glob"
+import { Trust } from "../trust"
+import { ConfigPaths } from "../config/paths"
 
 export namespace Skill {
   const log = Log.create({ service: "skill" })
@@ -52,6 +54,7 @@ export namespace Skill {
   export const state = Instance.state(async () => {
     const skills: Record<string, Info> = {}
     const dirs = new Set<string>()
+    const trust = Trust.status(Instance.project.id)
 
     const addSkill = async (match: string) => {
       const md = await ConfigMarkdown.parse(match).catch((err) => {
@@ -134,16 +137,23 @@ export namespace Skill {
       await scanExternal(root, "global")
     }
 
-    for await (const root of Filesystem.up({
-      targets: enabledDirs,
-      start: Instance.directory,
-      stop: Instance.worktree,
-    })) {
-      await scanExternal(root, "project")
+    if (trust.approved) {
+      for await (const root of Filesystem.up({
+        targets: enabledDirs,
+        start: Instance.directory,
+        stop: Instance.worktree,
+      })) {
+        await scanExternal(root, "project")
+      }
     }
 
     // Scan .opencode/skill/ directories
-    for (const dir of await Config.directories()) {
+    const opencodeDirs = trust.approved
+      ? await Config.directories()
+      : (await ConfigPaths.directories(Instance.directory, Instance.worktree)).filter(
+          (dir) => !Filesystem.contains(Instance.worktree, dir),
+        )
+    for (const dir of opencodeDirs) {
       const matches = await Glob.scan(OPENCODE_SKILL_PATTERN, {
         cwd: dir,
         absolute: true,
@@ -155,39 +165,41 @@ export namespace Skill {
       }
     }
 
-    // Scan additional skill paths from config
-    const config = await Config.get()
-    for (const skillPath of config.skills?.paths ?? []) {
-      const expanded = skillPath.startsWith("~/") ? path.join(os.homedir(), skillPath.slice(2)) : skillPath
-      const resolved = path.isAbsolute(expanded) ? expanded : path.join(Instance.directory, expanded)
-      if (!(await Filesystem.isDir(resolved))) {
-        log.warn("skill path not found", { path: resolved })
-        continue
-      }
-      const matches = await Glob.scan(SKILL_PATTERN, {
-        cwd: resolved,
-        absolute: true,
-        include: "file",
-        symlink: true,
-      })
-      for (const match of matches) {
-        await addSkill(match)
-      }
-    }
-
-    // Download and load skills from URLs
-    for (const url of config.skills?.urls ?? []) {
-      const list = await Discovery.pull(url)
-      for (const dir of list) {
-        dirs.add(dir)
+    if (trust.approved) {
+      // Scan additional skill paths from config
+      const config = await Config.get()
+      for (const skillPath of config.skills?.paths ?? []) {
+        const expanded = skillPath.startsWith("~/") ? path.join(os.homedir(), skillPath.slice(2)) : skillPath
+        const resolved = path.isAbsolute(expanded) ? expanded : path.join(Instance.directory, expanded)
+        if (!(await Filesystem.isDir(resolved))) {
+          log.warn("skill path not found", { path: resolved })
+          continue
+        }
         const matches = await Glob.scan(SKILL_PATTERN, {
-          cwd: dir,
+          cwd: resolved,
           absolute: true,
           include: "file",
           symlink: true,
         })
         for (const match of matches) {
           await addSkill(match)
+        }
+      }
+
+      // Download and load skills from URLs
+      for (const url of config.skills?.urls ?? []) {
+        const list = await Discovery.pull(url)
+        for (const dir of list) {
+          dirs.add(dir)
+          const matches = await Glob.scan(SKILL_PATTERN, {
+            cwd: dir,
+            absolute: true,
+            include: "file",
+            symlink: true,
+          })
+          for (const match of matches) {
+            await addSkill(match)
+          }
         }
       }
     }

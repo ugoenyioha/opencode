@@ -15,6 +15,7 @@ import { gitlabAuthPlugin as GitlabAuthPlugin } from "@gitlab/opencode-gitlab-au
 import { HttpAuthPlugin } from "./http-auth"
 import { A2APlugin } from "./a2a"
 import { ShellEnvPlugin } from "./shell-env"
+import { Trust } from "../trust"
 
 export namespace Plugin {
   const log = Log.create({ service: "plugin" })
@@ -60,7 +61,11 @@ export namespace Plugin {
       if (init) hooks.push({ source: "internal", hook: init })
     }
 
-    let plugins = config.plugin ?? []
+    const trust = Trust.status(Instance.project.id)
+    let plugins = trust.approved ? (config.plugin ?? []) : []
+    if (!trust.approved && (config.plugin ?? []).length) {
+      log.warn("workspace untrusted; skipping external plugins", { directory: Instance.directory })
+    }
     if (plugins.length) await Config.waitForDependencies()
     if (!Flag.OPENCODE_DISABLE_DEFAULT_PLUGINS) {
       plugins = [...BUILTIN, ...plugins]

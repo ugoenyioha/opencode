@@ -4,6 +4,7 @@ import TurndownService from "turndown"
 import DESCRIPTION from "./webfetch.txt"
 import { abortAfterAny } from "../util/abort"
 import { isNetworkRestricted } from "../util/network"
+import { validateURLForSSRF } from "../util/ssrf-protection"
 import { Instance } from "../project/instance"
 import { Sandbox } from "../sandbox"
 
@@ -25,6 +26,13 @@ export const WebFetchTool = Tool.define("webfetch", {
     // Validate URL
     if (!params.url.startsWith("http://") && !params.url.startsWith("https://")) {
       throw new Error("URL must start with http:// or https://")
+    }
+
+    // G8 Security Fix: SSRF protection - block internal/private IPs in hardened mode
+    // See: /tmp/audit-network-v2.md Pattern 3.3, /tmp/master-remediation-plan.md Phase 4
+    const ssrfCheck = await validateURLForSSRF(params.url)
+    if (!ssrfCheck.allowed) {
+      throw new Error(`SSRF protection: ${ssrfCheck.reason}`)
     }
 
     if (await isNetworkRestricted(ctx.agent)) {
@@ -71,12 +79,32 @@ export const WebFetchTool = Tool.define("webfetch", {
       "Accept-Language": "en-US,en;q=0.9",
     }
 
-    const initial = await fetch(params.url, { signal, headers })
+    let fetchUrl = params.url
+    let fetchOptions: RequestInit & { tls?: any } = { signal, headers }
+
+    if (ssrfCheck.resolvedIP) {
+      const parsedUrl = new URL(params.url)
+      const isIPv6 = ssrfCheck.resolvedIP.includes(":")
+      const ipHost = isIPv6 ? `[${ssrfCheck.resolvedIP}]` : ssrfCheck.resolvedIP
+
+      // Keep the original hostname in the Host header and TLS SNI
+      fetchOptions.headers = { ...headers, Host: parsedUrl.host }
+      fetchOptions.tls = { servername: parsedUrl.hostname }
+
+      // Replace hostname with pinned IP
+      parsedUrl.hostname = ipHost
+      fetchUrl = parsedUrl.toString()
+    }
+
+    const initial = await fetch(fetchUrl, fetchOptions as any)
 
     // Retry with honest UA if blocked by Cloudflare bot detection (TLS fingerprint mismatch)
     const response =
       initial.status === 403 && initial.headers.get("cf-mitigated") === "challenge"
-        ? await fetch(params.url, { signal, headers: { ...headers, "User-Agent": "opencode" } })
+        ? await fetch(fetchUrl, {
+            ...fetchOptions,
+            headers: { ...(fetchOptions.headers as any), "User-Agent": "opencode" },
+          } as any)
         : initial
 
     clearTimeout()

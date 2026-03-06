@@ -33,6 +33,9 @@ export namespace Flag {
   export const OPENCODE_A2A_API_KEY = process.env["OPENCODE_A2A_API_KEY"]
   export const OPENCODE_ENABLE_QUESTION_TOOL = truthy("OPENCODE_ENABLE_QUESTION_TOOL")
 
+  // Security
+  export declare const OPENCODE_HARDENED_MODE: boolean
+
   // Experimental
   export const OPENCODE_EXPERIMENTAL = truthy("OPENCODE_EXPERIMENTAL")
   export const OPENCODE_EXPERIMENTAL_FILEWATCHER = truthy("OPENCODE_EXPERIMENTAL_FILEWATCHER")
@@ -138,6 +141,17 @@ Object.defineProperty(Flag, "OPENCODE_DISABLE_EXTERNAL_SKILLS", {
 Object.defineProperty(Flag, "OPENCODE_EXPERIMENTAL_AGENT_TEAMS", {
   get() {
     return Flag.OPENCODE_EXPERIMENTAL || truthy("OPENCODE_EXPERIMENTAL_AGENT_TEAMS")
+  },
+  enumerable: true,
+  configurable: false,
+})
+
+// Dynamic getter for OPENCODE_HARDENED_MODE
+// This must be evaluated at access time, not module load time,
+// because tests and deployment environments may set this env var at runtime
+Object.defineProperty(Flag, "OPENCODE_HARDENED_MODE", {
+  get() {
+    return truthy("OPENCODE_HARDENED_MODE")
   },
   enumerable: true,
   configurable: false,

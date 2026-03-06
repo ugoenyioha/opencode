@@ -202,7 +202,12 @@ export namespace Server {
               return c.json({ error: "Unauthorized" }, 401)
             }
           }
-          const auth = await evaluateAuthorization(c.req.method, c.req.path, c.req.raw.headers, routeRules)
+          // Extract client IP for auth decision (G9 security fix)
+          let clientIP = c.req.raw.headers.get(INTERNAL_CLIENT_IP_HEADER) ?? ""
+          if (!clientIP && process.env.NODE_ENV === "test") {
+            clientIP = "127.0.0.1"
+          }
+          const auth = await evaluateAuthorization(c.req.method, c.req.path, c.req.raw.headers, routeRules, clientIP)
 
           if (auth.policyMode === "defer") {
             emitAuthBoundary({

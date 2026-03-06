@@ -74,7 +74,7 @@ describe("Project.fromDirectory", () => {
     const { project } = await p.fromDirectory(tmp.path)
 
     expect(project).toBeDefined()
-    expect(project.id).toBe("global")
+    expect(project.id).toMatch(/^local_[a-f0-9]{16}$/)
     expect(project.vcs).toBe("git")
     expect(project.worktree).toBe(tmp.path)
 
@@ -107,7 +107,7 @@ describe("Project.fromDirectory", () => {
     await withMode("rev-list-fail", async () => {
       const { project } = await p.fromDirectory(tmp.path)
       expect(project.vcs).toBe("git")
-      expect(project.id).toBe("global")
+      expect(project.id).toMatch(/^local_[a-f0-9]{16}$/)
       expect(project.worktree).toBe(tmp.path)
     })
   })

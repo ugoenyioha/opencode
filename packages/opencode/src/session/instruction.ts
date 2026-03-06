@@ -8,6 +8,7 @@ import { Instance } from "../project/instance"
 import { Flag } from "@/flag/flag"
 import { Log } from "../util/log"
 import { Glob } from "../util/glob"
+import { sanitizeFilePath, stripInvisibleUnicode } from "../util/input-sanitization"
 import type { MessageV2 } from "./message-v2"
 
 const log = Log.create({ service: "instruction" })
@@ -207,9 +208,14 @@ export namespace InstructionPrompt {
     const config = await Config.get()
     const paths = await systemPaths()
 
+    // G7 Security Fix: Sanitize file paths and content to prevent prompt injection
+    // See: /tmp/audit-input-v2.md Patterns 2.1, 2.5
     const files = Array.from(paths).map(async (p) => {
       const content = await Filesystem.readText(p).catch(() => "")
-      return content ? "Instructions from: " + p + "\n" + content : ""
+      if (!content) return ""
+      const sanitizedPath = sanitizeFilePath(p)
+      const sanitizedContent = stripInvisibleUnicode(content)
+      return "Instructions from: " + sanitizedPath + "\n" + sanitizedContent
     })
 
     const urls: string[] = []
@@ -224,14 +230,15 @@ export namespace InstructionPrompt {
       fetch(url, { signal: AbortSignal.timeout(5000) })
         .then((res) => (res.ok ? res.text() : ""))
         .catch(() => "")
-        .then((x) => (x ? "Instructions from: " + url + "\n" + x : "")),
+        .then((x) => (x ? "Instructions from: " + url + "\n" + stripInvisibleUnicode(x) : "")),
     )
 
     // Unconditional rules from .opencode/rules/ and .claude/rules/ (frontmatter stripped)
+    // G7 Security Fix: Sanitize rule content to prevent invisible Unicode injection
     const rules = await getRules()
     const ruleContents = rules
       .filter((r) => r.paths.length === 0)
-      .map((r) => "Instructions from: " + r.filepath + "\n" + r.content)
+      .map((r) => "Instructions from: " + sanitizeFilePath(r.filepath) + "\n" + stripInvisibleUnicode(r.content))
 
     return Promise.all([...files, ...fetches]).then((result) => [...result.filter(Boolean), ...ruleContents])
   }
@@ -276,7 +283,10 @@ export namespace InstructionPrompt {
         claim(messageID, found)
         const content = await Filesystem.readText(found).catch(() => undefined)
         if (content) {
-          results.push({ filepath: found, content: "Instructions from: " + found + "\n" + content })
+          // G7 Security Fix: Sanitize file paths and content
+          const sanitizedPath = sanitizeFilePath(found)
+          const sanitizedContent = stripInvisibleUnicode(content)
+          results.push({ filepath: found, content: "Instructions from: " + sanitizedPath + "\n" + sanitizedContent })
         }
       }
       current = path.dirname(current)
@@ -300,7 +310,13 @@ export namespace InstructionPrompt {
 
       if (matches) {
         claim(messageID, rule.filepath)
-        results.push({ filepath: rule.filepath, content: "Instructions from: " + rule.filepath + "\n" + rule.content })
+        // G7 Security Fix: Sanitize rule file paths and content
+        const sanitizedPath = sanitizeFilePath(rule.filepath)
+        const sanitizedContent = stripInvisibleUnicode(rule.content)
+        results.push({
+          filepath: rule.filepath,
+          content: "Instructions from: " + sanitizedPath + "\n" + sanitizedContent,
+        })
       }
     }
 

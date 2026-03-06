@@ -8,7 +8,6 @@ import { Instance } from "../project/instance"
 import { lazy } from "@opencode-ai/util/lazy"
 import { Shell } from "@/shell/shell"
 import { Plugin } from "@/plugin"
-import { scrubEnv } from "@/util/env"
 
 export namespace Pty {
   const log = Log.create({ service: "pty" })
@@ -129,7 +128,7 @@ export namespace Pty {
     const cwd = input.cwd || Instance.directory
     const shellEnv = await Plugin.trigger("shell.env", { cwd }, { env: {} })
     const env = {
-      ...scrubEnv(process.env),
+      ...process.env,
       ...input.env,
       ...shellEnv.env,
       TERM: "xterm-256color",

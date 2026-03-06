@@ -162,16 +162,43 @@ export const BashTool = Tool.define("bash", async () => {
       const patterns = new Set<string>()
       const always = new Set<string>()
 
-      for (const node of tree.rootNode.descendantsOfType("command")) {
-        if (!node) continue
+      const hardenedMode = async () => {
+        if (process.env.OPENCODE_HARDENED_MODE === "true") return true;
+        try { const config = await require("../config/config").Config.get(); return config?.hardened ?? false; } catch { return false; }
+      }
 
-        // Get full command text including redirects if present
-        let commandText = node.parent?.type === "redirected_statement" ? node.parent.text : node.text
+      const stripQuotes = (s: string) => {
+        if (s.length >= 2 && ((s.startsWith("'") && s.endsWith("'")) || (s.startsWith('"') && s.endsWith('"')))) {
+          return s.slice(1, -1);
+        }
+        return s;
+      }
 
-        const command = []
+      const parseAssignment = (text: string) => {
+        const eq = text.indexOf("=");
+        if (eq === -1) return null;
+        return { key: text.slice(0, eq), value: stripQuotes(text.slice(eq + 1)) };
+      }
+
+      const unsafeNodes = tree.rootNode.descendantsOfType([
+        "pipeline", "command_substitution", "subshell", "expansion", "variable_expansion", "parameter_expansion", "simple_expansion", "brace_expansion", "redirected_statement", "process_substitution", "herestring_redirect"
+      ]);
+      const assignmentNodes = tree.rootNode.descendantsOfType("variable_assignment");
+      const commands = tree.rootNode.descendantsOfType("command");
+
+      const env = assignmentNodes.reduce<Record<string, string>>((acc, node) => {
+        const parsed = parseAssignment(node.text);
+        if (!parsed) return acc;
+        acc[parsed.key] = parsed.value;
+        return acc;
+      }, {});
+
+      const commandArgs = (node: any) => {
+        const argv: string[] = [];
         for (let i = 0; i < node.childCount; i++) {
-          const child = node.child(i)
-          if (!child) continue
+          const child = node.child(i);
+          if (!child) continue;
+          if (child.type === "variable_assignment") continue;
           if (
             child.type !== "command_name" &&
             child.type !== "word" &&
@@ -179,9 +206,39 @@ export const BashTool = Tool.define("bash", async () => {
             child.type !== "raw_string" &&
             child.type !== "concatenation"
           ) {
-            continue
+            continue;
           }
-          command.push(child.text)
+          argv.push(stripQuotes(child.text));
+        }
+        return argv;
+      };
+
+      const hasMultipleCommands = commands.length > 1;
+
+      let isUnsafeInterpreter = false;
+      if (!params.unsafe && commands.length > 0 && commands[0]) {
+        const firstCmd = commandArgs(commands[0]);
+        if (firstCmd.length > 0 && ["bash", "sh", "zsh", "env", "ash", "dash"].includes(firstCmd[0])) {
+          isUnsafeInterpreter = true;
+        }
+      }
+
+      const isUnsafe = unsafeNodes.length > 0 || hasMultipleCommands || isUnsafeInterpreter;
+      if (isUnsafe && !params.unsafe) {
+        if (await hardenedMode()) {
+          throw new Error("Unsafe shell syntax or direct interpreter execution detected. Split into simpler commands or re-run with unsafe: true to acknowledge.");
+        }
+      }
+
+      for (const node of commands) {
+        if (!node) continue
+
+        // Get full command text including redirects if present
+        let commandText = node.parent?.type === "redirected_statement" ? node.parent.text : node.text
+
+        const command = commandArgs(node);
+        if (command.length > 0 && node.parent?.type !== "redirected_statement") {
+          commandText = command.join(" ");
         }
 
         // not an exhaustive list, but covers most common cases
@@ -267,7 +324,7 @@ export const BashTool = Tool.define("bash", async () => {
       const shellFlags = shellEnv.isSnapshotValid ? "-c" : "-lc"
 
       const sandboxOpts = {
-        command: [shell, shellFlags, params.command],
+        command: params.unsafe ? [shell, shellFlags, "--", params.command] : commands.length > 0 ? commandArgs(commands[0]) : [],
         workdir: cwd,
         network: sandboxConfig.network ?? false,
         writable: [cwd, ...(sandboxConfig.writable ?? [])],
@@ -276,17 +333,22 @@ export const BashTool = Tool.define("bash", async () => {
         env: {
           ...scrubEnv(process.env),
           ...shellEnv.env,
+          ...env,
         },
       }
 
+      const execArgs = params.unsafe ? [shell, shellFlags, "--", params.command] : commands.length > 0 ? commandArgs(commands[0]) : [];
+      if (execArgs.length === 0) { throw new Error("No command to execute"); }
+
       const proc =
         selectedMode === "none"
-          ? spawn(params.command, {
-              shell,
+          ? spawn(execArgs[0], execArgs.slice(1), {
+              shell: false,
               cwd,
               env: {
                 ...scrubEnv(process.env),
                 ...shellEnv.env,
+                ...env,
               },
               stdio: ["ignore", "pipe", "pipe"],
               detached: process.platform !== "win32",

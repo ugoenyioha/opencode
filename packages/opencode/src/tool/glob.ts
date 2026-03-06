@@ -2,6 +2,7 @@ import z from "zod"
 import path from "path"
 import { Tool } from "./tool"
 import { Filesystem } from "../util/filesystem"
+import { sanitizeFilePath } from "../util/input-sanitization"
 import DESCRIPTION from "./glob.txt"
 import { Ripgrep } from "../file/ripgrep"
 import { Instance } from "../project/instance"
@@ -57,7 +58,9 @@ export const GlobTool = Tool.define("glob", {
     const output = []
     if (files.length === 0) output.push("No files found")
     if (files.length > 0) {
-      output.push(...files.map((f) => f.path))
+      // G7 Security Fix: Sanitize file paths to prevent prompt injection via adversarial filenames
+      // See: /tmp/audit-input-v2.md Pattern 2.1
+      output.push(...files.map((f) => sanitizeFilePath(f.path)))
       if (truncated) {
         output.push("")
         output.push(

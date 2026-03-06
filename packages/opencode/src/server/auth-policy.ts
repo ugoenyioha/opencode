@@ -2,7 +2,13 @@ import type { AuthStrategy } from "@opencode-ai/plugin"
 import { Flag } from "@/flag/flag"
 import { timingSafeEqual } from "crypto"
 import { bearerFromHeaders, verifyBearerForStrategy } from "./compat/auth"
-import { normalizeAuthRoute, surfaceFromRoute, type AuthReason, type AuthRoute, type AuthStrategyLabel } from "./auth-observability"
+import {
+  normalizeAuthRoute,
+  surfaceFromRoute,
+  type AuthReason,
+  type AuthRoute,
+  type AuthStrategyLabel,
+} from "./auth-observability"
 
 export type RouteAuthRule = {
   method: string
@@ -128,7 +134,10 @@ async function strategyPasses(
     const audience = process.env["OPENCODE_SPIFFE_AUDIENCE"]
     if (!audience) return false
     const allowedIdsRaw = process.env["OPENCODE_SPIFFE_ALLOWED_IDS"]
-    const allowedIds = allowedIdsRaw?.split(",").map((s) => s.trim()).filter(Boolean)
+    const allowedIds = allowedIdsRaw
+      ?.split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
     try {
       const { verifySPIFFE } = await import("./spiffe")
       return await verifySPIFFE(token, audience, allowedIds)
@@ -150,12 +159,52 @@ async function strategyPasses(
   return false
 }
 
-function defaultGatePasses(headers: Headers) {
+/**
+ * Check if an IP address is a loopback address.
+ * Loopback addresses are the only ones allowed when no password/API key is configured.
+ *
+ * Loopback addresses:
+ * - IPv4: 127.0.0.0/8 (127.0.0.1 is most common)
+ * - IPv6: ::1
+ */
+function isLoopbackIP(ip: string): boolean {
+  if (!ip) return false
+
+  // IPv6 loopback
+  if (ip === "::1") return true
+
+  // IPv4 loopback (127.0.0.0/8)
+  if (ip.startsWith("127.")) return true
+
+  // IPv4-mapped IPv6 loopback (::ffff:127.x.x.x)
+  if (ip.toLowerCase().startsWith("::ffff:127.")) return true
+
+  return false
+}
+
+/**
+ * Default authentication gate.
+ *
+ * SECURITY FIX (G9): When no password/API key is configured, only allow
+ * requests from loopback addresses (127.0.0.1, ::1). This prevents
+ * unauthenticated access from the local network.
+ *
+ * See: GHSA-vxw4-wv6m-9hhh, /tmp/audit-network-v2.md Pattern 1.13
+ */
+function defaultGatePasses(headers: Headers, clientIP: string) {
   const hasPassword = !!Flag.OPENCODE_SERVER_PASSWORD
   const hasApiKey = !!process.env["OPENCODE_TOOL_ENDPOINT_API_KEY"]
-  if (!hasPassword && !hasApiKey) return true
+
+  // If credentials are configured, require valid authentication
   if (hasApiKey && validAPIKey(headers)) return true
   if (hasPassword && validBasicAuth(headers)) return true
+
+  // If NO credentials are configured, only allow loopback addresses
+  // This is the critical security fix for GHSA-vxw4-wv6m-9hhh
+  if (!hasPassword && !hasApiKey) {
+    return isLoopbackIP(clientIP)
+  }
+
   return false
 }
 
@@ -173,6 +222,7 @@ export async function evaluateAuthorization(
   path: string,
   headers: Headers,
   routeRules: RouteAuthRule[],
+  clientIP?: string,
 ): Promise<AuthorizationDecision> {
   const policy = resolvePolicy(method, path, routeRules)
   const route = normalizeAuthRoute(path)
@@ -207,7 +257,7 @@ export async function evaluateAuthorization(
     const hasApiKey = !!process.env["OPENCODE_TOOL_ENDPOINT_API_KEY"]
     const byApiKey = hasApiKey && validAPIKey(headers)
     const byBasic = hasPassword && validBasicAuth(headers)
-    const ok = defaultGatePasses(headers)
+    const ok = defaultGatePasses(headers, clientIP ?? "")
     return {
       ok,
       policyMode: "global-default",
@@ -245,6 +295,12 @@ export async function evaluateAuthorization(
   }
 }
 
-export async function authorizeRequest(method: string, path: string, headers: Headers, routeRules: RouteAuthRule[]) {
-  return (await evaluateAuthorization(method, path, headers, routeRules)).ok
+export async function authorizeRequest(
+  method: string,
+  path: string,
+  headers: Headers,
+  routeRules: RouteAuthRule[],
+  clientIP?: string,
+) {
+  return (await evaluateAuthorization(method, path, headers, routeRules, clientIP)).ok
 }

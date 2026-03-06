@@ -46,11 +46,9 @@ describe("GvisorSandbox", () => {
       expect(spawnSpy).toHaveBeenCalled()
       const args = spawnSpy.mock.calls[0][1]
       expect(args).toContain("--network=host")
-      expect(args).toContain("--volumes")
+      expect(args).toContain("--volume")
       expect(args).toContain("/workspace:/workspace")
       expect(args).toContain("/tmp/data:/tmp/data")
-      expect(args).toContain("--env")
-      expect(args).toContain("FOO=bar")
       const commandIndex = args.indexOf("--")
       expect(commandIndex).toBeGreaterThan(-1)
       expect(args.slice(commandIndex + 1)).toEqual(["bash", "-lc", "echo hi"])

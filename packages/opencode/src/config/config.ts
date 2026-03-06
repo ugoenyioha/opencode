@@ -5,7 +5,7 @@ import { createRequire } from "module"
 import os from "os"
 import z from "zod"
 import { ModelsDev } from "../provider/models"
-import { mergeDeep, pipe, unique } from "remeda"
+import { mergeDeep as remedaMergeDeep, pipe, unique } from "remeda"
 import { Global } from "../global"
 import fs from "fs/promises"
 import { lazy } from "../util/lazy"
@@ -35,6 +35,46 @@ import { iife } from "@/util/iife"
 import { Control } from "@/control"
 import { ConfigPaths } from "./paths"
 import { Filesystem } from "@/util/filesystem"
+import { Trust } from "../trust"
+
+/**
+ * Recursively remove prototype pollution keys from an object.
+ *
+ * G1 Security Fix (Defense in Depth): Prevent prototype pollution attacks
+ * by stripping __proto__, constructor, and prototype keys before merging configs.
+ *
+ * See: /tmp/audit-matrix-v2.md Pattern 2.4, /tmp/master-remediation-plan.md Phase 5
+ */
+function scrubPrototypePollution<T>(obj: T): T {
+  if (obj === null || typeof obj !== "object") return obj
+  if (Array.isArray(obj)) return obj.map(scrubPrototypePollution) as T
+
+  const result: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+    // Skip dangerous keys that could pollute Object.prototype
+    if (key === "__proto__" || key === "constructor" || key === "prototype") {
+      continue
+    }
+    result[key] = scrubPrototypePollution(value)
+  }
+  return result as T
+}
+
+/**
+ * Safe mergeDeep that scrubs prototype pollution keys before merging.
+ * Supports both 2-arg form and 1-arg curried form (for use with pipe).
+ */
+function mergeDeep<T extends object>(source: T): (target: T) => T
+function mergeDeep<T extends object>(target: T, source: T): T
+function mergeDeep<T extends object>(targetOrSource: T, source?: T): T | ((target: T) => T) {
+  if (source === undefined) {
+    // Curried form: returns a function that takes target
+    const scrubbedSource = scrubPrototypePollution(targetOrSource)
+    return (target: T) => remedaMergeDeep(scrubPrototypePollution(target), scrubbedSource) as unknown as T
+  }
+  // Direct form: merges target and source
+  return remedaMergeDeep(scrubPrototypePollution(targetOrSource), scrubPrototypePollution(source)) as unknown as T
+}
 
 export namespace Config {
   const ModelId = z.string().meta({ $ref: "https://models.dev/model-schema.json#/$defs/Model" })
@@ -70,6 +110,43 @@ export namespace Config {
       merged.instructions = Array.from(new Set([...target.instructions, ...source.instructions]))
     }
     return merged
+  }
+
+  async function trustInputs() {
+    if (Flag.OPENCODE_DISABLE_PROJECT_CONFIG) return []
+    const files = new Set<string>()
+    for (const file of await ConfigPaths.projectFiles("opencode", Instance.directory, Instance.worktree)) {
+      files.add(file)
+    }
+    for await (const dir of Filesystem.up({
+      targets: [".opencode"],
+      start: Instance.directory,
+      stop: Instance.worktree,
+    })) {
+      const matches = await Glob.scan("**/*", {
+        cwd: dir,
+        absolute: true,
+        include: "file",
+        dot: true,
+        symlink: true,
+      })
+      for (const match of matches) files.add(match)
+    }
+    for await (const dir of Filesystem.up({
+      targets: [".claude", ".agents"],
+      start: Instance.directory,
+      stop: Instance.worktree,
+    })) {
+      const matches = await Glob.scan("skills/**/SKILL.md", {
+        cwd: dir,
+        absolute: true,
+        include: "file",
+        dot: true,
+        symlink: true,
+      })
+      for (const match of matches) files.add(match)
+    }
+    return [...files]
   }
 
   export const state = Instance.state(async () => {
@@ -120,10 +197,25 @@ export namespace Config {
       log.debug("loaded custom config", { path: Flag.OPENCODE_CONFIG })
     }
 
+    const trustFiles = await trustInputs()
+    let trustedContents: Record<string, string | null> = {}
+    if (trustFiles.length) {
+      const trustData = await Trust.hash(trustFiles)
+      trustedContents = trustData.contents
+      const trust = await Trust.ensure(Instance.project.id, trustData.hash, { directory: Instance.directory })
+      if (!trust.approved) {
+        console.log("TRUST FAILED:", { id: Instance.project.id, expected: trustData.hash, trust })
+        const message =
+          "Untrusted or modified workspace configuration detected. Please review the workspace and run 'opencode trust' to proceed."
+        console.error(message)
+        throw new Error(message)
+      }
+    }
+
     // Project config overrides global and remote config.
     if (!Flag.OPENCODE_DISABLE_PROJECT_CONFIG) {
       for (const file of await ConfigPaths.projectFiles("opencode", Instance.directory, Instance.worktree)) {
-        result = mergeConfigConcatArrays(result, await loadFile(file))
+        result = mergeConfigConcatArrays(result, await loadFile(file, trustedContents[file]))
       }
     }
 
@@ -143,8 +235,9 @@ export namespace Config {
     for (const dir of unique(directories)) {
       if (dir.endsWith(".opencode") || dir === Flag.OPENCODE_CONFIG_DIR) {
         for (const file of ["opencode.jsonc", "opencode.json"]) {
-          log.debug(`loading config from ${path.join(dir, file)}`)
-          result = mergeConfigConcatArrays(result, await loadFile(path.join(dir, file)))
+          const fullPath = path.join(dir, file)
+          log.debug(`loading config from ${fullPath}`)
+          result = mergeConfigConcatArrays(result, await loadFile(fullPath, trustedContents[fullPath]))
           // to satisfy the type checker
           result.agent ??= {}
           result.mode ??= {}
@@ -822,6 +915,7 @@ export namespace Config {
         .max(100)
         .optional()
         .describe("CPU limit as percentage for sandboxed processes (Linux only). Default: 100."),
+      envPassthrough: z.array(z.string()).optional(),
     })
     .strict()
 
@@ -1332,6 +1426,7 @@ export namespace Config {
     .object({
       $schema: z.string().optional().describe("JSON schema reference for configuration validation"),
       logLevel: Log.Level.optional().describe("Log level"),
+      hardened: z.boolean().optional().describe("Enable hardened mode for security-sensitive execution paths"),
       server: Server.optional().describe("Server configuration for opencode serve and web commands"),
       command: z
         .record(z.string(), Command)
@@ -1571,9 +1666,9 @@ export namespace Config {
 
   export const { readFile } = ConfigPaths
 
-  async function loadFile(filepath: string): Promise<Info> {
+  async function loadFile(filepath: string, preloadedContent?: string | null): Promise<Info> {
     log.info("loading", { path: filepath })
-    const text = await readFile(filepath)
+    const text = preloadedContent !== undefined ? preloadedContent : await readFile(filepath)
     if (!text) return {}
     return load(text, { path: filepath })
   }
