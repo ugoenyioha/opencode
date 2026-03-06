@@ -6,6 +6,7 @@ import DESCRIPTION from "./bash.txt"
 import { Log } from "../util/log"
 import { Instance } from "../project/instance"
 import { lazy } from "@/util/lazy"
+import type Parser from "web-tree-sitter"
 import { Language } from "web-tree-sitter"
 
 import { $ } from "bun"
@@ -26,6 +27,7 @@ import { FirecrackerSandbox } from "@/sandbox/firecracker"
 import { BwrapSandbox } from "@/sandbox/bwrap"
 import { LinuxSandbox } from "@/sandbox/linux"
 import { GvisorSandbox } from "@/sandbox/gvisor"
+import { hardenedMode } from "@/config/hardened"
 
 const MAX_METADATA_LENGTH = 30_000
 const DEFAULT_TIMEOUT = Flag.OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
@@ -135,7 +137,7 @@ export const BashTool = Tool.define("bash", async () => {
     parameters: z.object({
       command: z.string().describe("The command to execute"),
       timeout: z.number().describe("Optional timeout in milliseconds").optional(),
-      unsafe: z.boolean().describe("Allow unsafe shell execution").optional(),
+      unsafe: z.boolean().optional().describe("Allow unsafe shell execution"),
       workdir: z
         .string()
         .describe(
@@ -162,16 +164,6 @@ export const BashTool = Tool.define("bash", async () => {
       if (!Instance.containsPath(cwd)) directories.add(cwd)
       const patterns = new Set<string>()
       const always = new Set<string>()
-
-      const hardenedMode = async () => {
-        if (process.env.OPENCODE_HARDENED_MODE === "true") return true
-        try {
-          const config = await require("../config/config").Config.get()
-          return config?.hardened ?? false
-        } catch {
-          return false
-        }
-      }
 
       const stripQuotes = (s: string) => {
         if (s.length >= 2 && ((s.startsWith("'") && s.endsWith("'")) || (s.startsWith('"') && s.endsWith('"')))) {
@@ -210,7 +202,7 @@ export const BashTool = Tool.define("bash", async () => {
         return acc
       }, {})
 
-      const commandArgs = (node: any) => {
+      const commandArgs = (node: NonNullable<(typeof commands)[number]>): string[] => {
         const argv: string[] = []
         for (let i = 0; i < node.childCount; i++) {
           const child = node.child(i)
@@ -221,7 +213,8 @@ export const BashTool = Tool.define("bash", async () => {
             child.type !== "word" &&
             child.type !== "string" &&
             child.type !== "raw_string" &&
-            child.type !== "concatenation"
+            child.type !== "concatenation" &&
+            child.type !== "number"
           ) {
             continue
           }
@@ -242,11 +235,9 @@ export const BashTool = Tool.define("bash", async () => {
 
       const isUnsafe = unsafeNodes.length > 0 || hasMultipleCommands || isUnsafeInterpreter
       if (isUnsafe && !params.unsafe) {
-        if (await hardenedMode()) {
-          throw new Error(
-            "Unsafe shell syntax or direct interpreter execution detected. Split into simpler commands or re-run with unsafe: true to acknowledge.",
-          )
-        }
+        throw new Error(
+          "Unsafe shell syntax or direct interpreter execution detected. Split into simpler commands or re-run with unsafe: true to acknowledge.",
+        )
       }
 
       for (const node of commands) {
@@ -345,7 +336,7 @@ export const BashTool = Tool.define("bash", async () => {
       const sandboxOpts = {
         command: params.unsafe
           ? [shell, shellFlags, "--", params.command]
-          : commands.length > 0
+          : commands.length > 0 && commands[0]
             ? commandArgs(commands[0])
             : [],
         workdir: cwd,
@@ -362,9 +353,10 @@ export const BashTool = Tool.define("bash", async () => {
 
       const execArgs = params.unsafe
         ? [shell, shellFlags, "--", params.command]
-        : commands.length > 0
+        : commands.length > 0 && commands[0]
           ? commandArgs(commands[0])
           : []
+      console.log("BASH EXEC ARGS:", execArgs)
       if (execArgs.length === 0) {
         throw new Error("No command to execute")
       }

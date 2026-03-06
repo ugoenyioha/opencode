@@ -9,6 +9,8 @@ import { Agent } from "../agent/agent"
 import type z from "zod"
 import os from "os"
 
+import { hardenedMode } from "../config/hardened"
+
 export namespace Sandbox {
   export type Options = {
     command: string[]
@@ -42,6 +44,13 @@ export namespace Sandbox {
    */
   export async function getEffectiveConfig(agentName?: string): Promise<z.infer<typeof Config.Sandbox>> {
     const config = await Config.get()
+
+    // Feature gate: Sandbox execution is only allowed in hardened mode
+    const isHardened = await hardenedMode()
+    if (!isHardened) {
+      return { bash: "none" }
+    }
+
     const globalSandbox = config.sandbox ?? {}
 
     if (!agentName) {

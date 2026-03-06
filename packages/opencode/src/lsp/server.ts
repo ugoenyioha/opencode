@@ -14,7 +14,7 @@ import { Archive } from "../util/archive"
 import { Process } from "../util/process"
 import { Checksum } from "../util/checksum"
 import { Config } from "../config/config"
-
+import { hardenedMode } from "../config/hardened"
 
 export namespace LSPServer {
   const log = Log.create({ service: "lsp.server" })
@@ -63,11 +63,6 @@ export namespace LSPServer {
       })
       return false
     }
-  }
-
-  const hardenedMode = async () => {
-    if (process.env.OPENCODE_HARDENED_MODE === "true") return true
-    try { const config = await require("../config/config").Config.get(); return config?.hardened ?? false } catch { return false }
   }
 
   const isWorkspace = async (input: string) => {

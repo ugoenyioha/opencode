@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test, beforeAll, afterAll, beforeEach, afterEach } from "bun:test"
 import path from "path"
 import { BashTool } from "../../src/tool/bash"
 import { Instance } from "../../src/project/instance"
@@ -18,10 +18,14 @@ const ctx = {
 
 const backend = Sandbox.available()
 const hasSandbox = backend !== "none"
-const supportsFilesystemIsolation = backend === "bwrap" || backend === "sandbox-exec"
+// Darwin sandbox-exec currently allows file-read*, only bwrap truly restricts reads
+const supportsFilesystemIsolation = backend === "bwrap"
 const curlBinary = Bun.which("curl")
 
-async function runBash(directory: string, params: { command: string; description: string; timeout?: number }) {
+async function runBash(
+  directory: string,
+  params: { command: string; description: string; timeout?: number; unsafe?: boolean },
+) {
   return Instance.provide({
     directory,
     fn: async () => {
@@ -32,6 +36,21 @@ async function runBash(directory: string, params: { command: string; description
 }
 
 describe("sandbox security hardening", () => {
+  let originalHardened: string | undefined
+
+  beforeEach(() => {
+    originalHardened = process.env.OPENCODE_HARDENED_MODE
+    process.env.OPENCODE_HARDENED_MODE = "true"
+  })
+
+  afterEach(() => {
+    if (originalHardened !== undefined) {
+      process.env.OPENCODE_HARDENED_MODE = originalHardened
+    } else {
+      delete process.env.OPENCODE_HARDENED_MODE
+    }
+  })
+
   if (!hasSandbox) {
     test.skip(`bash sandbox unavailable on ${process.platform}`, () => {})
     return
@@ -138,6 +157,7 @@ describe("sandbox security hardening", () => {
       command: "while true; do :; done",
       description: "Spin CPU to trigger timeout",
       timeout: 250,
+      unsafe: true,
     })
 
     expect(

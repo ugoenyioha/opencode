@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test, beforeAll, afterAll, beforeEach, afterEach } from "bun:test"
 import os from "os"
 import path from "path"
 import { BashTool } from "../../src/tool/bash"
@@ -88,6 +88,7 @@ describe("tool.bash permissions", () => {
           {
             command: "echo foo && echo bar",
             description: "Echo twice",
+            unsafe: true,
           },
           testCtx,
         )
@@ -284,7 +285,10 @@ describe("tool.bash permissions", () => {
             requests.push(req)
           },
         }
-        await bash.execute({ command: "cat > /tmp/output.txt", description: "Redirect ls output" }, testCtx)
+        await bash.execute(
+          { command: "cat > /tmp/output.txt", description: "Redirect ls output", unsafe: true },
+          testCtx,
+        )
         const bashReq = requests.find((r) => r.permission === "bash")
         expect(bashReq).toBeDefined()
         expect(bashReq!.patterns).toContain("cat > /tmp/output.txt")
@@ -329,6 +333,9 @@ describe("tool.bash truncation", () => {
           },
           ctx,
         )
+        if (!(result.metadata as any).truncated) {
+          console.log("RESULT OUTPUT:", result.output)
+        }
         expect((result.metadata as any).truncated).toBe(true)
         expect(result.output).toContain("truncated")
         expect(result.output).toContain("The tool call succeeded but the output was truncated")
@@ -346,6 +353,7 @@ describe("tool.bash truncation", () => {
           {
             command: `head -c ${byteCount} /dev/zero | tr '\\0' 'a'`,
             description: "Generate bytes exceeding limit",
+            unsafe: true,
           },
           ctx,
         )
@@ -404,6 +412,21 @@ describe("tool.bash truncation", () => {
 })
 
 describe("sandbox mode semantics", () => {
+  let originalHardened: string | undefined
+
+  beforeEach(() => {
+    originalHardened = process.env.OPENCODE_HARDENED_MODE
+    process.env.OPENCODE_HARDENED_MODE = "true"
+  })
+
+  afterEach(() => {
+    if (originalHardened !== undefined) {
+      process.env.OPENCODE_HARDENED_MODE = originalHardened
+    } else {
+      delete process.env.OPENCODE_HARDENED_MODE
+    }
+  })
+
   test("explicit bwrap mode fails when bwrap unavailable", async () => {
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({
@@ -651,6 +674,10 @@ describe("sandbox mode semantics", () => {
         const originalAvailable = Sandbox.available
         Sandbox.available = () => "gvisor"
 
+        const { GvisorSandbox } = (await import("../../src/sandbox/gvisor")) as any
+        const originalGvisorAvailable = GvisorSandbox.available
+        GvisorSandbox.available = () => true
+
         const originalSpawnWith = Sandbox.spawnWith
         let calledMode: string | null = null
         Sandbox.spawnWith = ((mode: any) => {
@@ -682,6 +709,8 @@ describe("sandbox mode semantics", () => {
           Config.get = originalGet
           Sandbox.available = originalAvailable
           Sandbox.spawnWith = originalSpawnWith
+          const { GvisorSandbox } = (await import("../../src/sandbox/gvisor")) as any
+          GvisorSandbox.available = originalGvisorAvailable
         }
       },
     })
