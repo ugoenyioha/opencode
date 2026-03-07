@@ -1,0 +1,39 @@
+@startuml
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title OpenCode Sandbox Subsystem (V2.1) — C4 Component Diagram
+
+Container_Boundary(sandbox_subsystem, "Sandbox Subsystem") {
+    Component(config_resolver, "Config Resolver", "TypeScript", "Reads global & agent configs. Consults Hardened Mode flag.")
+    
+    Component(lattice, "Restrictiveness Lattice", "TypeScript", "Merges configs safely. Agents can only escalate isolation (none -> bwrap), never downgrade.")
+    
+    Component(intent_gate, "Application Intent Gates", "TypeScript", "AST Parsing (G5), SSRF DNS Validation (G8), LSP Symlink validation (G6).")
+    
+    Component(dispatch, "Sandbox Dispatch", "src/sandbox/index.ts", "Determines final backend based on platform availability and lattice.")
+
+    Component(bwrap, "Bubblewrap Backend", "src/sandbox/bwrap.ts", "Linux namespaces. --unshare-all, --ro-bind.")
+    Component(gvisor, "gVisor Backend", "src/sandbox/gvisor.ts", "Go app kernel. runsc --rootless do.")
+    Component(seatbelt, "Seatbelt Backend", "src/sandbox/darwin.ts", "macOS sandbox-exec. Dynamically generated profile.")
+    Component(wasm, "Extism WASM Backend", "src/sandbox/wasm.ts", "WASI capability isolation.")
+}
+
+Component(agent, "Agent Loop", "Execution Context", "Requests tool execution with parameters")
+Component(host_os, "Host OS", "Kernel", "Executes isolated processes")
+
+Rel(agent, config_resolver, "Triggers execution")
+Rel(config_resolver, lattice, "Passes configs")
+Rel(lattice, intent_gate, "If hardened, checks intent")
+Rel(intent_gate, dispatch, "Forwards validated payload")
+
+Rel(dispatch, bwrap, "Spawns if available & selected")
+Rel(dispatch, gvisor, "Spawns if available & selected")
+Rel(dispatch, seatbelt, "Spawns if available & selected")
+Rel(dispatch, wasm, "Spawns if WASM tool")
+
+Rel(bwrap, host_os, "Unprivileged namespace isolation")
+Rel(gvisor, host_os, "Syscall interception")
+Rel(seatbelt, host_os, "Kernel MAC policy enforcement")
+Rel(wasm, host_os, "WASI capability bounds")
+
+@enduml
