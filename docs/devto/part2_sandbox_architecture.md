@@ -1,6 +1,6 @@
 # Building Sandboxes into OpenCode: If You Give an LLM a Shell, You Lose (Part 2)
 
-In [Part 1](LINK_TO_PART_1), we mapped the threat landscape: 37 vulnerabilities across 15+ AI IDEs, distilled into 25 repeatable vulnerability patterns across four categories — zero-click config autoloads, prompt injection, data exfiltration, and TOCTOU trust persistence. Every major tool was affected. The Mindgard research team defined 9 security gates (G1–G9) that systematically block these patterns. The conclusion was blunt: permission dialogues are the new Flash. Sandboxing is the only structural answer.
+In [Part 1](https://dev.to/uenyioha/37-vulnerabilities-exposed-across-15-ai-ides-the-threat-model-every-agent-builder-must-understand-3f5), we mapped the threat landscape: 37 vulnerabilities across 15+ AI IDEs, distilled into 25 repeatable vulnerability patterns across four categories — zero-click config autoloads, prompt injection, data exfiltration, and TOCTOU trust persistence. Every major tool was affected. The Mindgard research team defined 9 security gates (G1–G9) that systematically block these patterns. The conclusion was blunt: permission dialogues are the new Flash. Sandboxing is the only structural answer.
 
 This is Part 2. This is where we show the code.
 
@@ -499,7 +499,7 @@ The `--unshare-all` and seccomp techniques in this article are the right tools f
 
 ---
 
-_This article is Part 2 of a two-part series on AI agent security. [Part 1](LINK_TO_PART_1) covers the threat landscape — 37 vulnerabilities across 15 AI IDEs, 25 vulnerability patterns, and the 9 security gates every agent builder must understand._
+_This article is Part 2 of a two-part series on AI agent security. [Part 1](https://dev.to/uenyioha/37-vulnerabilities-exposed-across-15-ai-ides-the-threat-model-every-agent-builder-must-understand-3f5) covers the threat landscape — 37 vulnerabilities across 15 AI IDEs, 25 vulnerability patterns, and the 9 security gates every agent builder must understand._
 
 _Based on the sandbox architecture we built into [OpenCode](https://github.com/anomalyco/opencode). Code refs: `packages/opencode/src/sandbox/{index,bwrap,darwin,gvisor,wasm,wasm-host}.ts`, `src/worktree/index.ts`, `src/tool/{bash,webfetch,task}.ts`._
 

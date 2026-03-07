@@ -1,6 +1,6 @@
 # Building Sandboxes into OpenCode: Context Engineering an Adversarial Red Team (Part 3)
 
-In [Part 1](LINK_TO_PART_1), we mapped the threat landscape: 37 vulnerabilities across 15+ AI IDEs. In [Part 2](LINK_TO_PART_2), we showed the code: how we built a multi-tiered, defense-in-depth "Smart Sandbox" into OpenCode using OS primitives (bwrap, Seatbelt, gVisor) and application-layer intent checking (AST parsing, SSRF DNS resolution).
+In [Part 1](https://dev.to/uenyioha/37-vulnerabilities-exposed-across-15-ai-ides-the-threat-model-every-agent-builder-must-understand-3f5), we mapped the threat landscape: 37 vulnerabilities across 15+ AI IDEs. In [Part 2](LINK_TO_PART_2), we showed the code: how we built a multi-tiered, defense-in-depth "Smart Sandbox" into OpenCode using OS primitives (bwrap, Seatbelt, gVisor) and application-layer intent checking (AST parsing, SSRF DNS resolution).
 
 ## The Genesis: Pulling the Mindgard Transcript
 
