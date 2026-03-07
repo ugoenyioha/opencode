@@ -197,13 +197,31 @@ echo 'evil' >> ~/.bashrc    # → Operation not permitted
 echo 'evil' >> ~/.gitconfig # → Operation not permitted
 ```
 
-### The MCP Server Gap (Honest Assessment)
+### The MCP Server Gap: Design Tensions in Plugin Architecture
 
-Here's where we'll be blunt: the Codex zero-click exploit demonstrated that **MCP servers are a distinct attack surface from agent tool calls**. Our sandbox dispatch wraps tool execution, but MCP server processes currently spawn in the host context. Containing these at the OS level requires either (a) spawning MCP servers inside the same sandbox namespace as the agent, or (b) running them in their own isolated sandbox. Both approaches currently break MCP protocol assumptions in ways that require fundamental protocol changes.
+Here's where we'll be blunt: the Codex zero-click exploit demonstrated that **MCP servers are a distinct attack surface from agent tool calls**.
 
-**The Mitigation (Gate 1):** While we cannot sandbox the MCP process, we _did_ fix the zero-click vulnerability that made this gap so dangerous. Because we implemented **Workspace Trust Initialization (G1)** using SHA-256 content-hashing, a malicious repository containing an `.mcp.json` file can no longer automatically spawn a rogue server. OpenCode intercepts the untrusted config on boot, throws a hard error, and halts execution before the MCP server is ever launched.
+Our sandbox dispatch strictly wraps ephemeral tool execution (like `bash` or `webfetch`), but MCP server processes currently spawn in the host context, natively on your machine. This is currently the industry standard across tools like Claude Desktop and Cursor.
+
+Why doesn't the industry just sandbox every MCP server by default? **Capability Heterogeneity.**
+If we apply a strict, "dumb" sandbox (like our default `bwrap` configuration) to all MCP servers, we break the ecosystem. A PostgreSQL MCP connector _needs_ network access. An AWS manager MCP _needs_ to read `~/.aws/credentials`. If we drop their network interfaces and read-only their filesystems, they crash.
+
+**The Current Mitigation (Gate 1):**
+While we cannot universally sandbox the MCP process without breaking functionality, we _did_ fix the zero-click vulnerability that made this gap so dangerous. Because we implemented **Workspace Trust Initialization (G1)** using SHA-256 content-hashing, a malicious repository containing an `.mcp.json` file can no longer automatically spawn a rogue server. OpenCode intercepts the untrusted config on boot, throws a hard error, and halts execution before the MCP server is ever launched.
 
 If a developer explicitly types `opencode trust` on a malicious repo, they grant that MCP server access to their host. But the zero-click supply-chain vector is dead.
+
+**The Three Paths Forward:**
+Engineering is about structural tradeoffs. To definitively solve the MCP execution gap, the AI infrastructure industry is wrestling with three distinct architectural paths:
+
+1. **The WASM-Only Mandate:** Force all MCP servers to compile to WebAssembly and run them inside a WASI runtime (like Extism) with strict capability-based constraints.
+   - _The Tension:_ While you _can_ compile Python or JavaScript to WASM (typically by bundling the entire interpreter into the `.wasm` binary), it creates massive file sizes, breaks C-extensions (like `numpy`), and lacks threading. It would break compatibility with 99% of existing servers.
+2. **The "Bring Your Own Docker" Sidecar:** Run long-lived background Docker containers specifically for executing untrusted MCPs, passing stdio over the container boundary.
+   - _The Tension:_ High security, but high developer friction. The sidecar doesn't share the host filesystem. If an MCP is designed to read your local Git state, the developer has to manually orchestrate complex volume mounts. (Note: Power users can do this in OpenCode _today_ by simply setting their MCP command to `docker run -i --rm`).
+3. **The Restrictiveness Lattice Extension:** MCP servers declare their required capabilities in their manifest. The runtime routes their execution through our OS sandbox dispatcher (`bwrap`/`Seatbelt`), enforcing the global config lattice.
+   - _The Tension:_ If a workspace MCP requests unsafe capabilities, it requires interrupting the developer with an interactive prompt: _"This workspace MCP requests Network access. Allow?"_
+
+For now, OpenCode relies on the G1 Trust Initialization hash to prevent drive-by MCP executions, while giving power users the flexibility to bring their own Docker isolation via configuration.
 
 ---
 
