@@ -18,10 +18,10 @@ This forced us to design a multi-tiered defense-in-depth approach using lightwei
 
 ## The Architecture
 
-[![OpenCode Sandbox Architecture — C4 Container Diagram](https://raw.githubusercontent.com/ugoenyioha/devto-blog-assets/16b79d6/zero-trust-sandbox/c4-container.png)](https://raw.githubusercontent.com/ugoenyioha/devto-blog-assets/16b79d6/zero-trust-sandbox/c4-container.svg)
+[![OpenCode Sandbox Architecture — C4 Container Diagram](https://raw.githubusercontent.com/ugoenyioha/devto-blog-assets/a2188a1/zero-trust-sandbox/c4-container.png)](https://raw.githubusercontent.com/ugoenyioha/devto-blog-assets/a2188a1/zero-trust-sandbox/c4-container.svg)
 _Figure 1: C4 Container-level diagram — User prompts flow through the HTTP server, agent loop, and permission layer into the sandbox dispatch. The dispatch probes for available backends (Firecracker → gVisor → bwrap → Seatbelt → none) and spawns the most restrictive option. Click to open full-resolution SVG._
 
-[![OpenCode Sandbox Subsystem — C4 Component Diagram](https://raw.githubusercontent.com/ugoenyioha/devto-blog-assets/16b79d6/zero-trust-sandbox/c4-component.png)](https://raw.githubusercontent.com/ugoenyioha/devto-blog-assets/16b79d6/zero-trust-sandbox/c4-component.svg)
+[![OpenCode Sandbox Subsystem — C4 Component Diagram](https://raw.githubusercontent.com/ugoenyioha/devto-blog-assets/a2188a1/zero-trust-sandbox/c4-component.png)](https://raw.githubusercontent.com/ugoenyioha/devto-blog-assets/a2188a1/zero-trust-sandbox/c4-component.svg)
 _Figure 2: C4 Component-level diagram — Zooming into the sandbox subsystem. Global and agent configs are merged via the restrictiveness lattice (agents can only escalate, never downgrade). Click to open full-resolution SVG._
 
 ---
