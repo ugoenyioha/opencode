@@ -303,11 +303,10 @@ export const BashTool = Tool.define("bash", async () => {
         })
       }
 
-      const shellEnv = await Plugin.trigger(
-        "shell.env",
-        { cwd, sessionID: ctx.sessionID, callID: ctx.callID },
-        { env: {}, isSnapshotValid: false },
-      )
+      const shellEnv = await Plugin.trigger("shell.env", { cwd, sessionID: ctx.sessionID, callID: ctx.callID }, {
+        env: {},
+        isSnapshotValid: false,
+      } as { env: Record<string, string>; isSnapshotValid: boolean; passthrough?: string[] })
       const sandboxConfig = await Sandbox.getEffectiveConfig(ctx.agent)
       const mode = sandboxConfig.bash ?? "none"
       const available = Sandbox.available()
@@ -333,6 +332,17 @@ export const BashTool = Tool.define("bash", async () => {
 
       const shellFlags = shellEnv.isSnapshotValid ? "-c" : "-lc"
 
+      // Merge all env sources, then scrub once with combined passthrough.
+      // This closes the ShellEnvPlugin leak where shellEnv.env was applied
+      // after scrubEnv, allowing secrets captured by `bash -lc` to bypass scrubbing.
+      const passthrough = [
+        ...(sandboxConfig.envPassthrough ?? []),
+        ...Flag.OPENCODE_ENV_PASSTHROUGH,
+        ...(shellEnv.passthrough ?? []),
+      ]
+      const merged = { ...process.env, ...shellEnv.env, ...env }
+      const scrubbedEnv = scrubEnv(merged, passthrough)
+
       const sandboxOpts = {
         command: params.unsafe
           ? [shell, shellFlags, "--", params.command]
@@ -344,11 +354,7 @@ export const BashTool = Tool.define("bash", async () => {
         writable: [cwd, ...(sandboxConfig.writable ?? [])],
         memory: sandboxConfig.memory_mb,
         cpu: sandboxConfig.cpu_percent,
-        env: {
-          ...scrubEnv(process.env),
-          ...shellEnv.env,
-          ...env,
-        },
+        env: scrubbedEnv,
       }
 
       const execArgs = params.unsafe
@@ -366,11 +372,7 @@ export const BashTool = Tool.define("bash", async () => {
           ? spawn(execArgs[0], execArgs.slice(1), {
               shell: false,
               cwd,
-              env: {
-                ...scrubEnv(process.env),
-                ...shellEnv.env,
-                ...env,
-              },
+              env: scrubbedEnv,
               stdio: ["ignore", "pipe", "pipe"],
               detached: process.platform !== "win32",
             })

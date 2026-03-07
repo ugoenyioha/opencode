@@ -327,7 +327,7 @@ export interface Hooks {
   ) => Promise<void>
   "shell.env"?: (
     input: { cwd: string; sessionID?: string; callID?: string },
-    output: { env: Record<string, string>; isSnapshotValid?: boolean },
+    output: { env: Record<string, string>; isSnapshotValid?: boolean; passthrough?: string[] },
   ) => Promise<void>
   "tool.execute.after"?: (
     input: { tool: string; sessionID: string; callID: string; args: any },

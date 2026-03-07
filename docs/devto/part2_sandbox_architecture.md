@@ -315,6 +315,35 @@ What IS enforced at the OS level: bash tool commands genuinely cannot make netwo
 # → curl: (6) Could not resolve host (--unshare-net removed the NIC)
 ```
 
+### The Phantom Proxy: Defeating HTTP Exfiltration
+
+We can block network egress and sanitize prompts, but developers inevitably ask: _"How do I let my agent test against my local Postgres database without giving it my password?"_
+
+For HTTP/SaaS APIs (like OpenAI or GitHub), we solved this by building a **Phantom Proxy** inside the OpenCode supervisor process. When an agent is spun up, we inject a _phantom token_ (a random 64-character hex string) into the sandbox, alongside a modified `BASE_URL` pointing back to our local proxy (e.g., `http://127.0.0.1:4096/phantom/openai`).
+
+The agent sends requests with the fake token. The proxy intercepts them, verifies the token using a constant-time comparison, strips the fake token, injects the _real_ host credential (which never entered the sandbox), and proxies the request to the upstream API. This is heavily inspired by the Phantom Token Pattern by [nono.sh](https://nono.sh/blog/blog-credential-injection).
+
+If an attacker steals the agent's environment variables, they only get a useless phantom token that is completely invalid outside the local network.
+
+### The Final Frontier: Database Credentials
+
+**But databases don't speak HTTP.**
+Databases use custom, binary TCP wire protocols. The password is mathematically embedded or hashed directly into the initial connection handshake. A simple proxy cannot intercept a binary TCP stream, locate the "phantom password" bytes, swap them for the real password, and forward the stream without acting as a full, protocol-aware database proxy (like PgBouncer). Building and maintaining protocol parsers for Postgres, MySQL, Redis, and MongoDB just to swap tokens is an immense engineering cliff.
+
+Other options are equally fraught:
+
+- **UNIX Socket FD Brokering:** The host authenticates to the DB and uses `SCM_RIGHTS` to pass the raw, connected File Descriptor into the sandbox. _The Problem:_ High-level ORMs like Prisma expect a connection string, not an arbitrary file descriptor.
+- **JIT Dynamic Credentials:** Integrating with Vault or AWS IAM to generate passwords that expire in 15 minutes. _The Problem:_ Pushes massive infrastructure complexity onto the local developer.
+
+**The OpenCode Stance on Databases (OPENCODE_ENV_PASSTHROUGH):**
+Because Phantom Proxies only work for HTTP/REST APIs, we needed a way for developers to pass binary connection strings (like Postgres passwords) to the agent when required. We introduced `OPENCODE_ENV_PASSTHROUGH`, a comma-separated list of environment variables that are explicitly allowed to bypass our environment scrubber.
+
+```bash
+OPENCODE_ENV_PASSTHROUGH="DATABASE_URL" opencode run "migrate my database"
+```
+
+Combined with our strict Network Egress denylist (Gate 8) and OS-level `network: false` namespaces, the agent gets the real database password, but is physically blocked by the OS from dialing out to exfiltrate it to the internet.
+
 ---
 
 ## Deep Dive 3: Defeating TOCTOU

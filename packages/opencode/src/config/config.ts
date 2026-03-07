@@ -888,6 +888,22 @@ export namespace Config {
     })
     .strict()
 
+  export const ProxyCredential = z
+    .object({
+      upstream: z.string().url().describe("Upstream proxy URL this credential applies to"),
+      injectHeader: z.string().default("Authorization").describe("HTTP header to inject the credential into"),
+      credentialFormat: z
+        .string()
+        .default("Bearer {}")
+        .describe("Format string for the credential value ({} is replaced with the token)"),
+      envVarKey: z.string().describe("Name of the environment variable containing the secret token"),
+      baseUrlEnvVar: z
+        .string()
+        .describe("Environment variable that should be overridden to point to the local phantom proxy"),
+    })
+    .strict()
+  export type ProxyCredential = z.infer<typeof ProxyCredential>
+
   export const Sandbox = z
     .object({
       wasm: SandboxWasm.optional(),
@@ -916,6 +932,10 @@ export namespace Config {
         .optional()
         .describe("CPU limit as percentage for sandboxed processes (Linux only). Default: 100."),
       envPassthrough: z.array(z.string()).optional(),
+      proxyCredentials: z
+        .record(z.string(), ProxyCredential)
+        .optional()
+        .describe("Configuration for Phantom Proxy credential injection"),
     })
     .strict()
 

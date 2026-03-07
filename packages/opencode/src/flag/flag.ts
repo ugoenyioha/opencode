@@ -32,6 +32,7 @@ export namespace Flag {
   export const OPENCODE_TOOL_ENDPOINT_API_KEY = process.env["OPENCODE_TOOL_ENDPOINT_API_KEY"]
   export const OPENCODE_A2A_API_KEY = process.env["OPENCODE_A2A_API_KEY"]
   export const OPENCODE_ENABLE_QUESTION_TOOL = truthy("OPENCODE_ENABLE_QUESTION_TOOL")
+  export const OPENCODE_ENV_PASSTHROUGH = csv("OPENCODE_ENV_PASSTHROUGH")
 
   // Security
   export declare const OPENCODE_HARDENED_MODE: boolean
@@ -67,6 +68,15 @@ export namespace Flag {
     if (!value) return undefined
     const parsed = Number(value)
     return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined
+  }
+
+  function csv(key: string) {
+    const value = process.env[key]
+    if (!value) return []
+    return value
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
   }
 }
 

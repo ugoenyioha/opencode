@@ -1,0 +1,37 @@
+---
+title: "OpenCode Security Gate Coverage (G1–G9)"
+---
+block-beta
+  columns 3
+
+  block:header:3
+    columns 3
+    h1["🟢 Strong"]
+    h2["🟡 Partial / In Progress"]
+    h3["🔴 Not Addressed"]
+  end
+
+  g1["G1 Config Approval\n9 patterns blocked\n🟡 PARTIAL"]:1
+  g2["G2 Init Safety\n1 pattern blocked\n🟡 IN PROGRESS"]:1
+  g3["G3 Trust Integrity\n1 pattern blocked\n🟡 IN PROGRESS"]:1
+
+  g4["G4 File Write Restrict\n1 pattern blocked\n🟡 PARTIAL"]:1
+  g5["G5 Command Robust\n4 patterns blocked\n🟢 STRONG"]:1
+  g6["G6 Binary Security\n1 pattern blocked\n🔴 NOT ADDRESSED"]:1
+
+  g7["G7 Input Sanitization\n2 patterns blocked\n🔴 NOT ADDRESSED"]:1
+  g8["G8 Outbound Controls\n6 patterns blocked\n🟢 STRONG"]:1
+  g9["G9 Network Security\n1 pattern blocked\n🟢 FIXED"]:1
+
+  classDef strong fill:#2d6a4f,color:#fff,stroke:#1b4332
+  classDef partial fill:#e9c46a,color:#000,stroke:#e76f51
+  classDef notaddr fill:#e63946,color:#fff,stroke:#d62828
+  classDef headerBlock fill:#264653,color:#fff,stroke:#264653
+
+  class g5,g8,g9 strong
+  class g1,g2,g3,g4 partial
+  class g6,g7 notaddr
+  class header headerBlock
+  class h1 strong
+  class h2 partial
+  class h3 notaddr

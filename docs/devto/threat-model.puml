@@ -1,0 +1,102 @@
+@startuml AI IDE Threat Model - Data Flow Diagram
+!theme plain
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName "Segoe UI"
+skinparam defaultFontSize 11
+skinparam roundCorner 8
+skinparam padding 6
+skinparam nodesep 60
+skinparam ranksep 80
+skinparam rectangleFontSize 13
+skinparam wrapWidth 200
+
+title **AI Coding Agent Threat Model — Data Flow Diagram**\n//Mapping the 4 Mindgard Attack Vectors Across Trust Boundaries//
+
+' ── External Actor ──
+actor "**Attacker**" as attacker #FFD2D2
+
+' ── Trust Boundary 1: The Internet ──
+package "Trust Boundary: The Internet" as internet #FFF3E0 {
+  storage "Malicious\nGit Repository" as repo #FFE0B2
+  note right of repo
+    Contains:
+    • .codex/config.toml
+    • .gemini/settings.json
+    • .mcp.json
+    • Adversarial dir names
+    • Poisoned commits
+  end note
+}
+
+' ── Trust Boundary 2: The Workspace ──
+package "Trust Boundary: The Workspace" as workspace #E3F2FD {
+  collections "Config Files\n(.mcp.json, config.toml)" as configs #BBDEFB
+  collections "Behavior Rules\n(.cursorrules, claude.md)" as rules #BBDEFB
+  collections "Source & Dirs\n(directory names, .env)" as source #BBDEFB
+}
+
+' ── Trust Boundary 3: The AI IDE ──
+package "Trust Boundary: The AI IDE" as ide #E8F5E9 {
+  component "Tool Discovery\n& Executor" as executor #C8E6C9
+  component "Config Loader\n& Trust UI" as loader #C8E6C9
+  component "Agent Context\nWindow (LLM)" as agent #C8E6C9
+}
+
+' ── Trust Boundary 5: The Sandbox (Defense) ──
+package "Trust Boundary: The Sandbox" as sandbox #E0F7FA {
+  component "bwrap / gVisor /\nSeatbelt / WASM" as sandboxeng #B2EBF2
+  note bottom of sandboxeng
+    Defense layers:
+    • --unshare-all (bwrap)
+    • --network=none (gVisor)
+    • (deny default) (Seatbelt)
+    • allowedHosts: [] (WASM)
+  end note
+}
+
+' ── Trust Boundary 4: The Host OS ──
+package "Trust Boundary: The Host OS" as hostos #F3E5F5 {
+  component "Shell / Child\nProcesses" as shell #E1BEE7
+  database "Secrets\n(~/.ssh, .env,\nAWS creds)" as secrets #E1BEE7
+  component "Host Process\n(Node/Bun)" as host #E1BEE7
+}
+
+cloud "Network\nInterface" as network #E1BEE7
+
+' ── Normal Data Flows (blue) ──
+attacker -[#666]-> repo : Plants payload
+repo -[#4A90D9]-> workspace : git clone
+configs -[#4A90D9]-> loader : Loads config
+source -[#4A90D9]-> agent : Indexes workspace
+executor -[#4A90D9]-> sandboxeng : Tool calls\nvia sandbox
+sandboxeng -[#4A90D9]-> shell : Isolated execution
+
+' ── ATTACK VECTOR 1: Zero-Click Config Autoload (RED) ──
+configs -[#FF0000,bold,dashed]-> executor : [V1] Zero-Click
+executor -[#FF0000,bold,dashed]-> shell : MCP spawns\nOUTSIDE sandbox
+shell -[#FF0000,bold,dashed]-> network : Reverse shell
+
+' ── ATTACK VECTOR 2: Init Race Condition (ORANGE) ──
+rules -[#FF6600,bold,dashed]-> loader : [V2] Race Condition
+loader -[#FF6600,bold,dashed]-> shell : Fires BEFORE\ntrust dialog
+
+' ── ATTACK VECTOR 3: Adversarial Context Injection (PURPLE) ──
+source -[#9C27B0,bold,dashed]-> agent : [V3] Prompt Injection
+agent -[#9C27B0,bold,dashed]-> secrets : Reads .env
+host -[#9C27B0,bold,dashed]-> network : Exfiltrates data
+
+' ── ATTACK VECTOR 4: TOCTOU Trust Persistence (DARK RED) ──
+repo -[#B71C1C,bold,dashed]-> configs : [V4] TOCTOU\ngit pull modifies config
+configs -[#B71C1C,bold,dashed]-> loader : Trust NOT re-validated
+
+' ── Legend ──
+legend bottom right
+  |= Color |= Attack Vector |= Example |
+  | <#FF0000> | V1: Zero-Click Config Autoload | OpenAI Codex |
+  | <#FF6600> | V2: Init Race Condition | Google Gemini CLI |
+  | <#9C27B0> | V3: Adversarial Context Injection | Amazon Kiro |
+  | <#B71C1C> | V4: TOCTOU Trust Persistence | Claude Code / Cursor |
+  | <#4A90D9> | Normal data flow | — |
+endlegend
+
+@enduml

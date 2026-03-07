@@ -15,6 +15,7 @@ import { gitlabAuthPlugin as GitlabAuthPlugin } from "@gitlab/opencode-gitlab-au
 import { HttpAuthPlugin } from "./http-auth"
 import { A2APlugin } from "./a2a"
 import { ShellEnvPlugin } from "./shell-env"
+import { PhantomProxyPlugin } from "./phantom-proxy"
 import { Trust } from "../trust"
 
 export namespace Plugin {
@@ -30,6 +31,7 @@ export namespace Plugin {
     HttpAuthPlugin,
     A2APlugin,
     ShellEnvPlugin,
+    PhantomProxyPlugin,
   ]
 
   const state = Instance.state(async () => {
