@@ -384,21 +384,21 @@ Default: network `false`, no allowed hosts, no allowed paths. A WASM plugin that
 
 Mindgard's [security checklist](https://github.com/Mindgard/ai-ide-vuln-patterns/blob/main/CHECKLIST.md) defines **9 security gates** — chokepoints that systematically block entire categories of attacks. Here's where we are:
 
-| Gate                             | OpenCode Status                                                                                                            |
+| Gate                             | OpenCode Status (V2.1 Hardened Mode)                                                                                       |
 | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| **G1 — Config Approval**         | **Partial.** MCP configs gated; other workspace command fields not yet.                                                    |
-| **G2 — Initialization Safety**   | **In Progress.** Init sequence audit underway.                                                                             |
-| **G3 — Trust Integrity**         | **In Progress.** Content-addressed trust designed, not shipped (Deep Dive 3).                                              |
-| **G4 — File Write Restrictions** | **Partial.** Worktree provides implicit protection; explicit config-path blocking needed.                                  |
-| **G5 — Command Robustness**      | **Strong.** Bun template tags prevent argument injection structurally.                                                     |
-| **G6 — Binary Security**         | **Not Addressed.** `PATH` not yet sanitized.                                                                               |
-| **G7 — Input Sanitization**      | **Not Addressed.** Invisible Unicode not yet stripped.                                                                     |
-| **G8 — Outbound Controls**       | **Strong.** OS-level and WASM network isolation.                                                                           |
+| **G1 — Config Approval**         | **Strong.** Trust Module halts initialization if untrusted workspace files are detected.                                   |
+| **G2 — Initialization Safety**   | **Strong.** Trust hashing occurs *before* `bun install` or plugin discovery scripts can fire.                              |
+| **G3 — Trust Integrity**         | **Strong.** Content-addressed trust shipped. Modifying a trusted config invalidates the SHA-256 hash automatically.        |
+| **G4 — File Write Restrictions** | **Strong.** Worktree implicit protection + `sanitizeForStorage` blocks HTML/Unicode memory injection.                      |
+| **G5 — Command Robustness**      | **Strong.** AST Shell Parser intercepts unapproved pipes/redirects; explicit interpreter blocking in safe mode.            |
+| **G6 — Binary Security**         | **Strong.** Workspace `.bin` traversal explicitly blocked in LSP; symlinks validated via `fs.realpath`.                    |
+| **G7 — Input Sanitization**      | **Strong.** Invisible Unicode, soft hyphens, and Bidi-overrides aggressively stripped from inputs and system prompts.      |
+| **G8 — Outbound Controls**       | **Strong.** OS-level net isolation + Application-layer SSRF IP Pinning (blocks hex IPv4-mapped localhost).                 |
 | **G9 — Network Security**        | **Fixed.** [GHSA-vxw4-wv6m-9hhh](https://github.com/anomalyco/opencode/security/advisories/GHSA-vxw4-wv6m-9hhh) addressed. |
 
 [![OpenCode Security Gate Coverage (G1–G9)](https://raw.githubusercontent.com/ugoenyioha/devto-blog-assets/9aeafb9/zero-trust-sandbox/gate-coverage.png)](https://raw.githubusercontent.com/ugoenyioha/devto-blog-assets/9aeafb9/zero-trust-sandbox/gate-coverage.svg)
 
-**No AI IDE we've examined covers all 9 gates.** We cover G5, G8, G9 well. G6 and G7 are our highest-priority gaps.
+**With the V2.1 Hardened Mode release, OpenCode is the first AI IDE we've examined that explicitly covers all 9 security gates.**
 
 ---
 
