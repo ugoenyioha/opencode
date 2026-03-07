@@ -1,0 +1,56 @@
+@startuml
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+title OpenCode Sandbox Architecture & Hardened Mode — C4 Container Diagram
+
+Person(dev, "Developer", "Issues prompts via CLI or Web UI")
+
+System_Boundary(runtime, "OpenCode Runtime (Smart Sandbox)") {
+    Container(http, "HTTP Server", "Bun / Hono", "Receives prompts, manages sessions. Loopback Auth (G9).")
+    
+    Container(trust, "Trust Module", "SHA-256 Content Hash", "Workspace validation. Halts dependency install if untrusted (G1/G2/G3).")
+    
+    Container(sanitizer, "Input Sanitizer", "Data Filter", "Strips invisible Unicode & HTML comments from prompts and memory (G4/G7).")
+    
+    Container(loop, "Agent Loop", "TypeScript", "LLM orchestration + tool dispatch")
+    
+    Container(perm, "Permission & Config Layer", "TypeScript", "Enforces OPENCODE_HARDENED_MODE and restrictiveness lattice.")
+    
+    Container(ast, "AST Shell Parser", "Tree-sitter", "Semantic validation of bash commands. Blocks interpreters/pipes (G5).")
+    
+    Container(ssrf, "SSRF DNS Validator", "Network Layer", "App-layer IP Pinning. Blocks private/link-local/hex IPs (G8).")
+
+    Container(lsp, "LSP Guard", "Path Validator", "fs.realpath symlink validation. Blocks workspace .bin planting (G6).")
+
+    Container(dispatch, "Sandbox Dispatch", "src/sandbox/index.ts", "Platform probe waterfall: firecracker -> gvisor -> bwrap -> Seatbelt -> none")
+}
+
+System_Boundary(backends, "OS Kernel Sandboxes (Dumb Sandboxes)") {
+    Container(wasm, "Extism WASM", "WebAssembly runtime", "Capability-based access control. allowedPaths, allowedHosts.")
+    Container(firecracker, "Firecracker", "KVM microVM", "Hardware-level isolation. < 125ms boot.")
+    Container(gvisor, "gVisor (runsc)", "Go app kernel", "User-space syscall interception. No shared host kernel.")
+    Container(bwrap, "Bubblewrap (bwrap)", "User namespaces", "-unshare-all, -ro-bind OS dirs, -bind workdir only.")
+    Container(seatbelt, "Apple Seatbelt", "sandbox-exec SBPL", "(deny default) kernel policy. macOS native.")
+}
+
+Rel(dev, http, "Sends prompt", "HTTP")
+Rel(http, sanitizer, "Sanitizes prompt inputs")
+Rel(sanitizer, trust, "Triggers workspace init check")
+Rel(trust, loop, "Approves agent boot")
+
+Rel(loop, perm, "Requests tool execution")
+Rel(perm, ssrf, "Validates URL", "webfetch tool")
+Rel(perm, ast, "Validates Command", "bash tool")
+Rel(perm, lsp, "Validates Path", "LSP processes")
+
+Rel(ast, dispatch, "Spawns safe payload")
+Rel(ssrf, dispatch, "Spawns pinned IP request")
+Rel(lsp, dispatch, "Spawns verified binary")
+
+Rel(dispatch, wasm, "Executes plugin", "WASI")
+Rel(dispatch, firecracker, "Spawns microVM", "KVM")
+Rel(dispatch, gvisor, "Spawns runsc", "Linux")
+Rel(dispatch, bwrap, "Spawns bwrap jail", "Linux")
+Rel(dispatch, seatbelt, "Spawns sandbox-exec", "macOS")
+
+@enduml
