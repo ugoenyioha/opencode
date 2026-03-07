@@ -10,7 +10,7 @@ After watching an agent hallucinate a destructive command that wiped out local c
 
 ## Why Not Docker?
 
-We initially considered standard Docker containerization. **Docker was rejected because it proved far too heavy** for the ephemeral, millisecond-latency operations required by coding agents. Agents need to execute hundreds of tiny commands rapidly — `ls`, `cat`, `grep`, `git status` — each one a tool call. Docker's startup overhead (~300ms per container, plus layer resolution) made this untenable for an interactive CLI tool.
+We initially considered standard Docker containerization. **Docker was rejected because it proved far too heavy** for the ephemeral, millisecond-latency operations required by coding agents. Agents need to execute hundreds of tiny commands rapidly — `ls`, `cat`, `grep`, `git status` — each one a tool call. In our benchmarks, Docker's startup overhead (~400ms per container) made simple commands take **up to 2,000 times as long** as native execution. This kind of compounding latency is untenable for an interactive CLI tool.
 
 This forced us to design a multi-tiered defense-in-depth approach using lightweight OS-level sandboxing primitives that add microseconds, not hundreds of milliseconds.
 
@@ -387,7 +387,7 @@ Mindgard's [security checklist](https://github.com/Mindgard/ai-ide-vuln-patterns
 | Gate                             | OpenCode Status (V2.1 Hardened Mode)                                                                                       |
 | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | **G1 — Config Approval**         | **Strong.** Trust Module halts initialization if untrusted workspace files are detected.                                   |
-| **G2 — Initialization Safety**   | **Strong.** Trust hashing occurs *before* `bun install` or plugin discovery scripts can fire.                              |
+| **G2 — Initialization Safety**   | **Strong.** Trust hashing occurs _before_ `bun install` or plugin discovery scripts can fire.                              |
 | **G3 — Trust Integrity**         | **Strong.** Content-addressed trust shipped. Modifying a trusted config invalidates the SHA-256 hash automatically.        |
 | **G4 — File Write Restrictions** | **Strong.** Worktree implicit protection + `sanitizeForStorage` blocks HTML/Unicode memory injection.                      |
 | **G5 — Command Robustness**      | **Strong.** AST Shell Parser intercepts unapproved pipes/redirects; explicit interpreter blocking in safe mode.            |
