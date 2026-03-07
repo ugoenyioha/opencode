@@ -214,15 +214,15 @@ If a developer explicitly types `opencode trust` on a malicious repo, they grant
 **The Three Paths Forward:**
 Engineering is about structural tradeoffs. To definitively solve the MCP execution gap, the AI infrastructure industry is wrestling with three distinct architectural paths:
 
-1. **The WASM-Only Mandate:** Force all MCP servers to compile to WebAssembly and run them inside a WASI runtime with strict capability-based constraints. 
-   - *In the wild:* Projects like `mcp.run` are actively using **Extism** (the same WASM framework we use in OpenCode) to power WASM-based MCP servers. Tools like `Wasmcp` compile MCP servers into WebAssembly components.
-   - *The Tension:* While you *can* compile Python or JavaScript to WASM (typically by bundling the entire CPython interpreter into the `.wasm` binary), it creates massive file sizes, breaks C-extensions (like `numpy`), and lacks threading. Mandating WASM would break compatibility with 99% of existing servers.
+1. **The WASM-Only Mandate:** Force all MCP servers to compile to WebAssembly and run them inside a WASI runtime with strict capability-based constraints.
+   - _In the wild:_ Projects like `mcp.run` are actively using **Extism** (the same WASM framework we use in OpenCode) to power WASM-based MCP servers. Tools like `Wasmcp` compile MCP servers into WebAssembly components.
+   - _The Tension:_ While you _can_ compile Python or JavaScript to WASM (typically by bundling the entire CPython interpreter into the `.wasm` binary), it creates massive file sizes, breaks C-extensions (like `numpy`), and lacks threading. Mandating WASM would break compatibility with 99% of existing servers.
 2. **The "Bring Your Own Docker" Sidecar:** Run long-lived background Docker containers specifically for executing untrusted MCPs, passing stdio over the container boundary.
-   - *In the wild:* Docker recently released an "MCP Toolkit" advocating for exactly this. Dedicated CLI tools like `mcpmanager.ai` and the open-source `sandbox-mcp` exist solely to wrap MCP servers in Docker sidecars. 
-   - *The Tension:* High security, but high developer friction. The sidecar doesn't share the host filesystem. If an MCP is designed to read your local Git state, the developer has to manually orchestrate complex volume mounts. *(Note: Power users can do this in OpenCode today by simply setting their MCP command to `docker run -i --rm`)*.
-3. **The Restrictiveness Lattice Extension:** MCP servers declare their required capabilities in their manifest. The runtime routes their execution through an OS sandbox dispatcher (`bwrap`/`Seatbelt`), enforcing a global config lattice. 
-   - *In the wild:* This is the path OpenCode is charting, and variations of it are seen in **Claude Code**, which uses a strict read-only permission model requiring explicit user approval for network or file modifications.
-   - *The Tension:* If a workspace MCP requests unsafe capabilities, it requires interrupting the developer with an interactive prompt (e.g., *"This workspace MCP requests Network access. Allow?"*), which can lead to permission fatigue.
+   - _In the wild:_ Docker recently released an "MCP Toolkit" advocating for exactly this. Dedicated CLI tools like `mcpmanager.ai` and the open-source `sandbox-mcp` exist solely to wrap MCP servers in Docker sidecars.
+   - _The Tension:_ High security, but high developer friction. The sidecar doesn't share the host filesystem. If an MCP is designed to read your local Git state, the developer has to manually orchestrate complex volume mounts. _(Note: Power users can do this in OpenCode today by simply setting their MCP command to `docker run -i --rm`)_.
+3. **The Restrictiveness Lattice Extension:** MCP servers declare their required capabilities in their manifest. The runtime routes their execution through an OS sandbox dispatcher (`bwrap`/`Seatbelt`), enforcing a global config lattice.
+   - _In the wild:_ This is the path OpenCode is charting, and variations of it are seen in **Claude Code**, which uses a strict read-only permission model requiring explicit user approval for network or file modifications.
+   - _The Tension:_ If a workspace MCP requests unsafe capabilities, it requires interrupting the developer with an interactive prompt (e.g., _"This workspace MCP requests Network access. Allow?"_), which can lead to permission fatigue.
 
 For now, OpenCode relies on the G1 Trust Initialization hash to prevent drive-by MCP executions, while giving power users the flexibility to bring their own Docker isolation via configuration.
 
@@ -234,63 +234,44 @@ For now, OpenCode relies on the G1 Trust Initialization hash to prevent drive-by
 
 This attack chain has two kill points: (a) prevent the agent from reading secrets, and (b) prevent the exfiltration even if secrets are read.
 
-### Kill Point A: Git Worktree Isolation
+### Kill Point A: Input Sanitization (Gate 7)
 
-Worktree isolation solves a different problem than OS sandboxing: **concurrent agent mutation of a shared working directory.** But it also provides a critical security property: a worktree is a clean checkout. There is no `.env` file in it unless the `.env` was committed to the repo (and if it was, you have bigger problems).
+The Kiro attack relies on planting adversarial instructions (often using invisible Unicode or Bidi-overrides to hide from the developer) inside directory names or file contents. When the agent reads the directory, the payload hijacks its context.
 
-```typescript
-const created = await $`git worktree add --no-checkout -b ${info.branch} -- ${info.directory}`
-  .quiet()
-  .nothrow()
-  .cwd(Instance.worktree)
-```
-
-Branch name injection is prevented via strict slug validation:
+We neutralize this at the application layer before the LLM ever sees it. Every path and file content loaded into the OpenCode system prompt is passed through our `stripInvisibleUnicode` and `sanitizeFilePath` filters.
 
 ```typescript
-function slug(input: string) {
-  const slugged = input
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+/, "")
-    .replace(/-+$/, "")
-
-  // Prevent shell metacharacters that could escape even with proper quoting
-  if (slugged.includes("..") || /[~^:\\*?\[\]$`]/.test(slugged)) {
-    throw new Error(`Invalid branch name: ${slugged}`)
-  }
-  return slugged
+export function stripInvisibleUnicode(text: string): string {
+  return (
+    text
+      // Zero-width characters and spaces
+      .replace(/[\u2000-\u200F]/g, "")
+      // Line/paragraph separators and narrow spaces
+      .replace(/[\u2028-\u202F]/g, "")
+      // Byte order mark
+      .replace(/\uFEFF/g, "")
+      // Soft hyphen, CGJ, ALM
+      .replace(/[\u00AD\u034F\u061C]/g, "")
+      // Variation selectors
+      .replace(/[\uFE00-\uFE0F]/g, "")
+      // Bidirectional override characters
+      .replace(/[\u202A-\u202E]/g, "")
+      .replace(/[\u2066-\u2069]/g, "")
+      // Zero-width joiners, word joiners, invisible operators
+      .replace(/[\u2060-\u206F]/g, "")
+      // Unicode Tags (used for invisible watermarking)
+      .replace(/[\u{E0000}-\u{E007F}]/gu, "")
+  )
 }
 ```
 
-And Bun template tags pass arguments atomically (not via string concatenation):
+By aggressively scrubbing the input stream, the adversarial directory name is defanged. The agent sees the file, but the invisible prompt injection is destroyed.
 
-```typescript
-// Bad: shell injection via string concatenation
-const cmd = `git worktree add -b ${branchName} -- ${dir}` // "foo; rm -rf /" escapes
-
-// Good: Bun template tag passes each arg as a separate argv element
-await $`git worktree add --no-checkout -b ${info.branch} -- ${info.directory}`.quiet().nothrow().cwd(Instance.worktree)
-```
-
-Path traversal in the worktree directory itself is blocked by canonical path validation:
-
-```typescript
-const canonicalRoot = await canonical(root)
-const canonicalDir = await canonical(info.directory)
-if (!canonicalDir.startsWith(`${canonicalRoot}${path.sep}`)) {
-  throw new CreateFailedError({
-    message: "Worktree directory must be within the project worktree root",
-  })
-}
-```
-
-If the Kiro attacker's adversarial directory name tricks an agent running in a worktree, the `.env` file simply does not exist. Kill point A: engaged.
+**The Overt Injection Gap:** We must be honest—this sanitization only stops _stealthy_, invisible injections. If the Prompt Injection is overt (e.g., plaintext in a `README.md`), the LLM will still read it, and it might still bite. This is why a single kill point is insufficient, and why we must rely on Kill Point B.
 
 ### Kill Point B: HTTP Hook Network Isolation and SSRF Defense
 
-Even if kill point A fails (the agent somehow reads a secret), we need to block the exfiltration channel. 
+Even if kill point A fails (the agent somehow reads a secret), we need to block the exfiltration channel.
 
 `bwrap --unshare-net` and gVisor `--network=none` constrain the _child process_. The **host Node/Bun process** is never sandboxed. When the agent uses the `webfetch` tool, it calls `fetch` directly from the host.
 
@@ -302,11 +283,11 @@ if (await isNetworkRestricted(ctx.agent)) {
 }
 ```
 
-But what if the network is *enabled* (e.g., the agent needs to browse documentation), and the agent tries to pivot to attack the local infrastructure (SSRF)? 
+But what if the network is _enabled_ (e.g., the agent needs to browse documentation), and the agent tries to pivot to attack the local infrastructure (SSRF)?
 
 To close this gap, we built a pre-flight DNS resolver (Gate 8). It intercepts the URL, resolves the DNS, checks the resulting IPs against a strict denylist, and **pins the exact IP** for the actual fetch to prevent Time-of-Check to Time-of-Use (TOCTOU) DNS rebinding attacks:
 
-*(Note: We use an IP denylist rather than an allowlist because the `webfetch` tool must be able to browse the public internet for documentation. The denylist surgically blocks all private subnets—like `10.x`, `127.x`, and AWS metadata `169.254.169.254`—while leaving the public web open).*
+_(Note: We use an IP denylist rather than an allowlist because the `webfetch` tool must be able to browse the public internet for documentation. The denylist surgically blocks all private subnets—like `10.x`, `127.x`, and AWS metadata `169.254.169.254`—while leaving the public web open)._
 
 ```typescript
 // webfetch.ts — Application-Layer SSRF Defense (Gate 8)
