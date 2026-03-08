@@ -19,7 +19,9 @@
     "deploy": "echo 'Deploying application...' && bun run build && echo 'Deployment completed successfully'",
     "db": "bun drizzle-kit",
     "perf:auth": "OPENCODE_TOOL_ENDPOINT_API_KEY=perf-api-key bun run test/perf/auth-benchmark.ts",
-    "perf:auth:ci": "OPENCODE_TOOL_ENDPOINT_API_KEY=perf-api-key OPENCODE_AUTH_BENCH_ENFORCE=1 bun run test/perf/auth-benchmark.ts --out test/perf/results/auth-benchmark.json"
+    "perf:auth:ci": "OPENCODE_TOOL_ENDPOINT_API_KEY=perf-api-key OPENCODE_AUTH_BENCH_ENFORCE=1 bun run test/perf/auth-benchmark.ts --out test/perf/results/auth-benchmark.json",
+    "test:security:generate": "promptfoo generate redteam -c test/promptfoo/promptfooconfig.yaml -w test/promptfoo/redteam-tests.yaml",
+    "test:security:eval": "promptfoo eval -c test/promptfoo/promptfooconfig.yaml --tests test/promptfoo/redteam-tests.yaml"
   },
   "bin": {
     "opencode": "./bin/opencode"
@@ -50,6 +52,7 @@
     "@typescript/native-preview": "catalog:",
     "drizzle-kit": "1.0.0-beta.12-a5629fb",
     "drizzle-orm": "1.0.0-beta.12-a5629fb",
+    "promptfoo": "0.120.27",
     "typescript": "catalog:",
     "vscode-languageserver-types": "3.17.5",
     "why-is-node-running": "3.2.2",

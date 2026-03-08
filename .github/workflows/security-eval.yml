@@ -1,0 +1,25 @@
+name: security-eval
+
+on:
+  pull_request:
+    paths:
+      - "packages/opencode/src/sandbox/**"
+      - "packages/opencode/src/tool/**"
+      - "packages/opencode/src/plugin/**"
+
+jobs:
+  eval:
+    name: security-eval
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+
+      - name: Run Security Eval
+        working-directory: packages/opencode
+        run: bun run test:security:eval
