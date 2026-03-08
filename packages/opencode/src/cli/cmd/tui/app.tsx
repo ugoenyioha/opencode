@@ -116,7 +116,6 @@ export function tui(input: {
   fetch?: typeof fetch
   headers?: RequestInit["headers"]
   events?: EventSource
-  onExit?: () => Promise<void>
 }) {
   // promise to prevent immediate exit
   return new Promise<void>(async (resolve) => {
@@ -131,7 +130,6 @@ export function tui(input: {
 
     const onExit = async () => {
       unguard?.()
-      await input.onExit?.()
       resolve()
     }
 
@@ -707,7 +705,7 @@ function App() {
       },
       category: "System",
     },
-    ...(sync.data.config.experimental?.remote_control || Flag.OPENCODE_EXPERIMENTAL_REMOTE_CONTROL
+    ...((sync.data.config.experimental as any)?.remote_control || Flag.OPENCODE_EXPERIMENTAL_REMOTE_CONTROL
       ? [
           {
             title: "Remote Control",

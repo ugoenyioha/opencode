@@ -41,7 +41,7 @@ export function DialogRemoteControl(props: { overrideRelayUrl?: string }) {
     const relay = props.overrideRelayUrl || process.env.OPENCODE_RELAY_URL || "http://127.0.0.1:8787"
     const viewer = process.env.OPENCODE_VIEWER_URL || "http://localhost:5173"
 
-    sdk.client.instance.remote
+    ;(sdk.client.instance as any).remote
       .start({ relay, viewer })
       .then((generatedUrl: any) => {
         if (!generatedUrl.data) throw new Error("No URL returned")
@@ -61,7 +61,7 @@ export function DialogRemoteControl(props: { overrideRelayUrl?: string }) {
   onCleanup(() => {
     // If the dialog closes but process is still starting up without a URL, kill it
     if (isRemoteActive && !activeViewerUrl) {
-      sdk.client.instance.remote.stop().catch(() => {})
+      ;(sdk.client.instance as any).remote.stop().catch(() => {})
       isRemoteActive = false
       activeViewerUrl = null
     }
@@ -78,7 +78,7 @@ export function DialogRemoteControl(props: { overrideRelayUrl?: string }) {
 
   const handleStop = () => {
     if (isRemoteActive) {
-      sdk.client.instance.remote.stop().catch(() => {})
+      ;(sdk.client.instance as any).remote.stop().catch(() => {})
       isRemoteActive = false
       activeViewerUrl = null
       setUrl(null)

@@ -21,6 +21,8 @@ import { Session } from "../session"
 import { Flag } from "../flag/flag"
 import { Command } from "../command"
 import { Global } from "../global"
+import { WorkspaceContext } from "../control-plane/workspace-context"
+import { WorkspaceRouterMiddleware } from "../control-plane/workspace-router-middleware"
 import { ProjectRoutes } from "./routes/project"
 import { SessionRoutes } from "./routes/session"
 import { PtyRoutes } from "./routes/pty"
@@ -39,6 +41,7 @@ import type { ContentfulStatusCode } from "hono/utils/http-status"
 import { websocket } from "hono/bun"
 import { HTTPException } from "hono/http-exception"
 import { errors } from "./error"
+import { Filesystem } from "@/util/filesystem"
 import { QuestionRoutes } from "./routes/question"
 import { PermissionRoutes } from "./routes/permission"
 import { GlobalRoutes } from "./routes/global"
@@ -357,16 +360,16 @@ export namespace Server {
         )
         .use(async (c, next) => {
           if (c.req.path === "/log") return next()
+          const workspaceID = c.req.query("workspace") || c.req.header("x-opencode-workspace")
           const raw = c.req.query("directory") || c.req.header("x-opencode-directory")
           let directory: string | undefined
           if (raw) {
             try {
-              directory = decodeURIComponent(raw)
+              directory = Filesystem.resolve(decodeURIComponent(raw))
             } catch {
-              directory = raw
+              directory = Filesystem.resolve(raw)
             }
           }
-          console.log("[DEBUG] request headers:", { path: c.req.path, raw, directory })
           if (!directory) {
             // For session-scoped routes, resolve directory from the stored session
             const match = c.req.path.match(/(?:\/api\/v\d+)?\/session\/(ses_[^/]+)/)
@@ -376,17 +379,22 @@ export namespace Server {
                 directory = await Session.findDirectory(parsed.data)
               }
             }
-            console.log("[DEBUG] resolved session directory:", { path: c.req.path, sessionID: match?.[1], directory })
           }
-          if (!directory) directory = process.cwd()
-          return Instance.provide({
-            directory,
-            init: InstanceBootstrap,
+          if (!directory) directory = Filesystem.resolve(process.cwd())
+          return WorkspaceContext.provide({
+            workspaceID,
             async fn() {
-              return next()
+              return Instance.provide({
+                directory,
+                init: InstanceBootstrap,
+                async fn() {
+                  return next()
+                },
+              })
             },
           })
         })
+        .use(WorkspaceRouterMiddleware)
         .use(async (c, next) => {
           if (c.req.path === "/log") return next()
           const output: {
@@ -441,7 +449,15 @@ export namespace Server {
             },
           }),
         )
-        .use(validator("query", z.object({ directory: z.string().optional() })))
+        .use(
+          validator(
+            "query",
+            z.object({
+              directory: z.string().optional(),
+              workspace: z.string().optional(),
+            }),
+          ),
+        )
         .route("/", CompatRoutes())
         .route("/global", GlobalRoutes())
         .route("/project", ProjectRoutes())
