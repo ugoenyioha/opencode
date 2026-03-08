@@ -1,9 +1,17 @@
 import z from "zod"
 import { BusEvent } from "../bus/bus-event"
 
+/**
+ * Member lifecycle status.
+ * Transitions: ready -> busy -> shutdown_requested -> shutdown; any -> error -> ready.
+ */
 export const MemberStatus = z.enum(["ready", "busy", "shutdown_requested", "shutdown", "error"])
 export type MemberStatus = z.infer<typeof MemberStatus>
 
+/**
+ * Prompt-loop execution status within a busy member.
+ * Terminal states: idle, cancelled, completed, failed, timed_out.
+ */
 export const ExecutionStatus = z.enum([
   "idle",
   "starting",
@@ -23,6 +31,7 @@ const SafeName = z
   .string()
   .regex(/^[a-z0-9][a-z0-9-]{0,63}$/, "Must be lowercase alphanumeric with hyphens, 1-64 chars")
 
+/** Schema for a single teammate within a team */
 export const TeamMemberSchema = z.object({
   name: SafeName,
   sessionID: z.string(),
@@ -36,15 +45,18 @@ export const TeamMemberSchema = z.object({
 })
 export type TeamMember = z.infer<typeof TeamMemberSchema>
 
+/** Schema for the full team state including lead, members, and timestamps */
 export const TeamInfoSchema = z.object({
   name: SafeName,
-  leadSessionID: z.string(),
+  leadSessionID: z.string().nullable(),
   members: z.array(TeamMemberSchema),
   created: z.number(),
+  updated: z.number().optional(),
   delegate: z.boolean().optional(),
 })
 export type TeamInfo = z.infer<typeof TeamInfoSchema>
 
+/** Schema for a shared task on the team's task board */
 export const TeamTaskSchema = z.object({
   id: z.string(),
   content: z.string(),
@@ -57,7 +69,9 @@ export type TeamTask = z.infer<typeof TeamTaskSchema>
 
 const TeammateIdleReason = z.enum(["completed", "cancelled"])
 
+/** Bus events emitted by the team subsystem for lifecycle, messaging, and task changes */
 export namespace TeamEvent {
+  /** Fired when a new team is created */
   export const Created = BusEvent.define(
     "team.created",
     z.object({
@@ -65,6 +79,7 @@ export namespace TeamEvent {
     }),
   )
 
+  /** Fired when a teammate is added to a team */
   export const MemberSpawned = BusEvent.define(
     "team.member.spawned",
     z.object({
@@ -73,6 +88,7 @@ export namespace TeamEvent {
     }),
   )
 
+  /** Fired on member lifecycle status transitions (ready/busy/shutdown/error) */
   export const MemberStatusChanged = BusEvent.define(
     "team.member.status",
     z.object({
@@ -82,6 +98,7 @@ export namespace TeamEvent {
     }),
   )
 
+  /** Fired on execution status transitions within a busy member's prompt loop */
   export const MemberExecutionChanged = BusEvent.define(
     "team.member.execution",
     z.object({
@@ -91,6 +108,7 @@ export namespace TeamEvent {
     }),
   )
 
+  /** Fired when a direct message is sent between participants */
   export const Message = BusEvent.define(
     "team.message",
     z.object({
@@ -101,6 +119,7 @@ export namespace TeamEvent {
     }),
   )
 
+  /** Fired when a broadcast message is sent to all participants */
   export const Broadcast = BusEvent.define(
     "team.broadcast",
     z.object({
@@ -110,6 +129,7 @@ export namespace TeamEvent {
     }),
   )
 
+  /** Fired when the task list is replaced or modified */
   export const TaskUpdated = BusEvent.define(
     "team.task.updated",
     z.object({
@@ -118,6 +138,7 @@ export namespace TeamEvent {
     }),
   )
 
+  /** Fired when a member atomically claims a pending task */
   export const TaskClaimed = BusEvent.define(
     "team.task.claimed",
     z.object({
@@ -127,6 +148,7 @@ export namespace TeamEvent {
     }),
   )
 
+  /** Fired when a teammate's prompt loop ends and transitions to ready */
   export const TeammateIdle = BusEvent.define(
     "team.teammate.idle",
     z.object({
@@ -136,6 +158,7 @@ export namespace TeamEvent {
     }),
   )
 
+  /** Fired when a task is marked as completed */
   export const TaskCompleted = BusEvent.define(
     "team.task.completed",
     z.object({
@@ -144,6 +167,7 @@ export namespace TeamEvent {
     }),
   )
 
+  /** Fired when the lead requests a teammate to shut down */
   export const ShutdownRequest = BusEvent.define(
     "team.shutdown.request",
     z.object({
@@ -152,6 +176,7 @@ export namespace TeamEvent {
     }),
   )
 
+  /** Fired when the lead approves or rejects a teammate's plan */
   export const PlanApproval = BusEvent.define(
     "team.plan.approval",
     z.object({
@@ -162,6 +187,7 @@ export namespace TeamEvent {
     }),
   )
 
+  /** Fired when a member marks inbox messages as read */
   export const MessageRead = BusEvent.define(
     "team.message.read",
     z.object({
@@ -171,11 +197,12 @@ export namespace TeamEvent {
     }),
   )
 
+  /** Fired after team cleanup completes — listeners restore lead session permissions */
   export const Cleaned = BusEvent.define(
     "team.cleaned",
     z.object({
       teamName: z.string(),
-      leadSessionID: z.string(),
+      leadSessionID: z.string().nullable(),
       delegate: z.boolean(),
     }),
   )

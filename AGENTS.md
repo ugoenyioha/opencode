@@ -1,8 +1,9 @@
 # OpenCode Core — Agent Guidelines
 
 ## Context Within `ai-forge` Workspace
-This is the `opencode-ng` repository, which contains the source code for the OpenCode core runtime platform. 
-It has been moved into the `ai-forge` workspace because `ai-forge` heavily modifies and relies on it during development. 
+
+This is the `opencode-ng` repository, which contains the source code for the OpenCode core runtime platform.
+It has been moved into the `ai-forge` workspace because `ai-forge` heavily modifies and relies on it during development.
 
 - **Runtime Engine:** `opencode-ng` acts as the execution engine for all AI agents built with `ai-forge`. The `ai-forge` CLI generates configurations (`opencode.json`), skills, and plugins that are loaded and run by the `opencode` binary built from this repository.
 - **Dynamic Capabilities:** The `ai-forge` CLI relies on `opencode-ng` to self-report its available features (via the `opencode debug deploy-manifest` command). This command introspects the Zod schemas in `src/config/config.ts` to export the supported configuration surface (e.g., A2A, tool-endpoints, auth strategies, etc.).
@@ -17,6 +18,7 @@ It has been moved into the `ai-forge` workspace because `ai-forge` heavily modif
 ---
 
 ## Existing OpenCode Instructions
+
 - To regenerate the JavaScript SDK, run `./packages/sdk/js/script/build.ts`.
 - ALWAYS USE PARALLEL TOOLS WHEN APPLICABLE.
 - The default branch in this repo is `dev`.
@@ -130,3 +132,34 @@ const table = sqliteTable("session", {
 - Avoid mocks as much as possible
 - Test actual implementation, do not duplicate logic into tests
 - Tests cannot run from repo root (guard: `do-not-run-tests-from-root`); run from package dirs like `packages/opencode`.
+
+## Agent Teams
+
+Multi-agent coordination feature that lets a lead session spawn and orchestrate teammate sessions.
+
+- **Feature flag:** `OPENCODE_EXPERIMENTAL_AGENT_TEAMS` (also enabled by `OPENCODE_EXPERIMENTAL`)
+- **Source:** `packages/opencode/src/team/` (core logic), `packages/opencode/src/server/routes/team.ts` (HTTP API), `packages/opencode/src/tool/team.ts` (tool definitions)
+- **Tests:** `packages/opencode/test/team/` — run with `bun test test/team` from `packages/opencode`
+- **Architecture docs:** `docs/agent-teams.md`
+
+### Database
+
+Teams are stored in the global SQLite database:
+
+- **`team`** — one row per active team. `lead_session_id` is nullable with SET NULL (teams survive lead session deletion for rebind).
+- **`team_task`** — shared task board. **Composite PK:** `(team_id, id)` — task IDs are unique per team, not globally.
+- **`team_message`** — inbox messages between participants. `read_by` is a JSON array of session IDs.
+- **`session`** columns — `team_id`, `team_role` (`"lead"` | `"member"`), `team_meta` (JSON: name, agent, status, execution_status, prompt, model), `teammate` (boolean), `plan_approval` (`"none"` | `"pending"` | `"approved"` | `"rejected"`)
+
+### Bootstrap Lifecycle
+
+Order matters — defined in `packages/opencode/src/project/bootstrap.ts`:
+
+```
+1. onCleanedRestorePermissions()  — registers event listener for permission restore
+2. recover()                      — marks stale busy members as ready, notifies lead
+3. autoCleanup()                  — subscribes to MemberStatusChanged for auto-cleanup
+4. enforceTimeouts()              — starts 5-min interval checking lifespan/idle limits
+```
+
+Steps 3-4 run in `.finally()` after recover to avoid spurious cleanup during recovery.

@@ -3,6 +3,7 @@ import path from "path"
 import fs from "fs/promises"
 import { Instance } from "../../src/project/instance"
 import { Team, TeamTasks } from "../../src/team"
+import { Session } from "../../src/session"
 import { Env } from "../../src/env"
 import { Log } from "../../src/util/log"
 
@@ -24,13 +25,15 @@ describe("Team persistence across restarts", () => {
         directory: dir,
         init: async () => Env.set("ANTHROPIC_API_KEY", "test-key"),
         fn: async () => {
+          const lead = await Session.create({})
+          const worker = await Session.create({ parentID: lead.id })
           await Team.create({
             name: "persist-test",
-            leadSessionID: "ses_lead_abc",
+            leadSessionID: lead.id,
           })
           await Team.addMember("persist-test", {
             name: "worker-1",
-            sessionID: "ses_worker_1",
+            sessionID: worker.id,
             agent: "general",
             status: "busy",
             prompt: "do stuff",
@@ -42,7 +45,7 @@ describe("Team persistence across restarts", () => {
           const team = await Team.get("persist-test")
           expect(team).toBeDefined()
           expect(team!.name).toBe("persist-test")
-          expect(team!.leadSessionID).toBe("ses_lead_abc")
+          expect(team!.leadSessionID).toBe(lead.id)
           expect(team!.members).toHaveLength(1)
           expect(team!.members[0].name).toBe("worker-1")
           expect(team!.members[0].status).toBe("busy")
@@ -66,8 +69,10 @@ describe("Team persistence across restarts", () => {
         directory: dir,
         init: async () => Env.set("ANTHROPIC_API_KEY", "test-key"),
         fn: async () => {
-          await Team.create({ name: "alpha", leadSessionID: "ses_alpha_p" })
-          await Team.create({ name: "beta", leadSessionID: "ses_beta_p" })
+          const leadAlpha = await Session.create({})
+          const leadBeta = await Session.create({})
+          await Team.create({ name: "alpha", leadSessionID: leadAlpha.id })
+          await Team.create({ name: "beta", leadSessionID: leadBeta.id })
 
           const teams = await Team.list()
           const names = teams.map((t) => t.name).sort()
@@ -86,16 +91,22 @@ describe("Team persistence across restarts", () => {
 
   test("Team.findBySession works after restart", async () => {
     const dir = await fs.mkdtemp(path.join(import.meta.dir, ".tmp-persist-"))
+    let leadId = ""
+    let memberId = ""
 
     try {
       await Instance.provide({
         directory: dir,
         init: async () => Env.set("ANTHROPIC_API_KEY", "test-key"),
         fn: async () => {
-          await Team.create({ name: "find-test", leadSessionID: "ses_lead_find_p" })
+          const lead = await Session.create({})
+          const member = await Session.create({ parentID: lead.id })
+          leadId = lead.id
+          memberId = member.id
+          await Team.create({ name: "find-test", leadSessionID: lead.id })
           await Team.addMember("find-test", {
             name: "searcher",
-            sessionID: "ses_member_find_p",
+            sessionID: member.id,
             agent: "explore",
             status: "busy",
             prompt: "search",
@@ -103,16 +114,16 @@ describe("Team persistence across restarts", () => {
           })
 
           // Find lead
-          const lead = await Team.findBySession("ses_lead_find_p")
-          expect(lead).toBeDefined()
-          expect(lead!.role).toBe("lead")
-          expect(lead!.team.name).toBe("find-test")
+          const leadFind = await Team.findBySession(lead.id)
+          expect(leadFind).toBeDefined()
+          expect(leadFind!.role).toBe("lead")
+          expect(leadFind!.team.name).toBe("find-test")
 
           // Find member
-          const member = await Team.findBySession("ses_member_find_p")
-          expect(member).toBeDefined()
-          expect(member!.role).toBe("member")
-          expect(member!.memberName).toBe("searcher")
+          const memberFind = await Team.findBySession(member.id)
+          expect(memberFind).toBeDefined()
+          expect(memberFind!.role).toBe("member")
+          expect(memberFind!.memberName).toBe("searcher")
 
           // Non-existent session
           const none = await Team.findBySession("ses_nonexistent_p")
@@ -136,7 +147,8 @@ describe("Team persistence across restarts", () => {
         directory: dir,
         init: async () => Env.set("ANTHROPIC_API_KEY", "test-key"),
         fn: async () => {
-          await Team.create({ name: "tasks-test", leadSessionID: "ses_tasks_p" })
+          const lead = await Session.create({})
+          await Team.create({ name: "tasks-test", leadSessionID: lead.id })
           await TeamTasks.add("tasks-test", [
             { id: "t1", content: "Research", status: "completed", priority: "high" },
             { id: "t2", content: "Implement", status: "pending", priority: "high", depends_on: ["t1"] },
@@ -172,10 +184,12 @@ describe("Team persistence across restarts", () => {
         directory: dir,
         init: async () => Env.set("ANTHROPIC_API_KEY", "test-key"),
         fn: async () => {
-          await Team.create({ name: "status-test", leadSessionID: "ses_st_p" })
+          const lead = await Session.create({})
+          const member = await Session.create({ parentID: lead.id })
+          await Team.create({ name: "status-test", leadSessionID: lead.id })
           await Team.addMember("status-test", {
             name: "agent-a",
-            sessionID: "ses_a_p",
+            sessionID: member.id,
             agent: "general",
             status: "busy",
             prompt: "work",

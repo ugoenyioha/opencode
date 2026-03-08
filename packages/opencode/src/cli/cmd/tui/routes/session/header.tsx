@@ -198,7 +198,7 @@ export function Header(props: { sidebarVisible?: boolean }) {
   const { theme } = useTheme()
   const keybind = useKeybind()
   const command = useCommandDialog()
-  const [hover, setHover] = createSignal<"parent" | "prev" | "next" | null>(null)
+  const [hover, setHover] = createSignal<"parent" | "prev" | "next" | "delegate" | null>(null)
   const dimensions = useTerminalDimensions()
   const narrow = createMemo(() => dimensions().width < 80)
 
@@ -246,21 +246,27 @@ export function Header(props: { sidebarVisible?: boolean }) {
                 <box
                   onMouseOver={() => setHover("prev")}
                   onMouseOut={() => setHover(null)}
-                  onMouseUp={() => command.trigger("session.child.previous")}
+                  onMouseUp={() => command.trigger(teamInfo() ? "team.cycle_up" : "session.child.previous")}
                   backgroundColor={hover() === "prev" ? theme.backgroundElement : theme.backgroundPanel}
                 >
                   <text fg={theme.text}>
-                    Prev <span style={{ fg: theme.textMuted }}>{keybind.print("session_child_cycle_reverse")}</span>
+                    Prev{" "}
+                    <span style={{ fg: theme.textMuted }}>
+                      {keybind.print(teamInfo() ? "team_previous" : "session_child_cycle_reverse")}
+                    </span>
                   </text>
                 </box>
                 <box
                   onMouseOver={() => setHover("next")}
                   onMouseOut={() => setHover(null)}
-                  onMouseUp={() => command.trigger("session.child.next")}
+                  onMouseUp={() => command.trigger(teamInfo() ? "team.cycle_down" : "session.child.next")}
                   backgroundColor={hover() === "next" ? theme.backgroundElement : theme.backgroundPanel}
                 >
                   <text fg={theme.text}>
-                    Next <span style={{ fg: theme.textMuted }}>{keybind.print("session_child_cycle")}</span>
+                    Next{" "}
+                    <span style={{ fg: theme.textMuted }}>
+                      {keybind.print(teamInfo() ? "team_next" : "session_child_cycle")}
+                    </span>
                   </text>
                 </box>
               </box>
@@ -277,6 +283,42 @@ export function Header(props: { sidebarVisible?: boolean }) {
               </box>
               <Show when={teamInfo()}>
                 <TeamBadge teamInfo={teamInfo()} />
+              </Show>
+              <Show when={teamInfo()}>
+                <box flexDirection="row" gap={2}>
+                  <box
+                    onMouseOver={() => setHover("prev")}
+                    onMouseOut={() => setHover(null)}
+                    onMouseUp={() => command.trigger("team.cycle_up")}
+                    backgroundColor={hover() === "prev" ? theme.backgroundElement : theme.backgroundPanel}
+                  >
+                    <text fg={theme.text}>
+                      Prev <span style={{ fg: theme.textMuted }}>{keybind.print("team_previous")}</span>
+                    </text>
+                  </box>
+                  <box
+                    onMouseOver={() => setHover("next")}
+                    onMouseOut={() => setHover(null)}
+                    onMouseUp={() => command.trigger("team.cycle_down")}
+                    backgroundColor={hover() === "next" ? theme.backgroundElement : theme.backgroundPanel}
+                  >
+                    <text fg={theme.text}>
+                      Next <span style={{ fg: theme.textMuted }}>{keybind.print("team_next")}</span>
+                    </text>
+                  </box>
+                  <Show when={teamInfo()?.role === "lead"}>
+                    <box
+                      onMouseOver={() => setHover("delegate")}
+                      onMouseOut={() => setHover(null)}
+                      onMouseUp={() => command.trigger("team.delegate")}
+                      backgroundColor={hover() === "delegate" ? theme.backgroundElement : theme.backgroundPanel}
+                    >
+                      <text fg={teamInfo()?.delegate ? theme.primary : theme.text}>
+                        Delegate <span style={{ fg: theme.textMuted }}>{keybind.print("team_delegate")}</span>
+                      </text>
+                    </box>
+                  </Show>
+                </box>
               </Show>
             </box>
           </Match>

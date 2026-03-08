@@ -1327,6 +1327,34 @@ export namespace Config {
         .optional()
         .default(20)
         .describe("Maximum number of teammates allowed in a team"),
+      team_max_lifespan: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .default(6 * 60 * 60 * 1000)
+        .describe("Maximum team lifespan in milliseconds. Default: 6 hours."),
+      team_idle_timeout: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .default(60 * 60 * 1000)
+        .describe("Maximum idle time before team is shut down. Default: 1 hour."),
+      max_teams: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .default(50)
+        .describe("Maximum number of concurrent active teams."),
+      max_team_messages: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .default(1000)
+        .describe("Maximum pending messages per team inbox."),
       max_subagent_depth: z
         .number()
         .int()

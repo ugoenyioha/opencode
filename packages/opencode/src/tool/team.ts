@@ -503,11 +503,18 @@ export const TeamApprovePlanTool = Tool.define("team_approve_plan", {
     }
 
     if (params.approved) {
-      // Remove only plan-approval deny rules (tagged with "*:plan-approval" pattern)
+      // Remove plan-approval deny rules: (permission ∈ WRITE_TOOLS && pattern === "*" && action === "deny")
       const info = await Session.get(member.sessionID)
       await Session.setPermission({
         sessionID: member.sessionID,
-        permission: (info.permission ?? []).filter((rule) => rule.pattern !== "*:plan-approval"),
+        permission: (info.permission ?? []).filter(
+          (rule) =>
+            !(
+              (WRITE_TOOLS as readonly string[]).includes(rule.permission) &&
+              rule.pattern === "*" &&
+              rule.action === "deny"
+            ),
+        ),
       })
 
       // Update member state

@@ -2,9 +2,12 @@ import z from "zod"
 import { Log } from "../util/log"
 import { Bus } from "../bus"
 import { Instance } from "../project/instance"
-import { Storage } from "../storage/storage"
-import { Lock } from "../util/lock"
+import { Database, and, eq, inArray, isNull } from "../storage/db"
 import { fn } from "../util/fn"
+import { Identifier } from "../id/id"
+import { TeamTable, TeamTaskTable } from "./team.sql"
+import { SessionTable } from "../session/session.sql"
+import { Config } from "../config/config"
 import {
   TeamEvent,
   MemberStatus as MemberStatusSchema,
@@ -33,17 +36,6 @@ export const WRITE_TOOLS = ["bash", "write", "edit", "multiedit", "apply_patch"]
 
 const log = Log.create({ service: "team" })
 
-/** Storage key for a team's config */
-function configKey(name: string): string[] {
-  return ["team", Instance.project.id, name]
-}
-
-/** Storage key for a team's task list — separate prefix from "team" so
- *  Storage.list(["team", projectID]) only returns config keys, not task data */
-function tasksKey(name: string): string[] {
-  return ["team_tasks", Instance.project.id, name]
-}
-
 const TERMINAL_EXECUTION_STATES = new Set<ExecutionStatusType>([
   "idle",
   "cancelled",
@@ -51,8 +43,6 @@ const TERMINAL_EXECUTION_STATES = new Set<ExecutionStatusType>([
   "failed",
   "timed_out",
 ])
-
-const CREATE_LOCK_KEY = () => `team:create:${Instance.project.id}`
 
 const MEMBER_TRANSITIONS: Record<MemberStatus, MemberStatus[]> = {
   ready: ["busy", "shutdown_requested", "shutdown", "error"],
@@ -96,11 +86,94 @@ function normalizeTeam(team: TeamInfo): TeamInfo {
   }
 }
 
+function parseMeta(session: typeof SessionTable.$inferSelect): TeamMember | undefined {
+  if (!session.team_meta) return
+  const meta = session.team_meta
+  if (typeof meta.name !== "string" || typeof meta.agent !== "string" || typeof meta.status !== "string") return
+  const execution = ExecutionStatus.safeParse(meta.execution_status)
+  const member: TeamMember = {
+    name: meta.name,
+    sessionID: session.id,
+    agent: meta.agent,
+    status: MemberStatusSchema.parse(meta.status),
+    execution_status: execution.success ? execution.data : undefined,
+    prompt: meta.prompt,
+    model: meta.model,
+    planApproval:
+      session.plan_approval === "none" ||
+      session.plan_approval === "pending" ||
+      session.plan_approval === "approved" ||
+      session.plan_approval === "rejected"
+        ? session.plan_approval
+        : undefined,
+  }
+  return normalizeMember(member)
+}
+
+function sessionMeta(member: TeamMember) {
+  return {
+    name: member.name,
+    agent: member.agent,
+    status: member.status,
+    execution_status: member.execution_status,
+    prompt: member.prompt,
+    model: member.model,
+  }
+}
+
+function loadTeam(name: string) {
+  const team = Database.use((db) =>
+    db
+      .select()
+      .from(TeamTable)
+      .where(
+        and(eq(TeamTable.project_id, Instance.project.id), eq(TeamTable.name, name), eq(TeamTable.status, "active")),
+      )
+      .get(),
+  )
+  if (!team) return
+  const sessions = Database.use((db) =>
+    db
+      .select()
+      .from(SessionTable)
+      .where(and(eq(SessionTable.team_id, team.id), eq(SessionTable.team_role, "member")))
+      .all(),
+  )
+  return normalizeTeam({
+    name: team.name,
+    leadSessionID: team.lead_session_id,
+    members: sessions.map(parseMeta).filter((x): x is TeamMember => !!x),
+    created: team.time_created,
+    updated: team.time_updated,
+    delegate: !!team.delegate,
+  })
+}
+
+function teamID(name: string) {
+  return Database.use((db) =>
+    db
+      .select({ id: TeamTable.id })
+      .from(TeamTable)
+      .where(
+        and(eq(TeamTable.project_id, Instance.project.id), eq(TeamTable.name, name), eq(TeamTable.status, "active")),
+      )
+      .get(),
+  )?.id
+}
+
 function canTransition<T extends string>(current: T, next: T, map: Record<T, T[]>) {
   if (current === next) return true
   return map[current]?.includes(next) === true
 }
 
+function teamId() {
+  return `tm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+}
+
+/**
+ * Core team lifecycle management.
+ * Handles creation, member spawning, status transitions, cleanup, recovery, and timeouts.
+ */
 export namespace Team {
   /**
    * Subscribe to member status changes and auto-cleanup teams
@@ -129,6 +202,55 @@ export namespace Team {
   }
 
   /**
+   * Periodically enforces global team lifespan and idle timeouts.
+   * Timed-out teams have all members moved to shutdown_requested and cancelled.
+   */
+  export function enforceTimeouts(): () => void {
+    const interval = setInterval(
+      () => {
+        Promise.resolve()
+          .then(async () => {
+            const config = await Config.get()
+            const lifespan = config.server?.limits?.team_max_lifespan ?? 6 * 60 * 60 * 1000
+            const idle = config.server?.limits?.team_idle_timeout ?? 60 * 60 * 1000
+            const now = Date.now()
+            const teams = await list()
+
+            for (const team of teams) {
+              const last = team.updated ?? team.created
+              const hitLifespan = now - team.created > lifespan
+              const hitIdle = now - last > idle
+              if (!hitLifespan && !hitIdle) continue
+
+              log.warn("team timeout reached, requesting shutdown", {
+                teamName: team.name,
+                reason: hitLifespan ? "lifespan" : "idle",
+                lifespanMs: now - team.created,
+                idleMs: now - last,
+                teamMaxLifespan: lifespan,
+                teamIdleTimeout: idle,
+              })
+
+              await cancelAllMembers(team.name)
+              for (const member of team.members) {
+                if (member.status === "shutdown") continue
+                await transitionMemberStatus(team.name, member.name, "shutdown_requested", { force: true })
+              }
+            }
+          })
+          .catch((error) => {
+            log.warn("team timeout enforcer tick failed", {
+              error: error instanceof Error ? error.message : String(error),
+            })
+          })
+      },
+      5 * 60 * 1000,
+    )
+
+    return () => clearInterval(interval)
+  }
+
+  /**
    * Listen for TeamEvent.Cleaned and restore session permissions.
    * This decouples the team module from the session module —
    * cleanup only publishes the event, this listener handles session side-effects.
@@ -136,6 +258,7 @@ export namespace Team {
   export function onCleanedRestorePermissions(): () => void {
     return Bus.subscribe(TeamEvent.Cleaned, async (event) => {
       if (!event.properties.delegate) return
+      if (!event.properties.leadSessionID) return
 
       try {
         const { Session } = await import("../session")
@@ -169,10 +292,24 @@ export namespace Team {
       delegate: z.boolean().optional(),
     }),
     async (input) => {
-      using _ = await Lock.write(CREATE_LOCK_KEY())
-
       const existing = await get(input.name)
       if (existing) throw new Error(`Team "${input.name}" already exists`)
+
+      const config = await Config.get()
+      const limit = config.server?.limits?.max_teams ?? 50
+      const active = Database.use(
+        (db) =>
+          db
+            .select({ id: TeamTable.id })
+            .from(TeamTable)
+            .where(and(eq(TeamTable.project_id, Instance.project.id), eq(TeamTable.status, "active")))
+            .all().length,
+      )
+      if (active >= limit) {
+        throw new Error(
+          `Cannot create team: maximum number of concurrent teams (${limit}) reached. Clean up existing teams first.`,
+        )
+      }
 
       const lead = await findBySession(input.leadSessionID)
       if (lead?.role === "lead")
@@ -188,8 +325,31 @@ export namespace Team {
         ...(input.delegate ? { delegate: true } : {}),
       }
 
-      await Storage.write(configKey(input.name), team)
-      await Storage.write(tasksKey(input.name), [] as TeamTask[])
+      const id = teamId()
+      Database.use((db) => {
+        db.insert(TeamTable)
+          .values({
+            id,
+            project_id: Instance.project.id,
+            name: input.name,
+            lead_session_id: input.leadSessionID,
+            delegate: !!input.delegate,
+            status: "active",
+            time_created: team.created,
+            time_updated: team.created,
+          })
+          .run()
+        db.update(SessionTable)
+          .set({
+            team_id: id,
+            team_role: "lead",
+            plan_approval: "none",
+            team_meta: null,
+            time_updated: Date.now(),
+          })
+          .where(eq(SessionTable.id, input.leadSessionID))
+          .run()
+      })
 
       log.info("team created", { name: input.name, leadSessionID: input.leadSessionID })
       await Bus.publish(TeamEvent.Created, { team })
@@ -201,68 +361,119 @@ export namespace Team {
    * Get a team by name. Returns undefined if not found.
    */
   export const get = fn(z.string(), async (name) => {
-    try {
-      return normalizeTeam(await Storage.read<TeamInfo>(configKey(name)))
-    } catch {
-      return undefined
-    }
+    return loadTeam(name)
   })
 
   /**
    * List all teams in this project.
    */
   export async function list(): Promise<TeamInfo[]> {
-    try {
-      const keys = await Storage.list(["team", Instance.project.id])
-      return (await Promise.all(keys.map((key) => Storage.read<TeamInfo>(key).catch(() => undefined))))
-        .filter((t): t is TeamInfo => t !== undefined)
-        .map(normalizeTeam)
-    } catch {
-      return []
-    }
+    const teams = Database.use((db) =>
+      db
+        .select()
+        .from(TeamTable)
+        .where(and(eq(TeamTable.project_id, Instance.project.id), eq(TeamTable.status, "active")))
+        .all(),
+    )
+    if (!teams.length) return []
+    const ids = teams.map((x) => x.id)
+    const sessions = Database.use((db) =>
+      db
+        .select()
+        .from(SessionTable)
+        .where(and(inArray(SessionTable.team_id, ids), eq(SessionTable.team_role, "member")))
+        .all(),
+    )
+    const grouped = sessions.reduce(
+      (acc, item) => {
+        if (!item.team_id) return acc
+        const meta = parseMeta(item)
+        if (!meta) return acc
+        acc[item.team_id] = [...(acc[item.team_id] ?? []), meta]
+        return acc
+      },
+      {} as Record<string, TeamMember[]>,
+    )
+    return teams.map((team) =>
+      normalizeTeam({
+        name: team.name,
+        leadSessionID: team.lead_session_id,
+        members: grouped[team.id] ?? [],
+        created: team.time_created,
+        updated: team.time_updated,
+        delegate: !!team.delegate,
+      }),
+    )
+  }
+
+  /** Update the team's `time_updated` timestamp on any activity (prevents idle timeout) */
+  export function touch(teamName: string) {
+    const id = teamID(teamName)
+    if (!id) return
+    Database.use((db) => {
+      db.update(TeamTable).set({ time_updated: Date.now() }).where(eq(TeamTable.id, id)).run()
+    })
   }
 
   /**
-   * Add a member to a team (atomic via Storage.update).
+   * Add a member to a team via session/team_meta persistence.
    * Rejects duplicate names (case-insensitive), duplicate sessionIDs, and "lead" as a name.
    */
   export async function addMember(teamName: string, member: TeamMember): Promise<void> {
     const lower = member.name.toLowerCase()
     if (lower === "lead") throw new Error(`Name "lead" is reserved and cannot be used for a teammate.`)
 
-    await Storage.update<TeamInfo>(configKey(teamName), (draft) => {
-      if (draft.members.some((m) => m.name.toLowerCase() === lower))
-        throw new Error(`Teammate "${member.name}" already exists in team "${teamName}" (case-insensitive)`)
-      if (draft.members.some((m) => m.sessionID === member.sessionID))
-        throw new Error(`Session "${member.sessionID}" is already registered in team "${teamName}"`)
-      draft.members.push(member)
+    const team = await get(teamName)
+    if (!team) throw new Error(`Team "${teamName}" not found`)
+    if (team.members.some((m) => m.name.toLowerCase() === lower))
+      throw new Error(`Teammate "${member.name}" already exists in team "${teamName}" (case-insensitive)`)
+    if (team.members.some((m) => m.sessionID === member.sessionID))
+      throw new Error(`Session "${member.sessionID}" is already registered in team "${teamName}"`)
+    const id = teamID(teamName)
+    if (!id) throw new Error(`Team "${teamName}" not found`)
+    Database.use((db) => {
+      db.update(SessionTable)
+        .set({
+          team_id: id,
+          team_role: "member",
+          team_meta: sessionMeta(member),
+          plan_approval: member.planApproval ?? "none",
+          time_updated: Date.now(),
+        })
+        .where(eq(SessionTable.id, member.sessionID))
+        .run()
     })
 
     log.info("member added", { teamName, member: member.name, agent: member.agent })
     await Bus.publish(TeamEvent.MemberSpawned, { teamName, member })
   }
 
+  /**
+   * Validate and apply a member status transition.
+   * Returns false if the transition is invalid or the member is not found.
+   * Auto-completes in_progress tasks when a member shuts down.
+   */
   export async function transitionMemberStatus(
     teamName: string,
     memberName: string,
     status: MemberStatus,
     options?: { guard?: boolean; force?: boolean },
   ): Promise<boolean> {
-    let changed = false
-    try {
-      await Storage.update<TeamInfo>(configKey(teamName), (draft) => {
-        const member = draft.members.find((m) => m.name === memberName)
-        if (!member) return
-        if (options?.guard && member.status === "shutdown") return
-        const from = member.status
-        if (!options?.force && !canTransition(from, status, MEMBER_TRANSITIONS)) return
-        if (from === status) return
-        member.status = status
-        changed = true
-      })
-    } catch {
-      return false
-    }
+    const team = await get(teamName)
+    const member = team?.members.find((m) => m.name === memberName)
+    if (!team || !member) return false
+    if (options?.guard && member.status === "shutdown") return false
+    const from = member.status
+    if (!options?.force && !canTransition(from, status, MEMBER_TRANSITIONS)) return false
+    if (from === status) return false
+    const meta = { ...sessionMeta(member), status }
+    Database.use((db) => {
+      db.update(SessionTable)
+        .set({ team_meta: meta, time_updated: Date.now() })
+        .where(eq(SessionTable.id, member.sessionID))
+        .run()
+    })
+    const changed = true
     if (!changed) return false
     await Bus.publish(TeamEvent.MemberStatusChanged, { teamName, memberName, status })
 
@@ -286,26 +497,27 @@ export namespace Team {
     return true
   }
 
+  /** Validate and apply an execution status transition within a member's prompt loop */
   export async function transitionExecutionStatus(
     teamName: string,
     memberName: string,
     status: ExecutionStatusType,
     options?: { force?: boolean },
   ): Promise<boolean> {
-    let changed = false
-    try {
-      await Storage.update<TeamInfo>(configKey(teamName), (draft) => {
-        const member = draft.members.find((m) => m.name === memberName)
-        if (!member) return
-        const from = normalizeMember(member).execution_status ?? "idle"
-        if (!options?.force && !canTransition(from, status, EXECUTION_TRANSITIONS)) return
-        if (from === status) return
-        member.execution_status = status
-        changed = true
-      })
-    } catch {
-      return false
-    }
+    const team = await get(teamName)
+    const member = team?.members.find((m) => m.name === memberName)
+    if (!team || !member) return false
+    const from = normalizeMember(member).execution_status ?? "idle"
+    if (!options?.force && !canTransition(from, status, EXECUTION_TRANSITIONS)) return false
+    if (from === status) return false
+    const meta = { ...sessionMeta(member), execution_status: status }
+    Database.use((db) => {
+      db.update(SessionTable)
+        .set({ team_meta: meta, time_updated: Date.now() })
+        .where(eq(SessionTable.id, member.sessionID))
+        .run()
+    })
+    const changed = true
     if (!changed) return false
     await Bus.publish(TeamEvent.MemberExecutionChanged, { teamName, memberName, status })
     return true
@@ -327,13 +539,11 @@ export namespace Team {
    * Toggle delegate mode on a team.
    */
   export async function setDelegate(teamName: string, delegate: boolean): Promise<void> {
-    try {
-      await Storage.update<TeamInfo>(configKey(teamName), (draft) => {
-        draft.delegate = delegate
-      })
-    } catch {
-      // Team not found — ignore
-    }
+    const id = teamID(teamName)
+    if (!id) return
+    Database.use((db) => {
+      db.update(TeamTable).set({ delegate, time_updated: Date.now() }).where(eq(TeamTable.id, id)).run()
+    })
   }
 
   /**
@@ -344,27 +554,30 @@ export namespace Team {
     memberName: string,
     planApproval: "none" | "pending" | "approved" | "rejected",
   ): Promise<void> {
-    try {
-      await Storage.update<TeamInfo>(configKey(teamName), (draft) => {
-        const member = draft.members.find((m) => m.name === memberName)
-        if (!member) return
-        member.planApproval = planApproval
-      })
-    } catch {
-      // Team not found — ignore
-    }
+    const team = await get(teamName)
+    const member = team?.members.find((m) => m.name === memberName)
+    if (!member) return
+    Database.use((db) => {
+      db.update(SessionTable)
+        .set({ plan_approval: planApproval, time_updated: Date.now() })
+        .where(eq(SessionTable.id, member.sessionID))
+        .run()
+    })
   }
 
   /**
    * Remove a member from a team.
    */
   export async function removeMember(teamName: string, memberName: string): Promise<void> {
-    try {
-      await Storage.update<TeamInfo>(configKey(teamName), (draft) => {
-        draft.members = draft.members.filter((m) => m.name !== memberName)
+    const team = await get(teamName)
+    const member = team?.members.find((m) => m.name === memberName)
+    if (member) {
+      Database.use((db) => {
+        db.update(SessionTable)
+          .set({ team_id: null, team_role: null, team_meta: null, plan_approval: null, time_updated: Date.now() })
+          .where(eq(SessionTable.id, member.sessionID))
+          .run()
       })
-    } catch {
-      // Team not found — ignore
     }
     log.info("member removed", { teamName, memberName })
   }
@@ -375,6 +588,28 @@ export namespace Team {
   export async function findBySession(
     sessionID: string,
   ): Promise<{ team: TeamInfo; role: "lead" | "member"; memberName?: string } | undefined> {
+    const session = Database.use((db) => db.select().from(SessionTable).where(eq(SessionTable.id, sessionID)).get())
+    if (session?.team_id && session.team_role) {
+      const tid = session.team_id
+      const teamRow = Database.use((db) =>
+        db
+          .select({ name: TeamTable.name })
+          .from(TeamTable)
+          .where(
+            and(eq(TeamTable.id, tid), eq(TeamTable.project_id, Instance.project.id), eq(TeamTable.status, "active")),
+          )
+          .get(),
+      )
+      if (teamRow) {
+        const team = await get(teamRow.name)
+        if (team) {
+          if (session.team_role === "lead") return { team, role: "lead" }
+          const memberName = typeof session.team_meta?.name === "string" ? session.team_meta.name : undefined
+          return { team, role: "member", ...(memberName ? { memberName } : {}) }
+        }
+      }
+    }
+
     const teams = await list()
     for (const team of teams) {
       if (team.leadSessionID === sessionID) return { team, role: "lead" }
@@ -395,7 +630,9 @@ export namespace Team {
         const session = await Session.get(sessionID)
         if (session && !session.parentID && !session.teammate) {
           const team = teams[0]
-          const leadExists = await Session.get(team.leadSessionID).catch(() => undefined)
+          const leadExists = team.leadSessionID
+            ? await Session.get(team.leadSessionID).catch(() => undefined)
+            : undefined
           if (!leadExists) {
             log.info("rebinding lead — original lead session is gone", {
               teamName: team.name,
@@ -420,19 +657,25 @@ export namespace Team {
    * a restart where the user starts a new session instead of continuing the old one).
    */
   export async function rebindLead(teamName: string, newSessionID: string, reason?: string): Promise<void> {
-    try {
-      await Storage.update<TeamInfo>(configKey(teamName), (draft) => {
-        log.info("rebinding lead session", {
-          teamName,
-          oldSessionID: draft.leadSessionID,
-          newSessionID,
-          reason: reason ?? "unspecified",
-        })
-        draft.leadSessionID = newSessionID
-      })
-    } catch {
-      // Team not found — ignore
-    }
+    const id = teamID(teamName)
+    if (!id) return
+    const previous = await get(teamName)
+    log.info("rebinding lead session", {
+      teamName,
+      oldSessionID: previous?.leadSessionID,
+      newSessionID,
+      reason: reason ?? "unspecified",
+    })
+    Database.use((db) => {
+      db.update(TeamTable)
+        .set({ lead_session_id: newSessionID, time_updated: Date.now() })
+        .where(eq(TeamTable.id, id))
+        .run()
+      db.update(SessionTable)
+        .set({ team_id: id, team_role: "lead", plan_approval: "none", team_meta: null, time_updated: Date.now() })
+        .where(eq(SessionTable.id, newSessionID))
+        .run()
+    })
   }
 
   /**
@@ -498,12 +741,10 @@ export namespace Team {
       { permission: "team_approve_plan", pattern: "*", action: "deny" },
     ]
     if (input.planApproval) {
-      // Pattern "*:plan-approval" is intentionally NOT "*" — PermissionNext.disabled() only
-      // strips tools with pattern "*", so these remain visible to the model but are denied at
-      // execution time. The ":plan-approval" tag lets approvePlan() remove only these rules.
-      rules.push(
-        ...WRITE_TOOLS.map((tool) => ({ permission: tool, pattern: "*:plan-approval", action: "deny" as const })),
-      )
+      // Use pattern "*" so that PermissionNext.evaluate() and disabled() both
+      // correctly deny/hide write tools.  On approval, these rules are removed
+      // by matching (permission ∈ WRITE_TOOLS && pattern === "*" && action === "deny").
+      rules.push(...WRITE_TOOLS.map((tool) => ({ permission: tool, pattern: "*", action: "deny" as const })))
     }
 
     const sessionID = Identifier.ascending("session")
@@ -697,7 +938,14 @@ export namespace Team {
       const info = await Session.get(member.sessionID)
       await Session.setPermission({
         sessionID: member.sessionID,
-        permission: (info.permission ?? []).filter((rule) => rule.pattern !== "*:plan-approval"),
+        permission: (info.permission ?? []).filter(
+          (rule) =>
+            !(
+              (WRITE_TOOLS as readonly string[]).includes(rule.permission) &&
+              rule.pattern === "*" &&
+              rule.action === "deny"
+            ),
+        ),
       })
       await setMemberPlanApproval(input.teamName, input.memberName, "approved")
       await TeamMessaging.send({
@@ -836,8 +1084,16 @@ export namespace Team {
       }
     }
 
-    await Storage.remove(configKey(teamName))
-    await Storage.remove(tasksKey(teamName))
+    const id = teamID(teamName)
+    if (id) {
+      Database.use((db) => {
+        db.update(SessionTable)
+          .set({ team_id: null, team_role: null, team_meta: null, plan_approval: null, time_updated: Date.now() })
+          .where(eq(SessionTable.team_id, id))
+          .run()
+        db.delete(TeamTable).where(eq(TeamTable.id, id)).run()
+      })
+    }
 
     log.info("team cleaned up", { teamName })
     await Bus.publish(TeamEvent.Cleaned, {
@@ -950,13 +1206,17 @@ export namespace Team {
         for (const member of active) {
           await TeamMessaging.recoverInbox(team.name, member.name, member.sessionID)
         }
-        await TeamMessaging.recoverInbox(team.name, "lead", team.leadSessionID)
+        if (team.leadSessionID) {
+          await TeamMessaging.recoverInbox(team.name, "lead", team.leadSessionID)
+        }
       } catch (err: unknown) {
         log.warn("inbox recovery failed", {
           teamName: team.name,
           error: err instanceof Error ? err.message : String(err),
         })
       }
+
+      if (!team.leadSessionID) continue
 
       try {
         const { Session } = await import("../session")
@@ -996,16 +1256,58 @@ export namespace Team {
   }
 }
 
+/** Shared task board for team coordination. Tasks have composite PK (team_id, id). */
 export namespace TeamTasks {
+  async function context(teamName: string) {
+    const id = teamID(teamName)
+    if (!id) return
+    const team = await Team.get(teamName)
+    if (!team) return
+    const byName = new Map(team.members.map((m) => [m.name, m.sessionID]))
+    const bySession = new Map(team.members.map((m) => [m.sessionID, m.name]))
+    return { id, byName, bySession }
+  }
+
+  async function save(teamName: string, tasks: TeamTask[]) {
+    const ctx = await context(teamName)
+    if (!ctx) return
+    const now = Date.now()
+    Database.use((db) => {
+      db.delete(TeamTaskTable).where(eq(TeamTaskTable.team_id, ctx.id)).run()
+      if (!tasks.length) return
+      db.insert(TeamTaskTable)
+        .values(
+          tasks.map((task) => ({
+            id: task.id,
+            team_id: ctx.id,
+            content: task.content,
+            status: task.status,
+            priority: task.priority,
+            assigned_to: task.assignee ? (ctx.byName.get(task.assignee) ?? null) : null,
+            depends_on: task.depends_on ?? [],
+            time_created: now,
+            time_updated: now,
+          })),
+        )
+        .run()
+    })
+  }
+
   /**
    * Read all tasks for a team.
    */
   export async function list(teamName: string): Promise<TeamTask[]> {
-    try {
-      return await Storage.read<TeamTask[]>(tasksKey(teamName))
-    } catch {
-      return []
-    }
+    const ctx = await context(teamName)
+    if (!ctx) return []
+    const rows = Database.use((db) => db.select().from(TeamTaskTable).where(eq(TeamTaskTable.team_id, ctx.id)).all())
+    return rows.map((task) => ({
+      id: task.id,
+      content: task.content,
+      status: TeamTaskSchema.shape.status.parse(task.status),
+      priority: TeamTaskSchema.shape.priority.parse(task.priority),
+      assignee: task.assigned_to ? ctx.bySession.get(task.assigned_to) : undefined,
+      depends_on: task.depends_on ?? undefined,
+    }))
   }
 
   /**
@@ -1013,7 +1315,8 @@ export namespace TeamTasks {
    */
   export async function update(teamName: string, tasks: TeamTask[]): Promise<void> {
     const resolved = resolveDependencies(tasks)
-    await Storage.write(tasksKey(teamName), resolved)
+    await save(teamName, resolved)
+    Team.touch(teamName)
     await Bus.publish(TeamEvent.TaskUpdated, { teamName, tasks: resolved })
   }
 
@@ -1023,7 +1326,8 @@ export namespace TeamTasks {
   export async function add(teamName: string, newTasks: TeamTask[]): Promise<void> {
     const existing = await list(teamName)
     const resolved = resolveDependencies([...existing, ...newTasks])
-    await Storage.write(tasksKey(teamName), resolved)
+    await save(teamName, resolved)
+    Team.touch(teamName)
     await Bus.publish(TeamEvent.TaskUpdated, { teamName, tasks: resolved })
   }
 
@@ -1031,54 +1335,54 @@ export namespace TeamTasks {
    * Atomically claim a task. Returns true if claimed, false if already taken.
    */
   export async function claim(teamName: string, taskId: string, memberName: string): Promise<boolean> {
-    let claimed = false
-    try {
-      await Storage.update<TeamTask[]>(tasksKey(teamName), (tasks) => {
-        const task = tasks.find((t) => t.id === taskId)
-        if (!task) return
-        if (task.status !== "pending") return
-        if (task.assignee) return
-
-        if (task.depends_on?.length) {
-          const unresolved = task.depends_on.some((depId) => {
-            const dep = tasks.find((t) => t.id === depId)
-            return !dep || (dep.status !== "completed" && dep.status !== "cancelled")
-          })
-          if (unresolved) return
-        }
-
-        task.status = "in_progress"
-        task.assignee = memberName
-        claimed = true
+    const ctx = await context(teamName)
+    if (!ctx) return false
+    const task = (await list(teamName)).find((t) => t.id === taskId)
+    if (!task) return false
+    if (task.status !== "pending" || task.assignee) return false
+    if (task.depends_on?.length) {
+      const tasks = await list(teamName)
+      const unresolved = task.depends_on.some((depId) => {
+        const dep = tasks.find((t) => t.id === depId)
+        return !dep || (dep.status !== "completed" && dep.status !== "cancelled")
       })
-    } catch {
-      return false
+      if (unresolved) return false
     }
-
-    if (claimed) await Bus.publish(TeamEvent.TaskClaimed, { teamName, taskId, memberName })
-    return claimed
+    const memberSessionID = ctx.byName.get(memberName)
+    if (!memberSessionID) return false
+    const claimed = Database.use((db) =>
+      db
+        .update(TeamTaskTable)
+        .set({ status: "in_progress", assigned_to: memberSessionID, time_updated: Date.now() })
+        .where(
+          and(
+            eq(TeamTaskTable.id, taskId),
+            eq(TeamTaskTable.team_id, ctx.id),
+            eq(TeamTaskTable.status, "pending"),
+            isNull(TeamTaskTable.assigned_to),
+          ),
+        )
+        .returning({ id: TeamTaskTable.id })
+        .get(),
+    )
+    if (claimed) {
+      Team.touch(teamName)
+      await Bus.publish(TeamEvent.TaskClaimed, { teamName, taskId, memberName })
+    }
+    return !!claimed
   }
 
   /**
    * Mark a task as completed.
    */
   export async function complete(teamName: string, taskId: string): Promise<void> {
-    let tasks: TeamTask[] = []
-    let completed: TeamTask | undefined
-    try {
-      tasks = await Storage.update<TeamTask[]>(tasksKey(teamName), (draft) => {
-        const task = draft.find((t) => t.id === taskId)
-        if (task) task.status = "completed"
-        const resolved = resolveDependencies(draft)
-        // Mutate in-place — Storage.update serializes the original reference,
-        // so reassignment (draft = resolved) wouldn't propagate
-        draft.length = 0
-        draft.push(...resolved)
-        completed = draft.find((t) => t.id === taskId)
-      })
-    } catch {
-      return
-    }
+    const current = await list(teamName)
+    if (!current.length) return
+    const updated = current.map((task) => (task.id === taskId ? { ...task, status: "completed" as const } : task))
+    const tasks = resolveDependencies(updated)
+    const completed = tasks.find((t) => t.id === taskId)
+    await save(teamName, tasks)
+    Team.touch(teamName)
     await Bus.publish(TeamEvent.TaskUpdated, { teamName, tasks })
     if (!completed) return
     await Bus.publish(TeamEvent.TaskCompleted, { teamName, task: completed })

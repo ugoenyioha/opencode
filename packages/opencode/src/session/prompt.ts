@@ -564,6 +564,35 @@ export namespace SessionPrompt {
       }
 
       // normal processing
+      if (session.teamID) {
+        const { Team } = await import("../team")
+        const { TeamMessaging } = await import("../team/messaging")
+        const info = await Team.findBySession(sessionID)
+        const pending = await TeamMessaging.pending(sessionID)
+        if (info && pending.length > 0) {
+          const msgId = Identifier.ascending("message")
+          await Session.updateMessage({
+            id: msgId,
+            sessionID,
+            role: "user",
+            agent: lastUser.agent,
+            model: lastUser.model,
+            time: { created: Date.now() },
+          })
+          await Session.updatePart({
+            id: Identifier.ascending("part"),
+            messageID: msgId,
+            sessionID,
+            type: "text",
+            text: pending.map((item) => `[Team message from ${item.from}]: ${item.text}`).join("\n"),
+            synthetic: true,
+            metadata: { inboxMessageIds: pending.map((item) => item.id) },
+          })
+          await TeamMessaging.markRead(info.team.name, info.role === "lead" ? "lead" : info.memberName!)
+          continue
+        }
+      }
+
       const agent = await Agent.get(lastUser.agent)
       const maxSteps = agent.steps ?? Infinity
       const isLastStep = step >= maxSteps

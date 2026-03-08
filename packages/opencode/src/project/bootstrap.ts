@@ -58,6 +58,7 @@ export async function InstanceBootstrap() {
         })
         .finally(() => {
           Team.autoCleanup()
+          Team.enforceTimeouts()
         })
     })
   }

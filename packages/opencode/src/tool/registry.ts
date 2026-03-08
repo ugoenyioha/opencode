@@ -44,6 +44,7 @@ import {
   TeamCleanupTool,
   TeamStatusTool,
 } from "./team"
+import { TeamWaitTool } from "./team_wait"
 import { Glob } from "../util/glob"
 const WasmMetadata = z
   .object({
@@ -288,6 +289,7 @@ export namespace ToolRegistry {
             TeamShutdownTool,
             TeamCleanupTool,
             TeamStatusTool,
+            TeamWaitTool,
           ]
         : []),
       ...custom,

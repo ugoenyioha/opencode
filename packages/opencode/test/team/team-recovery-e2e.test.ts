@@ -227,9 +227,7 @@ describe("Team recovery e2e: full restart cycle", () => {
         const lastMsg = msgs[msgs.length - 1]
         expect(lastMsg.info.role).toBe("user")
         const textParts = lastMsg.parts.filter((p) => p.type === "text")
-        const hasNotification = textParts.some(
-          (p) => p.type === "text" && p.text.includes("Server was restarted"),
-        )
+        const hasNotification = textParts.some((p) => p.type === "text" && p.text.includes("Server was restarted"))
         expect(hasNotification).toBe(true)
 
         // ===== PHASE 4: User says "continue" — lead LLM sends team_message =====
@@ -253,9 +251,7 @@ describe("Team recovery e2e: full restart cycle", () => {
         await Bun.sleep(500)
 
         // Verify the teammate's loop ran (mock LLM was called)
-        const anthropicRequests = serverState.requests.filter((r) =>
-          r.url.includes("/v1/messages"),
-        )
+        const anthropicRequests = serverState.requests.filter((r) => r.url.includes("/v1/messages"))
         expect(anthropicRequests.length).toBeGreaterThanOrEqual(1)
 
         // Wait for loop to fully complete
@@ -296,10 +292,11 @@ describe("Team recovery e2e: full restart cycle", () => {
       directory: tmp.path,
       fn: async () => {
         const leadSession = await Session.create({})
+        const memberSession = await Session.create({ parentID: leadSession.id })
         await Team.create({ name: "noop-team", leadSessionID: leadSession.id })
         await Team.addMember("noop-team", {
           name: "worker",
-          sessionID: "ses_fake",
+          sessionID: memberSession.id,
           agent: "general",
           status: "ready",
           planApproval: "none",

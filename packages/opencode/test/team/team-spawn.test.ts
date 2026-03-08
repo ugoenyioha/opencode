@@ -316,11 +316,11 @@ describe("TeamSpawnTool.execute", () => {
           })
         }
 
-        // Write tools MUST be denied when plan approval is required (tagged pattern)
+        // Write tools MUST be denied when plan approval is required (wildcard pattern)
         for (const wt of WRITE_TOOLS) {
           expect(childSession.permission).toContainEqual({
             permission: wt,
-            pattern: "*:plan-approval",
+            pattern: "*",
             action: "deny",
           })
         }

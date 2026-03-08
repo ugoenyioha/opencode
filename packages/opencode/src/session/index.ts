@@ -48,6 +48,15 @@ export namespace Session {
   type SessionRow = typeof SessionTable.$inferSelect
 
   export function fromRow(row: SessionRow): Info {
+    const teamRole: "lead" | "member" | undefined =
+      row.team_role === "lead" || row.team_role === "member" ? (row.team_role as "lead" | "member") : undefined
+    const planApproval: "none" | "pending" | "approved" | "rejected" | undefined =
+      row.plan_approval === "none" ||
+      row.plan_approval === "pending" ||
+      row.plan_approval === "approved" ||
+      row.plan_approval === "rejected"
+        ? (row.plan_approval as "none" | "pending" | "approved" | "rejected")
+        : undefined
     const summary =
       row.summary_additions !== null || row.summary_deletions !== null || row.summary_files !== null
         ? {
@@ -72,6 +81,10 @@ export namespace Session {
       revert,
       permission: row.permission ?? undefined,
       teammate: row.teammate ?? undefined,
+      teamID: row.team_id ?? undefined,
+      teamRole,
+      planApproval,
+      teamMeta: row.team_meta ?? undefined,
       time: {
         created: row.time_created,
         updated: row.time_updated,
@@ -98,6 +111,10 @@ export namespace Session {
       revert: info.revert ?? null,
       permission: info.permission,
       teammate: info.teammate ?? null,
+      team_id: info.teamID,
+      team_role: info.teamRole,
+      plan_approval: info.planApproval,
+      team_meta: info.teamMeta,
       time_created: info.time.created,
       time_updated: info.time.updated,
       time_compacting: info.time.compacting,
@@ -123,6 +140,19 @@ export namespace Session {
       directory: z.string(),
       parentID: Identifier.schema("session").optional(),
       teammate: z.boolean().optional(),
+      teamID: z.string().optional(),
+      teamRole: z.enum(["lead", "member"]).optional(),
+      planApproval: z.enum(["none", "pending", "approved", "rejected"]).optional(),
+      teamMeta: z
+        .object({
+          name: z.string(),
+          agent: z.string(),
+          status: z.string(),
+          execution_status: z.string().optional(),
+          prompt: z.string().optional(),
+          model: z.string().optional(),
+        })
+        .optional(),
       summary: z
         .object({
           additions: z.number(),
@@ -295,6 +325,17 @@ export namespace Session {
     title?: string
     parentID?: string
     teammate?: boolean
+    teamID?: string
+    teamRole?: "lead" | "member"
+    planApproval?: "none" | "pending" | "approved" | "rejected"
+    teamMeta?: {
+      name: string
+      agent: string
+      status: string
+      execution_status?: string
+      prompt?: string
+      model?: string
+    }
     directory: string
     permission?: PermissionNext.Ruleset
   }) {
@@ -306,6 +347,10 @@ export namespace Session {
       directory: input.directory,
       parentID: input.parentID,
       ...(input.teammate ? { teammate: true } : {}),
+      ...(input.teamID ? { teamID: input.teamID } : {}),
+      ...(input.teamRole ? { teamRole: input.teamRole } : {}),
+      ...(input.planApproval ? { planApproval: input.planApproval } : {}),
+      ...(input.teamMeta ? { teamMeta: input.teamMeta } : {}),
       title: input.title ?? createDefaultTitle(!!input.parentID),
       permission: input.permission,
       time: {

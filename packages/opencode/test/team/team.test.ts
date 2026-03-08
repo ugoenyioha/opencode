@@ -5,6 +5,7 @@ import { Team, TeamTasks } from "../../src/team"
 import { Session } from "../../src/session"
 import { Env } from "../../src/env"
 import { Log } from "../../src/util/log"
+import { tmpdir } from "../fixture/fixture"
 import {
   TeamCreateTool,
   TeamSpawnTool,
@@ -28,13 +29,14 @@ describe("Team", () => {
         Env.set("ANTHROPIC_API_KEY", "test-key")
       },
       fn: async () => {
+        const lead = await Session.create({})
         const team = await Team.create({
           name: "test-team-1",
-          leadSessionID: "ses_lead_123",
+          leadSessionID: lead.id,
         })
 
         expect(team.name).toBe("test-team-1")
-        expect(team.leadSessionID).toBe("ses_lead_123")
+        expect(team.leadSessionID).toBe(lead.id)
         expect(team.members).toEqual([])
         expect(team.created).toBeGreaterThan(0)
 
@@ -68,8 +70,10 @@ describe("Team", () => {
         Env.set("ANTHROPIC_API_KEY", "test-key")
       },
       fn: async () => {
-        await Team.create({ name: "dup-team", leadSessionID: "ses_1" })
-        await expect(Team.create({ name: "dup-team", leadSessionID: "ses_2" })).rejects.toThrow(
+        const lead1 = await Session.create({})
+        const lead2 = await Session.create({})
+        await Team.create({ name: "dup-team", leadSessionID: lead1.id })
+        await expect(Team.create({ name: "dup-team", leadSessionID: lead2.id })).rejects.toThrow(
           'Team "dup-team" already exists',
         )
 
@@ -85,11 +89,13 @@ describe("Team", () => {
         Env.set("ANTHROPIC_API_KEY", "test-key")
       },
       fn: async () => {
-        await Team.create({ name: "member-team", leadSessionID: "ses_lead" })
+        const lead = await Session.create({})
+        await Team.create({ name: "member-team", leadSessionID: lead.id })
 
+        const researcher = await Session.create({ parentID: lead.id })
         await Team.addMember("member-team", {
           name: "researcher",
-          sessionID: "ses_research_1",
+          sessionID: researcher.id,
           agent: "explore",
           status: "busy",
         })
@@ -99,9 +105,10 @@ describe("Team", () => {
         expect(team!.members[0].name).toBe("researcher")
         expect(team!.members[0].agent).toBe("explore")
 
+        const implementer = await Session.create({ parentID: lead.id })
         await Team.addMember("member-team", {
           name: "implementer",
-          sessionID: "ses_impl_1",
+          sessionID: implementer.id,
           agent: "general",
           status: "busy",
         })
@@ -128,10 +135,12 @@ describe("Team", () => {
         Env.set("ANTHROPIC_API_KEY", "test-key")
       },
       fn: async () => {
-        await Team.create({ name: "status-team", leadSessionID: "ses_lead" })
+        const lead = await Session.create({})
+        await Team.create({ name: "status-team", leadSessionID: lead.id })
+        const worker = await Session.create({ parentID: lead.id })
         await Team.addMember("status-team", {
           name: "worker",
-          sessionID: "ses_w1",
+          sessionID: worker.id,
           agent: "general",
           status: "busy",
         })
@@ -156,10 +165,12 @@ describe("Team", () => {
         Env.set("ANTHROPIC_API_KEY", "test-key")
       },
       fn: async () => {
-        await Team.create({ name: "active-team", leadSessionID: "ses_lead" })
+        const lead = await Session.create({})
+        await Team.create({ name: "active-team", leadSessionID: lead.id })
+        const busyWorker = await Session.create({ parentID: lead.id })
         await Team.addMember("active-team", {
           name: "busy-worker",
-          sessionID: "ses_busy",
+          sessionID: busyWorker.id,
           agent: "general",
           status: "busy",
         })
@@ -180,19 +191,21 @@ describe("Team", () => {
         Env.set("ANTHROPIC_API_KEY", "test-key")
       },
       fn: async () => {
-        await Team.create({ name: "find-team", leadSessionID: "ses_lead_find" })
+        const lead = await Session.create({})
+        await Team.create({ name: "find-team", leadSessionID: lead.id })
+        const finder = await Session.create({ parentID: lead.id })
         await Team.addMember("find-team", {
           name: "finder",
-          sessionID: "ses_finder",
+          sessionID: finder.id,
           agent: "explore",
           status: "busy",
         })
 
-        const leadResult = await Team.findBySession("ses_lead_find")
+        const leadResult = await Team.findBySession(lead.id)
         expect(leadResult).toBeDefined()
         expect(leadResult!.role).toBe("lead")
 
-        const memberResult = await Team.findBySession("ses_finder")
+        const memberResult = await Team.findBySession(finder.id)
         expect(memberResult).toBeDefined()
         expect(memberResult!.role).toBe("member")
         expect(memberResult!.memberName).toBe("finder")
@@ -215,7 +228,8 @@ describe("TeamTasks", () => {
         Env.set("ANTHROPIC_API_KEY", "test-key")
       },
       fn: async () => {
-        await Team.create({ name: "task-team", leadSessionID: "ses_lead" })
+        const lead = await Session.create({})
+        await Team.create({ name: "task-team", leadSessionID: lead.id })
 
         await TeamTasks.add("task-team", [
           { id: "t1", content: "Research auth module", status: "pending", priority: "high" },
@@ -239,7 +253,12 @@ describe("TeamTasks", () => {
         Env.set("ANTHROPIC_API_KEY", "test-key")
       },
       fn: async () => {
-        await Team.create({ name: "claim-team", leadSessionID: "ses_lead" })
+        const lead = await Session.create({})
+        await Team.create({ name: "claim-team", leadSessionID: lead.id })
+        const wA = await Session.create({ parentID: lead.id })
+        await Team.addMember("claim-team", { name: "worker-a", sessionID: wA.id, agent: "general", status: "busy" })
+        const wB = await Session.create({ parentID: lead.id })
+        await Team.addMember("claim-team", { name: "worker-b", sessionID: wB.id, agent: "general", status: "busy" })
         await TeamTasks.add("claim-team", [{ id: "t1", content: "Do work", status: "pending", priority: "high" }])
 
         const claimed = await TeamTasks.claim("claim-team", "t1", "worker-a")
@@ -253,6 +272,8 @@ describe("TeamTasks", () => {
         expect(tasks[0].status).toBe("in_progress")
         expect(tasks[0].assignee).toBe("worker-a")
 
+        await Team.setMemberStatus("claim-team", "worker-a", "shutdown")
+        await Team.setMemberStatus("claim-team", "worker-b", "shutdown")
         await Team.cleanup("claim-team")
       },
     })
@@ -265,7 +286,10 @@ describe("TeamTasks", () => {
         Env.set("ANTHROPIC_API_KEY", "test-key")
       },
       fn: async () => {
-        await Team.create({ name: "dep-team", leadSessionID: "ses_lead" })
+        const lead = await Session.create({})
+        await Team.create({ name: "dep-team", leadSessionID: lead.id })
+        const w = await Session.create({ parentID: lead.id })
+        await Team.addMember("dep-team", { name: "worker", sessionID: w.id, agent: "general", status: "busy" })
         await TeamTasks.add("dep-team", [
           { id: "t1", content: "Step 1", status: "pending", priority: "high" },
           { id: "t2", content: "Step 2", status: "pending", priority: "high", depends_on: ["t1"] },
@@ -287,6 +311,7 @@ describe("TeamTasks", () => {
         const claimUnblocked = await TeamTasks.claim("dep-team", "t2", "worker")
         expect(claimUnblocked).toBe(true)
 
+        await Team.setMemberStatus("dep-team", "worker", "shutdown")
         await Team.cleanup("dep-team")
       },
     })
@@ -299,7 +324,8 @@ describe("TeamTasks", () => {
         Env.set("ANTHROPIC_API_KEY", "test-key")
       },
       fn: async () => {
-        await Team.create({ name: "self-dep-team", leadSessionID: "ses_lead" })
+        const lead = await Session.create({})
+        await Team.create({ name: "self-dep-team", leadSessionID: lead.id })
         await TeamTasks.add("self-dep-team", [
           {
             id: "t1",
@@ -326,7 +352,8 @@ describe("TeamTasks", () => {
         Env.set("ANTHROPIC_API_KEY", "test-key")
       },
       fn: async () => {
-        await Team.create({ name: "unblock-team", leadSessionID: "ses_lead" })
+        const lead = await Session.create({})
+        await Team.create({ name: "unblock-team", leadSessionID: lead.id })
         await TeamTasks.add("unblock-team", [
           { id: "t1", content: "Foundation", status: "pending", priority: "high" },
           { id: "t2", content: "Depends on t1", status: "pending", priority: "medium", depends_on: ["t1"] },
@@ -358,7 +385,8 @@ describe("TeamTasks", () => {
         Env.set("ANTHROPIC_API_KEY", "test-key")
       },
       fn: async () => {
-        await Team.create({ name: "update-team", leadSessionID: "ses_lead" })
+        const lead = await Session.create({})
+        await Team.create({ name: "update-team", leadSessionID: lead.id })
         await TeamTasks.add("update-team", [{ id: "old", content: "Old task", status: "pending", priority: "low" }])
 
         await TeamTasks.update("update-team", [
@@ -387,16 +415,19 @@ describe("Team auto-cleanup", () => {
         // Enable auto-cleanup subscriber
         const unsub = Team.autoCleanup()
 
-        await Team.create({ name: "auto-clean-team", leadSessionID: "ses_lead_ac" })
+        const lead = await Session.create({})
+        await Team.create({ name: "auto-clean-team", leadSessionID: lead.id })
+        const workerA = await Session.create({ parentID: lead.id })
         await Team.addMember("auto-clean-team", {
           name: "worker-a",
-          sessionID: "ses_ac_a",
+          sessionID: workerA.id,
           agent: "general",
           status: "busy",
         })
+        const workerB = await Session.create({ parentID: lead.id })
         await Team.addMember("auto-clean-team", {
           name: "worker-b",
-          sessionID: "ses_ac_b",
+          sessionID: workerB.id,
           agent: "general",
           status: "busy",
         })
@@ -435,16 +466,19 @@ describe("Team auto-cleanup", () => {
       fn: async () => {
         const unsub = Team.autoCleanup()
 
-        await Team.create({ name: "no-clean-team", leadSessionID: "ses_lead_nc" })
+        const lead = await Session.create({})
+        await Team.create({ name: "no-clean-team", leadSessionID: lead.id })
+        const worker1 = await Session.create({ parentID: lead.id })
         await Team.addMember("no-clean-team", {
           name: "worker-1",
-          sessionID: "ses_nc_1",
+          sessionID: worker1.id,
           agent: "general",
           status: "busy",
         })
+        const worker2 = await Session.create({ parentID: lead.id })
         await Team.addMember("no-clean-team", {
           name: "worker-2",
-          sessionID: "ses_nc_2",
+          sessionID: worker2.id,
           agent: "general",
           status: "busy",
         })
@@ -476,10 +510,12 @@ describe("Team auto-cleanup", () => {
       fn: async () => {
         const unsub = Team.autoCleanup()
 
-        await Team.create({ name: "idle-team", leadSessionID: "ses_lead_idle" })
+        const lead = await Session.create({})
+        await Team.create({ name: "idle-team", leadSessionID: lead.id })
+        const workerIdle = await Session.create({ parentID: lead.id })
         await Team.addMember("idle-team", {
           name: "worker-idle",
-          sessionID: "ses_idle_1",
+          sessionID: workerIdle.id,
           agent: "general",
           status: "busy",
         })
@@ -509,10 +545,11 @@ describe("Team constraints", () => {
         Env.set("ANTHROPIC_API_KEY", "test-key")
       },
       fn: async () => {
-        await Team.create({ name: "lead-team-1", leadSessionID: "ses_lead_single" })
+        const lead = await Session.create({})
+        await Team.create({ name: "lead-team-1", leadSessionID: lead.id })
 
         // Same session cannot lead a second team
-        await expect(Team.create({ name: "lead-team-2", leadSessionID: "ses_lead_single" })).rejects.toThrow(
+        await expect(Team.create({ name: "lead-team-2", leadSessionID: lead.id })).rejects.toThrow(
           "Only one team per session",
         )
 
@@ -528,16 +565,18 @@ describe("Team constraints", () => {
         Env.set("ANTHROPIC_API_KEY", "test-key")
       },
       fn: async () => {
-        await Team.create({ name: "parent-team", leadSessionID: "ses_lead_parent" })
+        const lead = await Session.create({})
+        await Team.create({ name: "parent-team", leadSessionID: lead.id })
+        const worker = await Session.create({ parentID: lead.id })
         await Team.addMember("parent-team", {
           name: "worker",
-          sessionID: "ses_worker_nest",
+          sessionID: worker.id,
           agent: "general",
           status: "busy",
         })
 
         // Worker session cannot create a team (no nesting)
-        await expect(Team.create({ name: "nested-team", leadSessionID: "ses_worker_nest" })).rejects.toThrow(
+        await expect(Team.create({ name: "nested-team", leadSessionID: worker.id })).rejects.toThrow(
           "Teammates cannot create new teams",
         )
 
@@ -554,8 +593,10 @@ describe("Team constraints", () => {
         Env.set("ANTHROPIC_API_KEY", "test-key")
       },
       fn: async () => {
-        const team1 = await Team.create({ name: "team-a", leadSessionID: "ses_lead_a" })
-        const team2 = await Team.create({ name: "team-b", leadSessionID: "ses_lead_b" })
+        const leadA = await Session.create({})
+        const leadB = await Session.create({})
+        const team1 = await Team.create({ name: "team-a", leadSessionID: leadA.id })
+        const team2 = await Team.create({ name: "team-b", leadSessionID: leadB.id })
 
         expect(team1.name).toBe("team-a")
         expect(team2.name).toBe("team-b")
@@ -615,17 +656,19 @@ describe("Team tool definitions", () => {
       },
       fn: async () => {
         // Set up a team with a member
-        await Team.create({ name: "tool-guard-team", leadSessionID: "ses_lead_guard" })
+        const lead = await Session.create({})
+        await Team.create({ name: "tool-guard-team", leadSessionID: lead.id })
+        const worker = await Session.create({ parentID: lead.id })
         await Team.addMember("tool-guard-team", {
           name: "guarded-worker",
-          sessionID: "ses_guarded_worker",
+          sessionID: worker.id,
           agent: "general",
           status: "busy",
         })
 
         const tool = await TeamCreateTool.init()
         const result = await tool.execute({ name: "nested-attempt" }, {
-          sessionID: "ses_guarded_worker",
+          sessionID: worker.id,
           messageID: "msg_1",
           agent: "general",
           abort: new AbortController().signal,
@@ -650,11 +693,12 @@ describe("Team tool definitions", () => {
         Env.set("ANTHROPIC_API_KEY", "test-key")
       },
       fn: async () => {
-        await Team.create({ name: "existing-lead-team", leadSessionID: "ses_existing_lead" })
+        const lead = await Session.create({})
+        await Team.create({ name: "existing-lead-team", leadSessionID: lead.id })
 
         const tool = await TeamCreateTool.init()
         const result = await tool.execute({ name: "second-team" }, {
-          sessionID: "ses_existing_lead",
+          sessionID: lead.id,
           messageID: "msg_1",
           agent: "general",
           abort: new AbortController().signal,
@@ -678,10 +722,12 @@ describe("Team tool definitions", () => {
         Env.set("ANTHROPIC_API_KEY", "test-key")
       },
       fn: async () => {
-        await Team.create({ name: "shutdown-guard-team", leadSessionID: "ses_shutdown_lead" })
+        const lead = await Session.create({})
+        await Team.create({ name: "shutdown-guard-team", leadSessionID: lead.id })
+        const worker = await Session.create({ parentID: lead.id })
         await Team.addMember("shutdown-guard-team", {
           name: "worker-x",
-          sessionID: "ses_worker_x",
+          sessionID: worker.id,
           agent: "general",
           status: "busy",
         })
@@ -690,7 +736,7 @@ describe("Team tool definitions", () => {
 
         // Member tries to shutdown another member — should fail
         const result = await tool.execute({ name: "worker-x" }, {
-          sessionID: "ses_worker_x",
+          sessionID: worker.id,
           messageID: "msg_1",
           agent: "general",
           abort: new AbortController().signal,
@@ -786,11 +832,10 @@ describe("Team tool definitions", () => {
   })
 
   test("TeamShutdownTool allows legitimate lead rebind when original lead session is deleted", async () => {
+    await using tmp = await tmpdir({ git: true })
+
     await Instance.provide({
-      directory: projectRoot,
-      init: async () => {
-        Env.set("ANTHROPIC_API_KEY", "test-key")
-      },
+      directory: tmp.path,
       fn: async () => {
         const lead = await Session.create({})
         const replacement = await Session.create({})
@@ -804,7 +849,14 @@ describe("Team tool definitions", () => {
           status: "shutdown",
         })
 
-        await Session.remove(lead.id)
+        // Delete only the lead session row (not children) so the worker
+        // session and team survive. Session.remove() would recursively
+        // delete children, destroying the worker member registration.
+        const { Database, eq } = await import("../../src/storage/db")
+        const { SessionTable } = await import("../../src/session/session.sql")
+        Database.use((db) => {
+          db.delete(SessionTable).where(eq(SessionTable.id, lead.id)).run()
+        })
 
         const tool = await TeamShutdownTool.init()
         const result = await tool.execute({ name: "worker-x" }, {
@@ -828,11 +880,10 @@ describe("Team tool definitions", () => {
   })
 
   test("TeamCleanupTool allows legitimate lead rebind when original lead session is deleted", async () => {
+    await using tmp = await tmpdir({ git: true })
+
     await Instance.provide({
-      directory: projectRoot,
-      init: async () => {
-        Env.set("ANTHROPIC_API_KEY", "test-key")
-      },
+      directory: tmp.path,
       fn: async () => {
         const lead = await Session.create({})
         const replacement = await Session.create({})
@@ -889,7 +940,8 @@ describe("Team tool definitions", () => {
         Env.set("ANTHROPIC_API_KEY", "test-key")
       },
       fn: async () => {
-        await Team.create({ name: "tasks-tool-team", leadSessionID: "ses_tasks_lead" })
+        const lead = await Session.create({})
+        await Team.create({ name: "tasks-tool-team", leadSessionID: lead.id })
         await TeamTasks.add("tasks-tool-team", [
           { id: "t1", content: "First task", status: "pending", priority: "high" },
           { id: "t2", content: "Second task", status: "pending", priority: "medium" },
@@ -897,7 +949,7 @@ describe("Team tool definitions", () => {
 
         const tool = await TeamTasksTool.init()
         const result = await tool.execute({ action: "list" }, {
-          sessionID: "ses_tasks_lead",
+          sessionID: lead.id,
           messageID: "msg_1",
           agent: "general",
           abort: new AbortController().signal,

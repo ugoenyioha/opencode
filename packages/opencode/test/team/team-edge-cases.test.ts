@@ -189,10 +189,15 @@ describe("Edge case: task self-dependency", () => {
         expect(tasks[0].status).toBe("pending")
         expect(tasks[0].depends_on).toHaveLength(0)
 
+        // Register "worker" as a team member so claim can resolve the name
+        const worker = await Session.create({ parentID: lead.id })
+        await Team.addMember("self-dep", { name: "worker", sessionID: worker.id, agent: "general", status: "busy" })
+
         // Should be claimable
         const claimed = await TeamTasks.claim("self-dep", "loop", "worker")
         expect(claimed).toBe(true)
 
+        await Team.setMemberStatus("self-dep", "worker", "shutdown")
         await Team.cleanup("self-dep")
       },
     })
@@ -220,11 +225,16 @@ describe("Edge case: dangling dependency references", () => {
         expect(tasks[0].status).toBe("pending")
         expect(tasks[0].depends_on).toHaveLength(0)
 
+        // Register "worker" as a team member so claim can resolve the name
+        const worker = await Session.create({ parentID: lead.id })
+        await Team.addMember("dangle", { name: "worker", sessionID: worker.id, agent: "general", status: "busy" })
+
         // Should be claimable
         const claimed = await TeamTasks.claim("dangle", "t1", "worker")
         expect(claimed).toBe(true)
 
         await TeamTasks.complete("dangle", "t1")
+        await Team.setMemberStatus("dangle", "worker", "shutdown")
         await Team.cleanup("dangle")
       },
     })
@@ -443,11 +453,16 @@ describe("Edge case: cancelled dependencies", () => {
         tasks = await TeamTasks.list("cancel-dep")
         expect(tasks.find((t) => t.id === "t2")!.status).toBe("pending")
 
+        // Register "worker" as a team member so claim can resolve the name
+        const worker = await Session.create({ parentID: lead.id })
+        await Team.addMember("cancel-dep", { name: "worker", sessionID: worker.id, agent: "general", status: "busy" })
+
         // t2 should be claimable
         const claimed = await TeamTasks.claim("cancel-dep", "t2", "worker")
         expect(claimed).toBe(true)
 
         await TeamTasks.complete("cancel-dep", "t2")
+        await Team.setMemberStatus("cancel-dep", "worker", "shutdown")
         await Team.cleanup("cancel-dep")
       },
     })
@@ -601,7 +616,8 @@ describe("Edge case: lead rebind guards", () => {
 
         await Team.create({ name: "rebind-team", leadSessionID: lead.id })
 
-        // Delete the original lead session
+        // Delete the original lead session — team survives because
+        // lead_session_id uses ON DELETE SET NULL
         await Session.remove(lead.id)
 
         // Now findBySession should rebind to the replacement
@@ -631,18 +647,20 @@ describe("Edge case: lead rebind guards", () => {
 
         await Team.create({ name: "child-team", leadSessionID: lead.id })
 
-        // Delete the original lead session
-        await Session.remove(lead.id)
+        // Delete only the lead session row (not children) so the child
+        // session survives for the findBySession test below.
+        const { Database, eq } = await import("../../src/storage/db")
+        const { SessionTable } = await import("../../src/session/session.sql")
+        Database.use((db) => {
+          db.delete(SessionTable).where(eq(SessionTable.id, lead.id)).run()
+        })
 
         // Child session should NOT be able to claim leadership
         const result = await Team.findBySession(child.id)
         expect(result).toBeUndefined()
 
-        // Clean up manually since we can't use cleanup (no lead)
-        const { Storage } = await import("../../src/storage/storage")
-        const { Instance: Inst } = await import("../../src/project/instance")
-        await Storage.remove(["team", Inst.project.id, "child-team"]).catch(() => {})
-        await Storage.remove(["team_tasks", Inst.project.id, "child-team"]).catch(() => {})
+        // Clean up — team still exists (lead_session_id was SET NULL)
+        await Team.cleanup("child-team")
       },
     })
   })
@@ -700,6 +718,12 @@ describe("Edge case: double-claim scenarios", () => {
 
         await TeamTasks.add("double-claim", [{ id: "t1", content: "Task", status: "pending", priority: "high" }])
 
+        // Register "alice" and "bob" as team members so claim can resolve names
+        const alice = await Session.create({ parentID: lead.id })
+        const bob = await Session.create({ parentID: lead.id })
+        await Team.addMember("double-claim", { name: "alice", sessionID: alice.id, agent: "general", status: "busy" })
+        await Team.addMember("double-claim", { name: "bob", sessionID: bob.id, agent: "general", status: "busy" })
+
         const first = await TeamTasks.claim("double-claim", "t1", "alice")
         expect(first).toBe(true)
 
@@ -711,6 +735,8 @@ describe("Edge case: double-claim scenarios", () => {
         const third = await TeamTasks.claim("double-claim", "t1", "bob")
         expect(third).toBe(false)
 
+        await Team.setMemberStatus("double-claim", "alice", "shutdown")
+        await Team.setMemberStatus("double-claim", "bob", "shutdown")
         await Team.cleanup("double-claim")
       },
     })
@@ -923,6 +949,10 @@ describe("Edge case: incremental task additions", () => {
           { id: "t2", content: "First batch 2", status: "pending", priority: "high" },
         ])
 
+        // Register "worker" as a team member so claim can resolve the name
+        const worker = await Session.create({ parentID: lead.id })
+        await Team.addMember("merge-team", { name: "worker", sessionID: worker.id, agent: "general", status: "busy" })
+
         // Claim and start one
         await TeamTasks.claim("merge-team", "t1", "worker")
 
@@ -945,6 +975,7 @@ describe("Edge case: incremental task additions", () => {
         // t3 should be pending (no deps)
         expect(tasks.find((t) => t.id === "t3")!.status).toBe("pending")
 
+        await Team.setMemberStatus("merge-team", "worker", "shutdown")
         await Team.cleanup("merge-team")
       },
     })

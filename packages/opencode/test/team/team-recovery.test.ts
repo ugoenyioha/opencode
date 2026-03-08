@@ -27,13 +27,16 @@ describe("Team recovery after restart", () => {
         directory: dir,
         init: async () => Env.set("ANTHROPIC_API_KEY", "test-key"),
         fn: async () => {
+          const lead = await Session.create({})
+          const w1 = await Session.create({ parentID: lead.id })
+          const w2 = await Session.create({ parentID: lead.id })
           await Team.create({
             name: "recover-test",
-            leadSessionID: "ses_lead",
+            leadSessionID: lead.id,
           })
           await Team.addMember("recover-test", {
             name: "worker-1",
-            sessionID: "ses_w1",
+            sessionID: w1.id,
             agent: "general",
             status: "busy",
             prompt: "work on stuff",
@@ -41,7 +44,7 @@ describe("Team recovery after restart", () => {
           })
           await Team.addMember("recover-test", {
             name: "worker-2",
-            sessionID: "ses_w2",
+            sessionID: w2.id,
             agent: "explore",
             status: "busy",
             prompt: "research things",
@@ -75,13 +78,16 @@ describe("Team recovery after restart", () => {
         directory: dir,
         init: async () => Env.set("ANTHROPIC_API_KEY", "test-key"),
         fn: async () => {
+          const lead = await Session.create({})
+          const w1 = await Session.create({ parentID: lead.id })
+          const w2 = await Session.create({ parentID: lead.id })
           await Team.create({
             name: "recover-skip",
-            leadSessionID: "ses_lead_skip",
+            leadSessionID: lead.id,
           })
           await Team.addMember("recover-skip", {
             name: "idle-worker",
-            sessionID: "ses_idle",
+            sessionID: w1.id,
             agent: "general",
             status: "ready",
             prompt: "done",
@@ -89,7 +95,7 @@ describe("Team recovery after restart", () => {
           })
           await Team.addMember("recover-skip", {
             name: "shutdown-worker",
-            sessionID: "ses_shutdown",
+            sessionID: w2.id,
             agent: "general",
             status: "shutdown",
             prompt: "bye",
@@ -162,13 +168,17 @@ describe("Team recovery after restart", () => {
         directory: dir,
         init: async () => Env.set("ANTHROPIC_API_KEY", "test-key"),
         fn: async () => {
+          const lead = await Session.create({})
+          const a = await Session.create({ parentID: lead.id })
+          const b = await Session.create({ parentID: lead.id })
+          const c = await Session.create({ parentID: lead.id })
           await Team.create({
             name: "recover-mix",
-            leadSessionID: "ses_lead_mix",
+            leadSessionID: lead.id,
           })
           await Team.addMember("recover-mix", {
             name: "worker-a",
-            sessionID: "ses_a",
+            sessionID: a.id,
             agent: "general",
             status: "busy",
             prompt: "task a",
@@ -176,7 +186,7 @@ describe("Team recovery after restart", () => {
           })
           await Team.addMember("recover-mix", {
             name: "worker-b",
-            sessionID: "ses_b",
+            sessionID: b.id,
             agent: "explore",
             status: "ready",
             prompt: "task b",
@@ -184,7 +194,7 @@ describe("Team recovery after restart", () => {
           })
           await Team.addMember("recover-mix", {
             name: "worker-c",
-            sessionID: "ses_c",
+            sessionID: c.id,
             agent: "general",
             status: "busy",
             prompt: "task c",
@@ -236,20 +246,25 @@ describe("Team recovery after restart", () => {
         directory: dir,
         init: async () => Env.set("ANTHROPIC_API_KEY", "test-key"),
         fn: async () => {
-          await Team.create({ name: "team-alpha", leadSessionID: "ses_alpha" })
+          const l1 = await Session.create({})
+          const a1 = await Session.create({ parentID: l1.id })
+          await Team.create({ name: "team-alpha", leadSessionID: l1.id })
           await Team.addMember("team-alpha", {
             name: "alpha-1",
-            sessionID: "ses_a1",
+            sessionID: a1.id,
             agent: "general",
             status: "busy",
             prompt: "work",
             planApproval: "none",
           })
 
-          await Team.create({ name: "team-beta", leadSessionID: "ses_beta" })
+          const l2 = await Session.create({})
+          const b1 = await Session.create({ parentID: l2.id })
+          const b2 = await Session.create({ parentID: l2.id })
+          await Team.create({ name: "team-beta", leadSessionID: l2.id })
           await Team.addMember("team-beta", {
             name: "beta-1",
-            sessionID: "ses_b1",
+            sessionID: b1.id,
             agent: "explore",
             status: "busy",
             prompt: "research",
@@ -257,7 +272,7 @@ describe("Team recovery after restart", () => {
           })
           await Team.addMember("team-beta", {
             name: "beta-2",
-            sessionID: "ses_b2",
+            sessionID: b2.id,
             agent: "general",
             status: "busy",
             prompt: "implement",
@@ -295,10 +310,12 @@ describe("Team recovery after restart", () => {
         directory: dir,
         init: async () => Env.set("ANTHROPIC_API_KEY", "test-key"),
         fn: async () => {
-          await Team.create({ name: "idem-test", leadSessionID: "ses_idem" })
+          const lead = await Session.create({})
+          const worker = await Session.create({ parentID: lead.id })
+          await Team.create({ name: "idem-test", leadSessionID: lead.id })
           await Team.addMember("idem-test", {
             name: "worker",
-            sessionID: "ses_w",
+            sessionID: worker.id,
             agent: "general",
             status: "busy",
             prompt: "work",

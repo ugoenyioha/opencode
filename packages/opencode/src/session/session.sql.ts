@@ -28,11 +28,26 @@ export const SessionTable = sqliteTable(
     revert: text({ mode: "json" }).$type<{ messageID: string; partID?: string; snapshot?: string; diff?: string }>(),
     permission: text({ mode: "json" }).$type<PermissionNext.Ruleset>(),
     teammate: integer({ mode: "boolean" }),
+    team_id: text(),
+    team_role: text(), // "lead" | "member" | null
+    plan_approval: text(), // "none" | "pending" | "approved" | "rejected" | null
+    team_meta: text({ mode: "json" }).$type<{
+      name: string
+      agent: string
+      status: string
+      execution_status?: string
+      prompt?: string
+      model?: string
+    }>(),
     ...Timestamps,
     time_compacting: integer(),
     time_archived: integer(),
   },
-  (table) => [index("session_project_idx").on(table.project_id), index("session_parent_idx").on(table.parent_id)],
+  (table) => [
+    index("session_project_idx").on(table.project_id),
+    index("session_parent_idx").on(table.parent_id),
+    index("session_team_idx").on(table.team_id),
+  ],
 )
 
 export const MessageTable = sqliteTable(

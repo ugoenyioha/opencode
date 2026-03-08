@@ -19,7 +19,20 @@ function messageId(): string {
   return `im_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
 }
 
+/**
+ * High-level messaging layer. Writes to inbox (source of truth),
+ * injects synthetic user messages into sessions (delivery), and auto-wakes idle recipients.
+ */
 export namespace TeamMessaging {
+  /** Get unread messages for a session's team participant */
+  export async function pending(sessionID: string): Promise<Array<{ id: string; from: string; text: string }>> {
+    const info = await Team.findBySession(sessionID)
+    if (!info) return []
+    const name = info.role === "lead" ? "lead" : info.memberName!
+    const unread = await Inbox.unread(info.team.name, name)
+    return unread.map((item) => ({ id: item.id, from: item.from, text: item.text }))
+  }
+
   /**
    * Send a message from one team member to another.
    * Writes to the recipient's inbox (source of truth), then injects
@@ -34,7 +47,7 @@ export namespace TeamMessaging {
     // Find recipient session
     let targetSessionID: string | undefined
     if (input.to === "lead") {
-      targetSessionID = team.leadSessionID
+      targetSessionID = team.leadSessionID ?? undefined
     } else {
       const member = team.members.find((m) => m.name === input.to)
       if (!member) throw new Error(`Member "${input.to}" not found in team "${input.teamName}"`)
@@ -55,6 +68,7 @@ export namespace TeamMessaging {
 
     // Inject into session (delivery mechanism), tagged with inbox ID for dedup
     await injectMessage(targetSessionID, input.from, input.text, inboxId)
+    Team.touch(input.teamName)
 
     log.info("message sent", { teamName: input.teamName, from: input.from, to: input.to })
     await Bus.publish(TeamEvent.Message, {
@@ -127,6 +141,7 @@ export namespace TeamMessaging {
       errors: errors.length,
     })
     if (errors.length > 0) log.warn("broadcast partial failure", { teamName: input.teamName, errors })
+    Team.touch(input.teamName)
 
     await Bus.publish(TeamEvent.Broadcast, {
       teamName: input.teamName,
@@ -166,7 +181,7 @@ export namespace TeamMessaging {
         // Find sender's session
         let senderSessionID: string | undefined
         if (sender === "lead") {
-          senderSessionID = team.leadSessionID
+          senderSessionID = team.leadSessionID ?? undefined
         } else {
           const member = team.members.find((m) => m.name === sender)
           if (member && member.status !== "shutdown") senderSessionID = member.sessionID

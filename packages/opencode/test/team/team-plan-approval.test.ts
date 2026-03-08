@@ -24,7 +24,7 @@ const WRITE_TOOLS = ["bash", "write", "edit", "multiedit", "apply_patch"] as con
 function denyWriteRules() {
   return WRITE_TOOLS.map((tool) => ({
     permission: tool,
-    pattern: "*:plan-approval",
+    pattern: "*",
     action: "deny" as const,
   }))
 }
@@ -131,7 +131,9 @@ describe("TeamApprovePlanTool.execute", () => {
 
         // 7. Verify session permissions: plan-approval deny rules removed
         const updated = await Session.get(childSession.id)
-        const planRules = updated.permission?.filter((r) => r.pattern === "*:plan-approval")
+        const planRules = updated.permission?.filter(
+          (r) => WRITE_TOOLS.includes(r.permission as any) && r.pattern === "*" && r.action === "deny",
+        )
         expect(planRules?.length ?? 0).toBe(0)
         // Base member deny rules should still be present
         expect(updated.permission?.some((r) => r.permission === "team_create" && r.action === "deny")).toBe(true)
@@ -203,7 +205,9 @@ describe("TeamApprovePlanTool.execute", () => {
 
         // Verify session permissions: plan-approval deny rules still present
         const updated = await Session.get(childSession.id)
-        const planRules = updated.permission?.filter((r) => r.pattern === "*:plan-approval")
+        const planRules = updated.permission?.filter(
+          (r) => WRITE_TOOLS.includes(r.permission as any) && r.pattern === "*" && r.action === "deny",
+        )
         expect(planRules!.length).toBe(WRITE_TOOLS.length)
 
         // Verify member planApproval is "rejected" (stays rejected until teammate resubmits)
@@ -373,10 +377,12 @@ describe("Team.setMemberPlanApproval", () => {
       },
       fn: async () => {
         const name = uniqueName("plan-state-np")
-        await Team.create({ name, leadSessionID: "ses_lead_" + Date.now() })
+        const lead = await Session.create({})
+        await Team.create({ name, leadSessionID: lead.id })
+        const worker = await Session.create({ parentID: lead.id })
         await Team.addMember(name, {
           name: "w",
-          sessionID: "ses_w_" + Date.now(),
+          sessionID: worker.id,
           agent: "general",
           status: "busy",
           planApproval: "none",
@@ -400,10 +406,12 @@ describe("Team.setMemberPlanApproval", () => {
       },
       fn: async () => {
         const name = uniqueName("plan-state-pa")
-        await Team.create({ name, leadSessionID: "ses_lead_" + Date.now() })
+        const lead = await Session.create({})
+        await Team.create({ name, leadSessionID: lead.id })
+        const worker = await Session.create({ parentID: lead.id })
         await Team.addMember(name, {
           name: "w",
-          sessionID: "ses_w_" + Date.now(),
+          sessionID: worker.id,
           agent: "general",
           status: "busy",
           planApproval: "pending",
@@ -427,10 +435,12 @@ describe("Team.setMemberPlanApproval", () => {
       },
       fn: async () => {
         const name = uniqueName("plan-state-prp")
-        await Team.create({ name, leadSessionID: "ses_lead_" + Date.now() })
+        const lead = await Session.create({})
+        await Team.create({ name, leadSessionID: lead.id })
+        const worker = await Session.create({ parentID: lead.id })
         await Team.addMember(name, {
           name: "w",
-          sessionID: "ses_w_" + Date.now(),
+          sessionID: worker.id,
           agent: "general",
           status: "busy",
           planApproval: "pending",
@@ -471,7 +481,8 @@ describe("Team.setMemberPlanApproval", () => {
       },
       fn: async () => {
         const name = uniqueName("plan-no-member")
-        await Team.create({ name, leadSessionID: "ses_lead_" + Date.now() })
+        const lead = await Session.create({})
+        await Team.create({ name, leadSessionID: lead.id })
 
         // Should not throw
         await Team.setMemberPlanApproval(name, "ghost", "approved")
@@ -494,7 +505,8 @@ describe("Team.setDelegate", () => {
       },
       fn: async () => {
         const name = uniqueName("delegate-on")
-        await Team.create({ name, leadSessionID: "ses_lead_" + Date.now() })
+        const lead = await Session.create({})
+        await Team.create({ name, leadSessionID: lead.id })
 
         await Team.setDelegate(name, true)
         const team = await Team.get(name)
@@ -513,7 +525,8 @@ describe("Team.setDelegate", () => {
       },
       fn: async () => {
         const name = uniqueName("delegate-off")
-        await Team.create({ name, leadSessionID: "ses_lead_" + Date.now(), delegate: true })
+        const lead = await Session.create({})
+        await Team.create({ name, leadSessionID: lead.id, delegate: true })
 
         let team = await Team.get(name)
         expect(team!.delegate).toBe(true)

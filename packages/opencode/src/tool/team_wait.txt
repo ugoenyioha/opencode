@@ -1,0 +1,31 @@
+Wait for all teammates to finish their current work.
+
+This tool polls the team database to check if all spawned teammates have reached an idle state (completed, cancelled, failed, or timed out). It's useful for coordinating workflows where the lead needs to wait for parallel work to complete before proceeding.
+
+## Parameters
+
+- `timeout` (optional): Maximum time to wait in seconds. Defaults to 600 (10 minutes).
+
+## Usage Examples
+
+```
+// Wait with default 10-minute timeout
+team_wait({})
+
+// Wait with custom 5-minute timeout  
+team_wait({ timeout: 300 })
+```
+
+## Behavior
+
+- Polls team status every 2 seconds
+- Returns immediately when all teammates are idle
+- Times out after specified duration if teammates are still active
+- Provides detailed status summary of each teammate
+- Only available to team leads (teammates should use team_status instead)
+
+## Return Value
+
+On success: Summary of all teammate final statuses with timing information.
+On timeout: List of still-active teammates and suggested next steps.
+On error: Reason why the operation failed (not in team, not lead, etc.).

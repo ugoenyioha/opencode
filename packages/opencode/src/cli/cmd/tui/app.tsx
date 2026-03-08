@@ -838,6 +838,109 @@ function App() {
         dialog.clear()
       },
     },
+    {
+      title: "Team navigate previous",
+      value: "team.cycle_up",
+      keybind: "team_previous",
+      category: "Team",
+      hidden: true,
+      onSelect: () => {
+        // Get current team info
+        const currentRoute = route.data
+        if (currentRoute.type !== "session") return
+
+        const teamInfo = sync.data.team[currentRoute.sessionID]
+        if (!teamInfo) return
+
+        // Build sorted list of team members (lead first, then members by name)
+        const members = [
+          {
+            name: "lead",
+            sessionID: Object.keys(sync.data.team).find(
+              (sid) => sync.data.team[sid]?.teamName === teamInfo.teamName && sync.data.team[sid]?.role === "lead",
+            ),
+          },
+          ...teamInfo.members.sort((a, b) => a.name.localeCompare(b.name)),
+        ].filter((m) => m.sessionID)
+
+        if (members.length <= 1) return
+
+        // Find current position and navigate to previous (wrap around)
+        const currentIndex = members.findIndex((m) => m.sessionID === currentRoute.sessionID)
+        if (currentIndex === -1) return
+
+        const nextIndex = currentIndex === 0 ? members.length - 1 : currentIndex - 1
+        const nextMember = members[nextIndex]
+        if (nextMember?.sessionID) {
+          route.navigate({ type: "session", sessionID: nextMember.sessionID })
+        }
+      },
+    },
+    {
+      title: "Team navigate next",
+      value: "team.cycle_down",
+      keybind: "team_next",
+      category: "Team",
+      hidden: true,
+      onSelect: () => {
+        // Get current team info
+        const currentRoute = route.data
+        if (currentRoute.type !== "session") return
+
+        const teamInfo = sync.data.team[currentRoute.sessionID]
+        if (!teamInfo) return
+
+        // Build sorted list of team members (lead first, then members by name)
+        const members = [
+          {
+            name: "lead",
+            sessionID: Object.keys(sync.data.team).find(
+              (sid) => sync.data.team[sid]?.teamName === teamInfo.teamName && sync.data.team[sid]?.role === "lead",
+            ),
+          },
+          ...teamInfo.members.sort((a, b) => a.name.localeCompare(b.name)),
+        ].filter((m) => m.sessionID)
+
+        if (members.length <= 1) return
+
+        // Find current position and navigate to next (wrap around)
+        const currentIndex = members.findIndex((m) => m.sessionID === currentRoute.sessionID)
+        if (currentIndex === -1) return
+
+        const nextIndex = (currentIndex + 1) % members.length
+        const nextMember = members[nextIndex]
+        if (nextMember?.sessionID) {
+          route.navigate({ type: "session", sessionID: nextMember.sessionID })
+        }
+      },
+    },
+    {
+      title: "Toggle delegate mode",
+      value: "team.delegate",
+      keybind: "team_delegate",
+      category: "Team",
+      hidden: true,
+      onSelect: async () => {
+        const currentRoute = route.data
+        if (currentRoute.type !== "session") return
+
+        const teamInfo = sync.data.team[currentRoute.sessionID]
+        if (!teamInfo || teamInfo.role !== "lead") return
+
+        const enabled = !teamInfo.delegate
+        await sdk
+          .fetch(`${sdk.url}/team/${teamInfo.teamName}/delegate`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ enabled }),
+          })
+          .catch(() => {})
+        toast.show({
+          message: enabled ? "Delegate mode enabled" : "Delegate mode disabled",
+          variant: "info",
+        })
+      },
+    },
   ])
 
   createEffect(() => {
