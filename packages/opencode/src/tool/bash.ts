@@ -2,6 +2,7 @@ import z from "zod"
 import { spawn } from "child_process"
 import { Tool } from "./tool"
 import path from "path"
+import os from "os"
 import DESCRIPTION from "./bash.txt"
 import { Log } from "../util/log"
 import { Instance } from "../project/instance"
@@ -33,6 +34,39 @@ const MAX_METADATA_LENGTH = 30_000
 const DEFAULT_TIMEOUT = Flag.OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
 
 export const log = Log.create({ service: "bash-tool" })
+
+// Filesystem denylist — analogous to the SSRF IP denylist in Gate 8.
+// These paths are never legitimate agent targets regardless of sandbox
+// mode or permission settings. Hard-blocked at the AST layer.
+const SENSITIVE_PATH_PREFIXES = [
+  "/var/run/secrets/kubernetes.io/", // K8s ServiceAccount tokens
+  "/etc/shadow", // password hashes
+  "/etc/gshadow", // group password hashes
+  "/etc/master.passwd", // BSD password file
+]
+
+const SENSITIVE_PATH_SUFFIXES = [
+  "/.ssh/id_rsa",
+  "/.ssh/id_ed25519",
+  "/.ssh/id_ecdsa",
+  "/.ssh/id_dsa",
+  "/.aws/credentials",
+  "/.config/gcloud/application_default_credentials.json",
+  "/.docker/config.json",
+  "/.kube/config",
+  "/.gnupg/secring.gpg",
+  "/.netrc",
+]
+
+function isSensitivePath(resolved: string): boolean {
+  for (const prefix of SENSITIVE_PATH_PREFIXES) {
+    if (resolved.startsWith(prefix)) return true
+  }
+  for (const suffix of SENSITIVE_PATH_SUFFIXES) {
+    if (resolved.endsWith(suffix)) return true
+  }
+  return false
+}
 
 // --- Foreground process registry ---
 // Tracks running bash tool processes so the TUI can migrate them to background.
@@ -255,6 +289,16 @@ export const BashTool = Tool.define("bash", async () => {
         if (["cd", "rm", "cp", "mv", "mkdir", "touch", "chmod", "chown", "cat"].includes(command[0])) {
           for (const arg of command.slice(1)) {
             if (arg.startsWith("-") || (command[0] === "chmod" && arg.startsWith("+"))) continue
+            // Expand ~ to home directory for denylist matching
+            const expanded = arg.startsWith("~/") ? path.join(os.homedir(), arg.slice(2)) : arg
+
+            // Check the raw/expanded argument against the denylist first,
+            // before realpath. This catches paths that don't exist on the
+            // current machine (e.g., K8s SA token path on macOS dev boxes).
+            if (isSensitivePath(expanded)) {
+              throw new Error(`Access denied: '${arg}' targets a sensitive system path and is not permitted.`)
+            }
+
             const resolved = await $`realpath ${arg}`
               .cwd(cwd)
               .quiet()
@@ -265,6 +309,14 @@ export const BashTool = Tool.define("bash", async () => {
             if (resolved) {
               const normalized =
                 process.platform === "win32" ? Filesystem.windowsPath(resolved).replace(/\//g, "\\") : resolved
+
+              // Hard-block sensitive filesystem paths — same pattern as
+              // Gate 8 SSRF IP denylist. These are never legitimate agent
+              // targets and must be blocked regardless of permission settings.
+              if (isSensitivePath(normalized)) {
+                throw new Error(`Access denied: '${arg}' targets a sensitive system path and is not permitted.`)
+              }
+
               if (!Instance.containsPath(normalized)) {
                 const dir = (await Filesystem.isDir(normalized)) ? normalized : path.dirname(normalized)
                 directories.add(dir)

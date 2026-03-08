@@ -21,7 +21,6 @@ export const PhantomProxyPlugin: Plugin = async () => ({
   "shell.env": async (input, output) => {
     // Determine the effective sandbox config for the current agent context
     const sandboxConfig = await Sandbox.getEffectiveConfig()
-    console.log("PhantomProxyPlugin shell.env hook fired", sandboxConfig.proxyCredentials)
 
     const credentials = sandboxConfig.proxyCredentials
     if (!credentials || Object.keys(credentials).length === 0) return

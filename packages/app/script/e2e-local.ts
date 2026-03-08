@@ -79,6 +79,7 @@ await fs.writeFile(
 
 const serverEnv = {
   ...process.env,
+  NODE_ENV: "test",
   OPENCODE_DISABLE_SHARE: process.env.OPENCODE_DISABLE_SHARE ?? "true",
   OPENCODE_DISABLE_LSP_DOWNLOAD: "true",
   OPENCODE_DISABLE_DEFAULT_PLUGINS: "true",
