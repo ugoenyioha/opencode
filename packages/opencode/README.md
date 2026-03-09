@@ -40,3 +40,18 @@ bun run index.ts run --sandbox gvisor
 ```
 
 For more details on sandboxing, worktree isolation, and agent-to-agent (A2A) security, refer to the [main documentation](../../README.md) and [Security policy](../../SECURITY.md).
+
+### MCP tool deferral
+
+When an MCP server exposes a large number of tools, every tool definition is sent to the AI on each request. This eats into the context window and increases token costs.
+
+Set `OPENCODE_MCP_DEFER_THRESHOLD` to control when tool deferral kicks in. When the total MCP tool count exceeds this threshold (default: `20`), tools that haven't been used in the current conversation are lazy-loaded instead of injected up front.
+
+```bash
+# Defer MCP tools when total count exceeds 30
+OPENCODE_MCP_DEFER_THRESHOLD=30 bun run index.ts
+```
+
+A `tool_search` fallback is automatically registered so the AI can discover deferred tools on demand. It accepts a substring query and returns up to 10 matching tools by name or description.
+
+Tools that the AI has already called in the conversation are always loaded, regardless of the threshold.

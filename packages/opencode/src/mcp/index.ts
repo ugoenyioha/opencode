@@ -111,7 +111,9 @@ export namespace MCP {
   // Register notification handlers for MCP client
   function registerNotificationHandlers(client: MCPClient, serverName: string) {
     client.setNotificationHandler(ToolListChangedNotificationSchema, async () => {
+      const s = await state()
       log.info("tools list changed notification received", { server: serverName })
+      s.toolsCache = undefined
       Bus.publish(ToolsChanged, { server: serverName })
     })
   }
@@ -215,6 +217,7 @@ export namespace MCP {
       return {
         status,
         clients,
+        toolsCache: undefined as Record<string, Tool> | undefined,
       }
     },
     async (state) => {
@@ -293,6 +296,7 @@ export namespace MCP {
 
   export async function add(name: string, mcp: Config.Mcp) {
     const s = await state()
+    s.toolsCache = undefined
     const result = await create(name, mcp)
     if (!result) {
       const status = {
@@ -550,6 +554,8 @@ export namespace MCP {
   }
 
   export async function connect(name: string) {
+    const s = await state()
+    s.toolsCache = undefined
     const cfg = await Config.get()
     const config = cfg.mcp ?? {}
     const mcp = config[name]
@@ -566,15 +572,12 @@ export namespace MCP {
     const result = await create(name, { ...mcp, enabled: true })
 
     if (!result) {
-      const s = await state()
       s.status[name] = {
         status: "failed",
         error: "Unknown error during connection",
       }
       return
     }
-
-    const s = await state()
     s.status[name] = result.status
     if (result.mcpClient) {
       // Close existing client if present to prevent memory leaks
@@ -590,6 +593,7 @@ export namespace MCP {
 
   export async function disconnect(name: string) {
     const s = await state()
+    s.toolsCache = undefined
     const client = s.clients[name]
     if (client) {
       await client.close().catch((error) => {
@@ -601,8 +605,9 @@ export namespace MCP {
   }
 
   export async function tools() {
-    const result: Record<string, Tool> = {}
     const s = await state()
+    if (s.toolsCache) return s.toolsCache
+    const result: Record<string, Tool> = {}
     const cfg = await Config.get()
     const config = cfg.mcp ?? {}
     const clientsSnapshot = await clients()
@@ -639,6 +644,7 @@ export namespace MCP {
         result[sanitizedClientName + "_" + sanitizedToolName] = await convertMcpTool(mcpTool, client, timeout)
       }
     }
+    s.toolsCache = result
     return result
   }
 

@@ -866,14 +866,139 @@ export namespace SessionPrompt {
       })
     }
 
-    for (const [key, item] of Object.entries(await MCP.tools())) {
-      const execute = item.execute
+    const activeTools = new Set<string>()
+    for (const msg of input.messages) {
+      for (const part of msg.parts) {
+        if (part.type !== "tool") continue
+        activeTools.add(part.tool)
+        if (part.tool !== "tool_search" || part.state.status !== "completed") continue
+        const discoveredTools = part.state.metadata?.discoveredTools
+        if (!Array.isArray(discoveredTools)) continue
+        for (const id of discoveredTools) {
+          if (typeof id === "string") activeTools.add(id)
+        }
+      }
+    }
+
+    const allMcpTools = await MCP.tools()
+    let mcpToolsToLoad = allMcpTools
+    const deferredList = new Map<string, string>()
+    if (Object.keys(allMcpTools).length > Flag.OPENCODE_MCP_DEFER_THRESHOLD) {
+      mcpToolsToLoad = {}
+      for (const [name, item] of Object.entries(allMcpTools)) {
+        if (activeTools.has(name)) {
+          mcpToolsToLoad[name] = item
+          continue
+        }
+        deferredList.set(name, item.description ?? "")
+      }
+      if (deferredList.size > 0) {
+        tools["tool_search"] = tool({
+          id: "tool_search" as any,
+          description: "Search deferred MCP tools by name or description.",
+          inputSchema: jsonSchema({
+            type: "object",
+            properties: {
+              query: {
+                type: "string",
+                description: "Substring to search for in deferred tool names or descriptions.",
+              },
+              max_results: {
+                type: "number",
+                description: "Maximum number of results to return (1-20, default 10).",
+              },
+            },
+            required: ["query"],
+            additionalProperties: false,
+          }),
+          async execute(args, opts) {
+            const ctx = context(args, opts)
+            const query = String((args as Record<string, unknown>).query ?? "")
+            const cap = Number((args as Record<string, unknown>).max_results)
+            const max = Number.isFinite(cap) ? Math.max(1, Math.min(20, Math.floor(cap))) : 10
+
+            await Plugin.trigger(
+              "tool.execute.before",
+              {
+                tool: "tool_search",
+                sessionID: ctx.sessionID,
+                callID: opts.toolCallId,
+              },
+              {
+                args,
+              },
+            )
+
+            await ctx.ask({
+              permission: "tool_search",
+              metadata: {},
+              patterns: ["*"],
+              always: ["*"],
+            })
+
+            const lower = query.toLowerCase()
+
+            const direct = lower.match(/^select:(.+)$/i)
+            const matches = direct
+              ? direct[1]
+                  .split(",")
+                  .map((x) => x.trim())
+                  .filter(Boolean)
+                  .flatMap((name) => {
+                    const item = allMcpTools[name]
+                    if (!item) return []
+                    return [{ name, description: item.description ?? "" }]
+                  })
+              : Array.from(deferredList.entries())
+                  .filter(([name, description]) => {
+                    return name.toLowerCase().includes(lower) || description.toLowerCase().includes(lower)
+                  })
+                  .map(([name, description]) => ({
+                    name,
+                    description,
+                  }))
+
+            const limited = matches.slice(0, max)
+            const output = [
+              ...limited.map((match) => `- ${match.name}: ${match.description || "(no description)"}`),
+              ...(matches.length > max
+                ? [`(Showing ${max} of ${matches.length} matches. Please refine your search query to see others.)`]
+                : []),
+            ].join("\n")
+            const result = {
+              title: "Deferred MCP tools",
+              metadata: { discoveredTools: limited.map((match) => match.name) },
+              output: output || "No deferred tools matched your query.",
+            }
+
+            await Plugin.trigger(
+              "tool.execute.after",
+              {
+                tool: "tool_search",
+                sessionID: ctx.sessionID,
+                callID: opts.toolCallId,
+                args,
+              },
+              result,
+            )
+
+            return result
+          },
+        })
+      }
+    }
+
+    for (const [key, item] of Object.entries(mcpToolsToLoad)) {
+      const entry = { ...item }
+      const execute = entry.execute
       if (!execute) continue
 
-      const transformed = ProviderTransform.schema(input.model, asSchema(item.inputSchema).jsonSchema)
-      item.inputSchema = jsonSchema(transformed)
-      // Wrap execute to add plugin hooks and format output
-      item.execute = async (args, opts) => {
+      const schema = ("parameters" in entry && entry.parameters ? entry.parameters : entry.inputSchema) as Parameters<
+        typeof asSchema
+      >[0]
+      const transformed = ProviderTransform.schema(input.model, asSchema(schema).jsonSchema)
+      entry.inputSchema = jsonSchema(transformed)
+      entry.execute = async (args, opts) => {
         const ctx = context(args, opts)
 
         await Plugin.trigger(
@@ -953,10 +1078,10 @@ export namespace SessionPrompt {
             sessionID: ctx.sessionID,
             messageID: input.processor.message.id,
           })),
-          content: result.content, // directly return content to preserve ordering when outputting to model
+          content: result.content,
         }
       }
-      tools[key] = item
+      tools[key] = entry
     }
 
     return tools

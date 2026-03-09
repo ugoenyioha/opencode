@@ -69,6 +69,7 @@ export namespace Flag {
   export const OPENCODE_MODELS_PATH = process.env["OPENCODE_MODELS_PATH"]
   export const OPENCODE_DISABLE_CHANNEL_DB = truthy("OPENCODE_DISABLE_CHANNEL_DB")
   export const OPENCODE_SKIP_MIGRATIONS = truthy("OPENCODE_SKIP_MIGRATIONS")
+  export const OPENCODE_MCP_DEFER_THRESHOLD = number("OPENCODE_MCP_DEFER_THRESHOLD") ?? 20
 
   function number(key: string) {
     const value = process.env[key]

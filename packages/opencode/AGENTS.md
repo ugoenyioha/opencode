@@ -8,3 +8,9 @@
 - **Command**: `bun run db generate --name <slug>`.
 - **Output**: creates `migration/<timestamp>_<slug>/migration.sql` and `snapshot.json`.
 - **Tests**: migration tests should read the per-folder layout (no `_journal.json`).
+
+## MCP tool deferral
+
+When the total number of MCP tools exceeds `OPENCODE_MCP_DEFER_THRESHOLD` (default: `20`), unused tools are lazy-loaded to save context window tokens. A `tool_search` tool is injected as a fallback so the AI can discover deferred tools by name or description.
+
+Tools the AI has already invoked in the conversation remain loaded. Adjust the threshold with the environment variable if your MCP servers expose many tools.
