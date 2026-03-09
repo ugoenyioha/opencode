@@ -1546,6 +1546,16 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
         <Match when={props.part.tool === "todowrite"}>
           <TodoWrite {...toolprops} />
         </Match>
+        <Match
+          when={
+            props.part.tool === "session_task_create" ||
+            props.part.tool === "session_task_update" ||
+            props.part.tool === "session_task_get" ||
+            props.part.tool === "session_task_list"
+          }
+        >
+          <SessionTask part={props.part} />
+        </Match>
         <Match when={props.part.tool === "question"}>
           <Question {...toolprops} />
         </Match>
@@ -2162,6 +2172,37 @@ function TodoWrite(props: ToolProps<typeof TodoWriteTool>) {
       <Match when={true}>
         <InlineTool icon="⚙" pending="Updating todos..." complete={false} part={props.part}>
           Updating todos...
+        </InlineTool>
+      </Match>
+    </Switch>
+  )
+}
+
+function SessionTask(props: { part: ToolPart }) {
+  const items = createMemo(() => {
+    const state = props.part.state
+    if (state.status !== "completed") return []
+    try {
+      const data = JSON.parse(state.output)
+      if (Array.isArray(data)) return data
+      if (data && typeof data === "object" && data.content) return [data]
+      return []
+    } catch {
+      return []
+    }
+  })
+  return (
+    <Switch>
+      <Match when={items().length > 0}>
+        <BlockTool title="# Tasks" part={props.part}>
+          <box>
+            <For each={items()}>{(item) => <TodoItem status={item.status} content={item.content} />}</For>
+          </box>
+        </BlockTool>
+      </Match>
+      <Match when={true}>
+        <InlineTool icon="⚙" pending="Updating tasks..." complete={false} part={props.part}>
+          Updating tasks...
         </InlineTool>
       </Match>
     </Switch>

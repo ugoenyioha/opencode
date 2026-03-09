@@ -1,0 +1,1 @@
+Retrieve the full details of a specific task by its ID. Use this when you need to check the current status, content, priority, or dependencies of a particular task before acting on it.

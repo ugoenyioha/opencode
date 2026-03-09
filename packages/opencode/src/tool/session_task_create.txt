@@ -1,0 +1,14 @@
+Create a new task in your session task list. Use this to track multi-step work.
+
+- Provide a short, semantic `id` (e.g., "setup-db", "auth-api", "fix-tests"). Keep IDs under 64 characters.
+- Write a clear, concise `content` description of what needs to be done.
+- Set `priority` to "high", "medium", or "low".
+- Optionally set `depends_on` with an array of task IDs that must complete first.
+
+Use this tool proactively when:
+1. A task requires 3 or more distinct steps
+2. The user provides multiple tasks (numbered or comma-separated)
+3. After receiving new instructions — capture requirements as tasks immediately
+4. Breaking complex work into smaller, manageable steps
+
+Do NOT create tasks for trivial, single-step work.

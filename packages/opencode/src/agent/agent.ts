@@ -132,6 +132,10 @@ export namespace Agent {
           PermissionNext.fromConfig({
             todoread: "deny",
             todowrite: "deny",
+            session_task_create: "deny",
+            session_task_update: "deny",
+            session_task_get: "deny",
+            session_task_list: "deny",
           }),
           user,
         ),

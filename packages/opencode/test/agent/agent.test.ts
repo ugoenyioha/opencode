@@ -71,6 +71,10 @@ test("explore agent denies edit and write", async () => {
       expect(evalPerm(explore, "write")).toBe("deny")
       expect(evalPerm(explore, "todoread")).toBe("deny")
       expect(evalPerm(explore, "todowrite")).toBe("deny")
+      expect(evalPerm(explore, "session_task_create")).toBe("deny")
+      expect(evalPerm(explore, "session_task_update")).toBe("deny")
+      expect(evalPerm(explore, "session_task_get")).toBe("deny")
+      expect(evalPerm(explore, "session_task_list")).toBe("deny")
     },
   })
 })
@@ -100,6 +104,10 @@ test("general agent denies todo tools", async () => {
       expect(general?.hidden).toBeUndefined()
       expect(evalPerm(general, "todoread")).toBe("deny")
       expect(evalPerm(general, "todowrite")).toBe("deny")
+      expect(evalPerm(general, "session_task_create")).toBe("deny")
+      expect(evalPerm(general, "session_task_update")).toBe("deny")
+      expect(evalPerm(general, "session_task_get")).toBe("deny")
+      expect(evalPerm(general, "session_task_list")).toBe("deny")
     },
   })
 })

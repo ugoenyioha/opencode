@@ -1,0 +1,9 @@
+List all tasks in your session task list. Optionally filter by status (e.g., "pending", "in_progress", "blocked").
+
+Use this tool to:
+- Review your current task list and plan next steps
+- Check which tasks are blocked and why
+- Verify task completion before moving on
+- Get a full picture of remaining work
+
+Use this proactively and frequently to stay organized.

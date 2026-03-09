@@ -364,30 +364,41 @@ export namespace ACP {
                   })
                 }
 
-                if (part.tool === "todowrite") {
-                  const parsedTodos = z.array(Todo.Info).safeParse(JSON.parse(part.state.output))
-                  if (parsedTodos.success) {
-                    await this.connection
-                      .sessionUpdate({
-                        sessionId,
-                        update: {
-                          sessionUpdate: "plan",
-                          entries: parsedTodos.data.map((todo) => {
-                            const status: PlanEntry["status"] =
-                              todo.status === "cancelled" ? "completed" : (todo.status as PlanEntry["status"])
-                            return {
-                              priority: "medium",
-                              status,
-                              content: todo.content,
-                            }
-                          }),
-                        },
-                      })
-                      .catch((error) => {
-                        log.error("failed to send session update for todo", { error })
-                      })
-                  } else {
-                    log.error("failed to parse todo output", { error: parsedTodos.error })
+                if (
+                  part.tool === "todowrite" ||
+                  part.tool === "session_task_create" ||
+                  part.tool === "session_task_update" ||
+                  part.tool === "session_task_get" ||
+                  part.tool === "session_task_list"
+                ) {
+                  try {
+                    const data = JSON.parse(part.state.output)
+                    const parsed = z.array(Todo.Info).safeParse(data)
+                    const single = !parsed.success ? Todo.Info.safeParse(data) : undefined
+                    const todos = parsed.success ? parsed.data : single?.success ? [single.data] : undefined
+                    if (todos) {
+                      await this.connection
+                        .sessionUpdate({
+                          sessionId,
+                          update: {
+                            sessionUpdate: "plan",
+                            entries: todos.map((todo) => {
+                              const status: PlanEntry["status"] =
+                                todo.status === "cancelled" ? "completed" : (todo.status as PlanEntry["status"])
+                              return {
+                                priority: "medium",
+                                status,
+                                content: todo.content,
+                              }
+                            }),
+                          },
+                        })
+                        .catch((error) => {
+                          log.error("failed to send session update for todo", { error })
+                        })
+                    }
+                  } catch {
+                    // Output may not be JSON (e.g., "No task found with id: ...")
                   }
                 }
 
@@ -879,30 +890,41 @@ export namespace ACP {
                 })
               }
 
-              if (part.tool === "todowrite") {
-                const parsedTodos = z.array(Todo.Info).safeParse(JSON.parse(part.state.output))
-                if (parsedTodos.success) {
-                  await this.connection
-                    .sessionUpdate({
-                      sessionId,
-                      update: {
-                        sessionUpdate: "plan",
-                        entries: parsedTodos.data.map((todo) => {
-                          const status: PlanEntry["status"] =
-                            todo.status === "cancelled" ? "completed" : (todo.status as PlanEntry["status"])
-                          return {
-                            priority: "medium",
-                            status,
-                            content: todo.content,
-                          }
-                        }),
-                      },
-                    })
-                    .catch((err) => {
-                      log.error("failed to send session update for todo", { error: err })
-                    })
-                } else {
-                  log.error("failed to parse todo output", { error: parsedTodos.error })
+              if (
+                part.tool === "todowrite" ||
+                part.tool === "session_task_create" ||
+                part.tool === "session_task_update" ||
+                part.tool === "session_task_get" ||
+                part.tool === "session_task_list"
+              ) {
+                try {
+                  const data = JSON.parse(part.state.output)
+                  const parsed = z.array(Todo.Info).safeParse(data)
+                  const single = !parsed.success ? Todo.Info.safeParse(data) : undefined
+                  const todos = parsed.success ? parsed.data : single?.success ? [single.data] : undefined
+                  if (todos) {
+                    await this.connection
+                      .sessionUpdate({
+                        sessionId,
+                        update: {
+                          sessionUpdate: "plan",
+                          entries: todos.map((todo) => {
+                            const status: PlanEntry["status"] =
+                              todo.status === "cancelled" ? "completed" : (todo.status as PlanEntry["status"])
+                            return {
+                              priority: "medium",
+                              status,
+                              content: todo.content,
+                            }
+                          }),
+                        },
+                      })
+                      .catch((err) => {
+                        log.error("failed to send session update for todo", { error: err })
+                      })
+                  }
+                } catch {
+                  // Output may not be JSON (e.g., "No task found with id: ...")
                 }
               }
 

@@ -848,6 +848,10 @@ export const GithubRunCommand = cmd({
         const TOOL: Record<string, [string, string]> = {
           todowrite: ["Todo", UI.Style.TEXT_WARNING_BOLD],
           todoread: ["Todo", UI.Style.TEXT_WARNING_BOLD],
+          session_task_create: ["Task", UI.Style.TEXT_WARNING_BOLD],
+          session_task_update: ["Task", UI.Style.TEXT_WARNING_BOLD],
+          session_task_get: ["Task", UI.Style.TEXT_WARNING_BOLD],
+          session_task_list: ["Task", UI.Style.TEXT_WARNING_BOLD],
           bash: ["Bash", UI.Style.TEXT_DANGER_BOLD],
           edit: ["Edit", UI.Style.TEXT_SUCCESS_BOLD],
           glob: ["Glob", UI.Style.TEXT_INFO_BOLD],

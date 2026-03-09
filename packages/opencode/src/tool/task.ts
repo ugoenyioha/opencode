@@ -138,7 +138,7 @@ export const TaskTool = Tool.define("task", async (ctx) => {
             ...(caller?.permission ?? []),
             // Inherit parent session's accumulated permission rules
             ...(parentSession?.permission ?? []),
-            // Subagent-specific overrides (deny todowrite/todoread/task/team tools)
+            // Subagent-specific overrides (deny todo/session_task/task/team tools)
             {
               permission: "todowrite",
               pattern: "*",
@@ -146,6 +146,26 @@ export const TaskTool = Tool.define("task", async (ctx) => {
             },
             {
               permission: "todoread",
+              pattern: "*",
+              action: "deny",
+            },
+            {
+              permission: "session_task_create",
+              pattern: "*",
+              action: "deny",
+            },
+            {
+              permission: "session_task_update",
+              pattern: "*",
+              action: "deny",
+            },
+            {
+              permission: "session_task_get",
+              pattern: "*",
+              action: "deny",
+            },
+            {
+              permission: "session_task_list",
               pattern: "*",
               action: "deny",
             },
@@ -209,6 +229,10 @@ export const TaskTool = Tool.define("task", async (ctx) => {
         tools: {
           todowrite: false,
           todoread: false,
+          session_task_create: false,
+          session_task_update: false,
+          session_task_get: false,
+          session_task_list: false,
           ...(hasTaskPermission ? {} : { task: false }),
           // Hide all team tools from subagents — they communicate
           // only with their parent, never directly with the team.

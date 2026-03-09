@@ -26,6 +26,10 @@ const AVAILABLE_TOOLS = [
   "task",
   "todowrite",
   "todoread",
+  "session_task_create",
+  "session_task_update",
+  "session_task_get",
+  "session_task_list",
 ]
 
 const AgentCreateCommand = cmd({

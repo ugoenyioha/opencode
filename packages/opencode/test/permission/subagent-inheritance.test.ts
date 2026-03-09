@@ -4,9 +4,7 @@ import { PermissionNext } from "../../src/permission/next"
 describe("subagent permission inheritance (#12566)", () => {
   test("child session inherits parent agent allow-all permission", () => {
     // Parent agent (e.g., "build") configured with "allow": "*"
-    const parentPermission: PermissionNext.Ruleset = [
-      { permission: "*", pattern: "*", action: "allow" },
-    ]
+    const parentPermission: PermissionNext.Ruleset = [{ permission: "*", pattern: "*", action: "allow" }]
 
     // Parent session may have accumulated rules (e.g., from "always" replies)
     const parentSessionPermission: PermissionNext.Ruleset = []
@@ -15,16 +13,16 @@ describe("subagent permission inheritance (#12566)", () => {
     const childOverrides: PermissionNext.Ruleset = [
       { permission: "todowrite", pattern: "*", action: "deny" },
       { permission: "todoread", pattern: "*", action: "deny" },
+      { permission: "session_task_create", pattern: "*", action: "deny" },
+      { permission: "session_task_update", pattern: "*", action: "deny" },
+      { permission: "session_task_get", pattern: "*", action: "deny" },
+      { permission: "session_task_list", pattern: "*", action: "deny" },
       { permission: "task", pattern: "*", action: "deny" },
     ]
 
     // This is how the child session permission should be assembled:
     // parent agent rules + parent session rules + child overrides
-    const childSessionPermission = PermissionNext.merge(
-      parentPermission,
-      parentSessionPermission,
-      childOverrides,
-    )
+    const childSessionPermission = PermissionNext.merge(parentPermission, parentSessionPermission, childOverrides)
 
     // The subagent's own permission (e.g., "general" agent defaults)
     const subagentPermission: PermissionNext.Ruleset = [
@@ -49,6 +47,10 @@ describe("subagent permission inheritance (#12566)", () => {
     const todoRule = PermissionNext.evaluate("todowrite", "*", effective)
     expect(todoRule.action).toBe("deny")
 
+    // session_task_create should be denied (child override)
+    const taskCreateRule = PermissionNext.evaluate("session_task_create", "*", effective)
+    expect(taskCreateRule.action).toBe("deny")
+
     // task should be denied (child override)
     const taskRule = PermissionNext.evaluate("task", "general", effective)
     expect(taskRule.action).toBe("deny")
@@ -59,13 +61,15 @@ describe("subagent permission inheritance (#12566)", () => {
     const childOverrides: PermissionNext.Ruleset = [
       { permission: "todowrite", pattern: "*", action: "deny" },
       { permission: "todoread", pattern: "*", action: "deny" },
+      { permission: "session_task_create", pattern: "*", action: "deny" },
+      { permission: "session_task_update", pattern: "*", action: "deny" },
+      { permission: "session_task_get", pattern: "*", action: "deny" },
+      { permission: "session_task_list", pattern: "*", action: "deny" },
       { permission: "task", pattern: "*", action: "deny" },
     ]
 
     // Subagent's own permission without user config allow-all
-    const subagentPermission: PermissionNext.Ruleset = [
-      { permission: "bash", pattern: "*", action: "ask" },
-    ]
+    const subagentPermission: PermissionNext.Ruleset = [{ permission: "bash", pattern: "*", action: "ask" }]
 
     // Without parent inheritance, the merge only has subagent + child overrides
     const effective = PermissionNext.merge(subagentPermission, childOverrides)
@@ -77,29 +81,23 @@ describe("subagent permission inheritance (#12566)", () => {
 
   test("parent session accumulated rules propagate to child", () => {
     // Parent agent has default ask-for-bash
-    const parentPermission: PermissionNext.Ruleset = [
-      { permission: "bash", pattern: "*", action: "ask" },
-    ]
+    const parentPermission: PermissionNext.Ruleset = [{ permission: "bash", pattern: "*", action: "ask" }]
 
     // But the user replied "always" for bash during the parent session,
     // which gets stored in the parent session's permission
-    const parentSessionPermission: PermissionNext.Ruleset = [
-      { permission: "bash", pattern: "*", action: "allow" },
-    ]
+    const parentSessionPermission: PermissionNext.Ruleset = [{ permission: "bash", pattern: "*", action: "allow" }]
 
     const childOverrides: PermissionNext.Ruleset = [
       { permission: "todowrite", pattern: "*", action: "deny" },
+      { permission: "session_task_create", pattern: "*", action: "deny" },
+      { permission: "session_task_update", pattern: "*", action: "deny" },
+      { permission: "session_task_get", pattern: "*", action: "deny" },
+      { permission: "session_task_list", pattern: "*", action: "deny" },
     ]
 
-    const childSessionPermission = PermissionNext.merge(
-      parentPermission,
-      parentSessionPermission,
-      childOverrides,
-    )
+    const childSessionPermission = PermissionNext.merge(parentPermission, parentSessionPermission, childOverrides)
 
-    const subagentPermission: PermissionNext.Ruleset = [
-      { permission: "bash", pattern: "*", action: "ask" },
-    ]
+    const subagentPermission: PermissionNext.Ruleset = [{ permission: "bash", pattern: "*", action: "ask" }]
 
     const effective = PermissionNext.merge(subagentPermission, childSessionPermission)
 
@@ -122,14 +120,10 @@ describe("subagent permission inheritance (#12566)", () => {
 
   test("child deny overrides parent allow for specific permissions", () => {
     // Parent allows everything
-    const parentPermission: PermissionNext.Ruleset = [
-      { permission: "*", pattern: "*", action: "allow" },
-    ]
+    const parentPermission: PermissionNext.Ruleset = [{ permission: "*", pattern: "*", action: "allow" }]
 
     // Child explicitly denies task (subagent should not spawn sub-subagents)
-    const childOverrides: PermissionNext.Ruleset = [
-      { permission: "task", pattern: "*", action: "deny" },
-    ]
+    const childOverrides: PermissionNext.Ruleset = [{ permission: "task", pattern: "*", action: "deny" }]
 
     // Child session permission = parent + child overrides
     // The child deny comes AFTER the parent allow

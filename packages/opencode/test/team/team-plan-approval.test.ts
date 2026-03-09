@@ -39,6 +39,10 @@ function baseMemberDenyRules() {
     { permission: "team_approve_plan", pattern: "*", action: "deny" as const },
     { permission: "todowrite", pattern: "*", action: "deny" as const },
     { permission: "todoread", pattern: "*", action: "deny" as const },
+    { permission: "session_task_create", pattern: "*", action: "deny" as const },
+    { permission: "session_task_update", pattern: "*", action: "deny" as const },
+    { permission: "session_task_get", pattern: "*", action: "deny" as const },
+    { permission: "session_task_list", pattern: "*", action: "deny" as const },
   ]
 }
 

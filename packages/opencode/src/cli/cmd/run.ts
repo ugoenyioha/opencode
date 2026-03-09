@@ -203,13 +203,40 @@ function bash(info: ToolProps<typeof BashTool>) {
 }
 
 function todo(info: ToolProps<typeof TodoWriteTool>) {
+  const items = info.input.todos ?? []
   block(
     {
       icon: "#",
       title: "Todos",
     },
-    info.input.todos.map((item) => `${item.status === "completed" ? "[x]" : "[ ]"} ${item.content}`).join("\n"),
+    items.map((item: any) => `${item.status === "completed" ? "[x]" : "[ ]"} ${item.content}`).join("\n"),
   )
+}
+
+function tasks(part: ToolPart) {
+  const output = "output" in part.state ? part.state.output : undefined
+  if (!output) return
+  const parsed = safeParseTasks(output)
+  if (!parsed.length) return fallback(part)
+  block(
+    {
+      icon: "#",
+      title: "Tasks",
+    },
+    parsed.map((item: any) => `${item.status === "completed" ? "[x]" : "[ ]"} ${item.content}`).join("\n"),
+  )
+}
+
+function safeParseTasks(output?: string): any[] {
+  if (!output) return []
+  try {
+    const data = JSON.parse(output)
+    if (Array.isArray(data)) return data
+    if (data && typeof data === "object" && data.content) return [data]
+    return []
+  } catch {
+    return []
+  }
 }
 
 function normalizePath(input?: string) {
@@ -418,6 +445,10 @@ export const RunCommand = cmd({
           if (part.tool === "websearch") return websearch(props<typeof WebSearchTool>(part))
           if (part.tool === "task") return task(props<typeof TaskTool>(part))
           if (part.tool === "todowrite") return todo(props<typeof TodoWriteTool>(part))
+          if (part.tool === "session_task_list") return tasks(part)
+          if (part.tool === "session_task_create") return tasks(part)
+          if (part.tool === "session_task_update") return tasks(part)
+          if (part.tool === "session_task_get") return tasks(part)
           if (part.tool === "skill") return skill(props<typeof SkillTool>(part))
           return fallback(part)
         } catch {

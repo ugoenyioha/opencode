@@ -6,10 +6,32 @@ import { Log } from "../util/log"
 import type { MessageV2 } from "./message-v2"
 
 const log = Log.create({ service: "todo" })
+const locks = new Map<string, Promise<void>>()
+
+async function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  while (locks.has(key)) await locks.get(key)
+  let done: () => void
+  locks.set(
+    key,
+    new Promise<void>((resolve) => {
+      done = resolve
+    }),
+  )
+  try {
+    return await fn()
+  } finally {
+    locks.delete(key)
+    done!()
+  }
+}
 
 export namespace Todo {
   export const Status = z.enum(["pending", "in_progress", "completed", "cancelled", "blocked"])
   export type Status = z.infer<typeof Status>
+
+  /** Status values the LLM is allowed to set — "blocked" is managed by dependency resolution */
+  export const SettableStatus = z.enum(["pending", "in_progress", "completed", "cancelled"])
+  export type SettableStatus = z.infer<typeof SettableStatus>
 
   export const Priority = z.enum(["high", "medium", "low"])
   export type Priority = z.infer<typeof Priority>
@@ -109,14 +131,108 @@ export namespace Todo {
   }
 
   export async function update(input: { sessionID: string; todos: Info[] }) {
-    // Warn on circular dependencies but don't block
-    if (hasCircularDeps(input.todos)) {
-      log.warn("circular dependency detected in todo list", { sessionID: input.sessionID })
-    }
+    await withLock(input.sessionID, async () => {
+      // Warn on circular dependencies but don't block
+      if (hasCircularDeps(input.todos)) {
+        log.warn("circular dependency detected in todo list", { sessionID: input.sessionID })
+      }
 
-    const resolved = resolveDependencies(input.todos)
-    await Storage.write(["todo", input.sessionID], resolved)
-    Bus.publish(Event.Updated, { sessionID: input.sessionID, todos: resolved })
+      const resolved = resolveDependencies(input.todos)
+      await Storage.write(["todo", input.sessionID], resolved)
+      Bus.publish(Event.Updated, { sessionID: input.sessionID, todos: resolved })
+    })
+  }
+
+  export async function createTask(input: {
+    sessionID: string
+    id: string
+    content: string
+    priority: Priority
+    depends_on?: string[]
+  }): Promise<Info> {
+    return withLock(input.sessionID, async () => {
+      const list = await get(input.sessionID)
+      if (list.some((x) => x.id === input.id)) {
+        throw new Error(`Task already exists: ${input.id}`)
+      }
+      const task = {
+        id: input.id,
+        content: input.content,
+        status: "pending" as const,
+        priority: input.priority,
+        ...(input.depends_on !== undefined ? { depends_on: input.depends_on } : {}),
+      }
+      const next = [...list, task]
+
+      if (hasCircularDeps(next)) {
+        log.warn("circular dependency detected in todo list", { sessionID: input.sessionID })
+      }
+
+      const resolved = resolveDependencies(next)
+      await Storage.write(["todo", input.sessionID], resolved)
+      Bus.publish(Event.Updated, { sessionID: input.sessionID, todos: resolved })
+
+      const todo = resolved.find((x) => x.id === input.id)
+      if (todo) return todo
+      return task
+    })
+  }
+
+  export async function updateTask(input: {
+    sessionID: string
+    id: string
+    status?: SettableStatus
+    content?: string
+    priority?: Priority
+    depends_on?: string[]
+  }): Promise<Info> {
+    return withLock(input.sessionID, async () => {
+      const list = await get(input.sessionID)
+      const i = list.findIndex((x) => x.id === input.id)
+      if (i < 0) {
+        throw new Error(`Todo task not found: ${input.id}`)
+      }
+
+      const todo = list[i]
+      const task = {
+        ...todo,
+        ...(input.status !== undefined ? { status: input.status } : {}),
+        ...(input.content !== undefined ? { content: input.content } : {}),
+        ...(input.priority !== undefined ? { priority: input.priority } : {}),
+        ...(input.depends_on !== undefined ? { depends_on: input.depends_on } : {}),
+      }
+      const next = list.map((x) => {
+        if (x.id === input.id) return task
+        return x
+      })
+
+      if (hasCircularDeps(next)) {
+        log.warn("circular dependency detected in todo list", { sessionID: input.sessionID })
+      }
+
+      const resolved = resolveDependencies(next)
+      await Storage.write(["todo", input.sessionID], resolved)
+      Bus.publish(Event.Updated, { sessionID: input.sessionID, todos: resolved })
+
+      const result = resolved.find((x) => x.id === input.id)
+      if (result) return result
+      throw new Error(`Todo task not found: ${input.id}`)
+    })
+  }
+
+  export async function deleteTask(input: { sessionID: string; id: string }): Promise<void> {
+    await withLock(input.sessionID, async () => {
+      const list = await get(input.sessionID)
+      const next = list.filter((x) => x.id !== input.id)
+
+      if (hasCircularDeps(next)) {
+        log.warn("circular dependency detected in todo list", { sessionID: input.sessionID })
+      }
+
+      const resolved = resolveDependencies(next)
+      await Storage.write(["todo", input.sessionID], resolved)
+      Bus.publish(Event.Updated, { sessionID: input.sessionID, todos: resolved })
+    })
   }
 
   export async function get(sessionID: string) {
@@ -125,6 +241,14 @@ export namespace Todo {
       .catch(() => [])
   }
 
+  const TASK_TOOLS = new Set([
+    "todowrite",
+    "session_task_create",
+    "session_task_update",
+    "session_task_get",
+    "session_task_list",
+  ])
+
   /** Returns the current todo list as a system prompt string, or empty array if no todos. */
   export async function systemContext(sessionID: string, messages: MessageV2.WithParts[]): Promise<string[]> {
     const todos = await get(sessionID)
@@ -132,17 +256,19 @@ export namespace Todo {
     const incomplete = todos.filter((t) => t.status !== "completed" && t.status !== "cancelled")
     if (incomplete.length === 0) return []
 
-    // Check if any visible message has a todowrite tool call
-    const hasTodoWrite = messages.some((m) =>
-      m.parts.some((p) => p.type === "tool" && p.tool === "todowrite"),
-    )
+    const hasTools = messages.some((m) => m.parts.some((p) => p.type === "tool" && TASK_TOOLS.has(p.tool)))
 
-    const json = JSON.stringify(incomplete, null, 2)
-    if (hasTodoWrite) {
-      return ["Current task list:\n" + json]
+    const lines = incomplete.map((t) => {
+      const deps = t.depends_on?.length ? ` (depends on: ${t.depends_on.join(", ")})` : ""
+      return `- [${t.id}] [${t.status}] ${t.priority.toUpperCase()}: ${t.content}${deps}`
+    })
+    const md = lines.join("\n")
+
+    if (hasTools) {
+      return ["Current task list:\n" + md]
     }
     return [
-      "Current task list (restored from storage — call todowrite to update task statuses as you work):\n" + json,
+      "Current task list (restored from storage — use session_task_update to update statuses as you work):\n" + md,
     ]
   }
 }
