@@ -36,6 +36,13 @@ import {
   shouldScheduleTeamRefresh,
 } from "./sync-team"
 
+type ElicitationRequest = {
+  sessionID: string
+  requestID: string
+  tool: string
+  prompt: string
+}
+
 export const { use: useSync, provider: SyncProvider } = createSimpleContext({
   name: "Sync",
   init: () => {
@@ -52,6 +59,9 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       }
       question: {
         [sessionID: string]: QuestionRequest[]
+      }
+      elicitation: {
+        [sessionID: string]: ElicitationRequest[]
       }
       config: Config
       session: Session[]
@@ -128,6 +138,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       agent: [],
       permission: {},
       question: {},
+      elicitation: {},
       command: [],
       provider: [],
       provider_default: {},
@@ -319,6 +330,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
                   delete draft.session_status[id]
                   delete draft.permission[id]
                   delete draft.question[id]
+                  delete draft.elicitation[id]
                   delete draft.team[id]
                 }),
               )
@@ -467,6 +479,48 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           // ---------- Custom events (not in typed Event union) ----------
           default: {
             const raw = event as any
+
+            if (raw.type === "mcp.elicitation.asked") {
+              const request = raw.properties as ElicitationRequest
+              const requests = store.elicitation[request.sessionID]
+              if (!requests) {
+                setStore("elicitation", request.sessionID, [request])
+                break
+              }
+              const match = Binary.search(requests, request.requestID, (r) => r.requestID)
+              if (match.found) {
+                setStore("elicitation", request.sessionID, match.index, reconcile(request))
+                break
+              }
+              setStore(
+                "elicitation",
+                request.sessionID,
+                produce((draft) => {
+                  draft.splice(match.index, 0, request)
+                }),
+              )
+              break
+            }
+
+            if (raw.type === "mcp.elicitation.replied" || raw.type === "mcp.elicitation.rejected") {
+              const item = raw.properties as {
+                requestID?: string
+                sessionID?: string
+              }
+              if (!item.requestID || !item.sessionID) break
+              const requests = store.elicitation[item.sessionID]
+              if (!requests) break
+              const match = Binary.search(requests, item.requestID, (r) => r.requestID)
+              if (!match.found) break
+              setStore(
+                "elicitation",
+                item.sessionID,
+                produce((draft) => {
+                  draft.splice(match.index, 1)
+                }),
+              )
+              break
+            }
 
             // Team events arrive as raw bus events with type "team.*"
             if (typeof raw.type !== "string" || !raw.type.startsWith("team.")) break

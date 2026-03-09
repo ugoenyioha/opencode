@@ -18,6 +18,7 @@ import { errors } from "../error"
 import { lazy } from "../../util/lazy"
 import { Identifier } from "../../id/id"
 import { SessionCron } from "@/session/cron"
+import { McpElicitation } from "@/mcp/elicitation"
 
 const log = Log.create({ service: "server" })
 
@@ -1015,6 +1016,80 @@ export const SessionRoutes = lazy(() =>
         const sessionID = c.req.valid("param").sessionID
         const session = await SessionRevert.unrevert({ sessionID })
         return c.json(session)
+      },
+    )
+    .post(
+      "/:sessionID/elicitation/:requestID/reply",
+      describeRoute({
+        summary: "Reply to MCP elicitation",
+        description: "Respond to an MCP elicitation prompt for a pending tool request.",
+        operationId: "session.elicitation.reply",
+        responses: {
+          200: {
+            description: "Elicitation reply accepted",
+            content: {
+              "application/json": {
+                schema: resolver(z.boolean()),
+              },
+            },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: Identifier.schema("session"),
+          requestID: z.string(),
+        }),
+      ),
+      validator(
+        "json",
+        z.object({
+          text: z.string(),
+        }),
+      ),
+      async (c) => {
+        const params = c.req.valid("param")
+        const body = c.req.valid("json")
+        await McpElicitation.reply({
+          requestID: params.requestID,
+          text: body.text,
+        })
+        return c.json(true)
+      },
+    )
+    .post(
+      "/:sessionID/elicitation/:requestID/reject",
+      describeRoute({
+        summary: "Reject MCP elicitation",
+        description: "Reject a pending MCP elicitation prompt.",
+        operationId: "session.elicitation.reject",
+        responses: {
+          200: {
+            description: "Elicitation rejected",
+            content: {
+              "application/json": {
+                schema: resolver(z.boolean()),
+              },
+            },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: Identifier.schema("session"),
+          requestID: z.string(),
+        }),
+      ),
+      async (c) => {
+        const params = c.req.valid("param")
+        await McpElicitation.reject({
+          requestID: params.requestID,
+        })
+        return c.json(true)
       },
     )
     .post(

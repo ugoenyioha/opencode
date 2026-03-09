@@ -1,4 +1,4 @@
-import { dynamicTool, type Tool, jsonSchema, type JSONSchema7 } from "ai"
+import { dynamicTool, type Tool, jsonSchema, type JSONSchema7, type ToolCallOptions } from "ai"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js"
@@ -23,6 +23,7 @@ import { BusEvent } from "../bus/bus-event"
 import { Bus } from "@/bus"
 import { TuiEvent } from "@/cli/cmd/tui/event"
 import open from "open"
+import { McpElicitation } from "./elicitation"
 
 export namespace MCP {
   const log = Log.create({ service: "mcp" })
@@ -133,20 +134,65 @@ export namespace MCP {
     return dynamicTool({
       description: mcpTool.description ?? "",
       inputSchema: jsonSchema(schema),
-      execute: async (args: unknown) => {
-        return client.callTool(
-          {
-            name: mcpTool.name,
-            arguments: (args || {}) as Record<string, unknown>,
-          },
-          CallToolResultSchema,
-          {
-            resetTimeoutOnProgress: true,
-            timeout,
-          },
-        )
+      execute: async (args: unknown, opts: ToolCallOptions) => {
+        let body = (args || {}) as Record<string, unknown>
+        let tries = 0
+        const ctx = opts.experimental_context as { sessionID?: string } | undefined
+        const sessionID = typeof ctx?.sessionID === "string" ? ctx.sessionID : "unknown"
+        while (true) {
+          try {
+            return await client.callTool(
+              {
+                name: mcpTool.name,
+                arguments: body,
+              },
+              CallToolResultSchema,
+              {
+                resetTimeoutOnProgress: true,
+                timeout,
+              },
+            )
+          } catch (error) {
+            if (error instanceof McpElicitation.RejectedError) throw error
+            const match = parseElicitation(error)
+            if (!match) throw error
+            tries += 1
+            if (tries > 3) throw new Error(`MCP elicitation retry limit reached for tool ${mcpTool.name}`)
+            const response = await McpElicitation.ask(
+              {
+                sessionID,
+                requestID: crypto.randomUUID(),
+                tool: mcpTool.name,
+                prompt: match,
+              },
+              opts.abortSignal,
+            )
+            body = {
+              ...body,
+              text: response.text,
+            }
+          }
+        }
       },
     })
+  }
+
+  /** @internal Exported for testing */
+  export const tool = convertMcpTool
+
+  function parseElicitation(error: unknown) {
+    if (!error || typeof error !== "object") return
+    if (!("code" in error) || (error as { code?: number }).code !== -32042) return
+    if (!("data" in error)) return
+    const data = (error as { data?: unknown }).data
+    if (!data || typeof data !== "object") return
+    if (!("elicitations" in data)) return
+    const list = (data as { elicitations?: unknown }).elicitations
+    if (!Array.isArray(list) || !list.length) return
+    const first = list[0]
+    if (!first || typeof first !== "object") return
+    if (!("message" in first) || typeof first.message !== "string") return
+    return first.message
   }
 
   // Store transports for OAuth servers to allow finishing auth

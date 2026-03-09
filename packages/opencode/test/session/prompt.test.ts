@@ -1,5 +1,5 @@
 import path from "path"
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test, spyOn } from "bun:test"
 import { fileURLToPath } from "url"
 import { Instance } from "../../src/project/instance"
 import { Session } from "../../src/session"
@@ -7,6 +7,7 @@ import { MessageV2 } from "../../src/session/message-v2"
 import { SessionPrompt } from "../../src/session/prompt"
 import { Log } from "../../src/util/log"
 import { tmpdir } from "../fixture/fixture"
+import { MCP } from "../../src/mcp"
 
 Log.init({ print: false })
 
@@ -207,5 +208,104 @@ describe("session.prompt agent variant", () => {
       if (prev === undefined) delete process.env.OPENAI_API_KEY
       else process.env.OPENAI_API_KEY = prev
     }
+  })
+})
+
+describe("session.prompt binary MCP content", () => {
+  test("stores image base64 output and returns a path reference", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const { jsonSchema } = await import("ai")
+        const data = Buffer.from("phase4-image-bytes").toString("base64")
+        const tools = {
+          mcp_image: {
+            description: "returns image content",
+            parameters: jsonSchema({ type: "object", properties: {}, additionalProperties: false }),
+            execute: async () => ({
+              content: [{ type: "image", mimeType: "image/png", data }],
+            }),
+          },
+        }
+        const mockTools = spyOn(MCP, "tools").mockResolvedValue(tools as any)
+        const resolved = await SessionPrompt.resolveTools({
+          messages: [],
+          agent: {
+            name: "build",
+            permission: [{ permission: "*", action: "allow", pattern: "*" }],
+          } as any,
+          model: { api: { id: "test" }, providerID: "test" } as any,
+          session: { id: "ses_1234" } as any,
+          processor: { message: { id: "msg_1" } } as any,
+          bypassAgentCheck: true,
+        })
+        const out = await (resolved["mcp_image"] as any).execute({}, { toolCallId: "call_1" } as any)
+        const content = out.content[0]
+        expect(content.type).toBe("text")
+        expect(content.text).toContain("Saved binary MCP output to")
+        expect(content.text.includes(data)).toBe(false)
+        const match = content.text.match(/^Saved binary MCP output to (.+)$/)
+        expect(match).toBeTruthy()
+        const p = match![1]
+        expect(p.startsWith(path.join(tmp.path, ".opencode", "tool-output"))).toBe(true)
+        const saved = Buffer.from(await Bun.file(p).arrayBuffer()).toString("utf8")
+        expect(saved).toBe("phase4-image-bytes")
+        mockTools.mockRestore()
+      },
+    })
+  })
+
+  test("stores resource blob base64 output and returns a path reference", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const { jsonSchema } = await import("ai")
+        const blob = Buffer.from("phase4-resource-bytes").toString("base64")
+        const tools = {
+          mcp_resource: {
+            description: "returns resource content",
+            parameters: jsonSchema({ type: "object", properties: {}, additionalProperties: false }),
+            execute: async () => ({
+              content: [
+                {
+                  type: "resource",
+                  resource: {
+                    blob,
+                    mimeType: "application/octet-stream",
+                    uri: "file:///tmp/resource.bin",
+                  },
+                },
+              ],
+            }),
+          },
+        }
+        const mockTools = spyOn(MCP, "tools").mockResolvedValue(tools as any)
+        const resolved = await SessionPrompt.resolveTools({
+          messages: [],
+          agent: {
+            name: "build",
+            permission: [{ permission: "*", action: "allow", pattern: "*" }],
+          } as any,
+          model: { api: { id: "test" }, providerID: "test" } as any,
+          session: { id: "ses_1234" } as any,
+          processor: { message: { id: "msg_2" } } as any,
+          bypassAgentCheck: true,
+        })
+        const out = await (resolved["mcp_resource"] as any).execute({}, { toolCallId: "call_2" } as any)
+        const content = out.content[0]
+        expect(content.type).toBe("text")
+        expect(content.text).toContain("Saved binary MCP output to")
+        expect(content.text.includes(blob)).toBe(false)
+        const match = content.text.match(/^Saved binary MCP output to (.+)$/)
+        expect(match).toBeTruthy()
+        const p = match![1]
+        expect(p.startsWith(path.join(tmp.path, ".opencode", "tool-output"))).toBe(true)
+        const saved = Buffer.from(await Bun.file(p).arrayBuffer()).toString("utf8")
+        expect(saved).toBe("phase4-resource-bytes")
+        mockTools.mockRestore()
+      },
+    })
   })
 })

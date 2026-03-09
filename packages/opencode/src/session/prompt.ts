@@ -47,6 +47,7 @@ import { LLM } from "./llm"
 import { iife } from "@/util/iife"
 import { Shell } from "@/shell/shell"
 import { Truncate } from "@/tool/truncation"
+import { extension } from "mime-types"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -63,6 +64,46 @@ const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested struc
 
 export namespace SessionPrompt {
   const log = Log.create({ service: "session.prompt" })
+
+  function fileext(mime?: string, uri?: string) {
+    if (uri) {
+      const clean = uri.split(/[?#]/)[0]
+      const ext = path.extname(clean)
+      if (ext) return ext
+    }
+    if (mime) {
+      const ext = extension(mime)
+      if (ext) return `.${ext}`
+    }
+    return ".bin"
+  }
+
+  async function extractBinary(item: { type: string; [key: string]: unknown }) {
+    if (item.type === "image" && typeof item.data === "string") {
+      const ext = fileext(typeof item.mimeType === "string" ? item.mimeType : undefined)
+      const p = path.join(Instance.directory, ".opencode/tool-output", crypto.randomUUID() + ext)
+      await Filesystem.write(p, Buffer.from(item.data, "base64"))
+      return {
+        type: "text" as const,
+        text: `Saved binary MCP output to ${p}`,
+      }
+    }
+    if (item.type === "resource" && item.resource && typeof item.resource === "object") {
+      const resource = item.resource as { blob?: unknown; mimeType?: unknown; uri?: unknown }
+      if (typeof resource.blob !== "string") return item
+      const ext = fileext(
+        typeof resource.mimeType === "string" ? resource.mimeType : undefined,
+        typeof resource.uri === "string" ? resource.uri : undefined,
+      )
+      const p = path.join(Instance.directory, ".opencode/tool-output", crypto.randomUUID() + ext)
+      await Filesystem.write(p, Buffer.from(resource.blob, "base64"))
+      return {
+        type: "text" as const,
+        text: `Saved binary MCP output to ${p}`,
+      }
+    }
+    return item
+  }
 
   const state = Instance.state(
     () => {
@@ -1033,30 +1074,23 @@ export namespace SessionPrompt {
           result,
         )
 
+        const content = await Promise.all(
+          result.content.map((item: unknown) => extractBinary(item as { type: string; [key: string]: unknown })),
+        )
         const textParts: string[] = []
         const attachments: Omit<MessageV2.FilePart, "id" | "sessionID" | "messageID">[] = []
 
-        for (const contentItem of result.content) {
-          if (contentItem.type === "text") {
+        for (const contentItem of content) {
+          if (contentItem.type === "text" && typeof contentItem.text === "string") {
             textParts.push(contentItem.text)
-          } else if (contentItem.type === "image") {
-            attachments.push({
-              type: "file",
-              mime: contentItem.mimeType,
-              url: `data:${contentItem.mimeType};base64,${contentItem.data}`,
-            })
-          } else if (contentItem.type === "resource") {
-            const { resource } = contentItem
-            if (resource.text) {
+          } else if (
+            contentItem.type === "resource" &&
+            contentItem.resource &&
+            typeof contentItem.resource === "object"
+          ) {
+            const resource = contentItem.resource as { text?: unknown }
+            if (typeof resource.text === "string") {
               textParts.push(resource.text)
-            }
-            if (resource.blob) {
-              attachments.push({
-                type: "file",
-                mime: resource.mimeType ?? "application/octet-stream",
-                url: `data:${resource.mimeType ?? "application/octet-stream"};base64,${resource.blob}`,
-                filename: resource.uri,
-              })
             }
           }
         }
@@ -1078,7 +1112,7 @@ export namespace SessionPrompt {
             sessionID: ctx.sessionID,
             messageID: input.processor.message.id,
           })),
-          content: result.content,
+          content,
         }
       }
       tools[key] = entry
