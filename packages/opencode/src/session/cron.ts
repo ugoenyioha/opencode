@@ -38,19 +38,23 @@ export namespace SessionCron {
   export type Info = typeof SessionCronTable.$inferSelect
 
   async function withLock<T>(key: string, work: () => Promise<T>) {
-    while (locks.has(key)) await locks.get(key)
-    let done: () => void
-    locks.set(
-      key,
-      new Promise<void>((resolve) => {
-        done = resolve
-      }),
-    )
+    const previous = locks.get(key) ?? Promise.resolve()
+    let release!: () => void
+    const current = new Promise<void>((r) => {
+      release = r
+    })
+
+    const next = previous.then(() => current)
+    locks.set(key, next)
+
+    await previous
     try {
       return await work()
     } finally {
-      locks.delete(key)
-      done!()
+      release()
+      if (locks.get(key) === next) {
+        locks.delete(key)
+      }
     }
   }
 

@@ -66,16 +66,15 @@ export namespace SessionPrompt {
   const log = Log.create({ service: "session.prompt" })
 
   function fileext(mime?: string, uri?: string) {
+    let ext = ""
     if (uri) {
       const clean = uri.split(/[?#]/)[0]
-      const ext = path.extname(clean)
-      if (ext) return ext
+      ext = path.extname(clean)
+    } else if (mime) {
+      ext = extension(mime) ? `.${extension(mime)}` : ""
     }
-    if (mime) {
-      const ext = extension(mime)
-      if (ext) return `.${ext}`
-    }
-    return ".bin"
+    // Prevent path traversal from malicious MCP responses
+    return ext ? ext.replace(/[^a-zA-Z0-9.]/g, "") : ".bin"
   }
 
   async function extractBinary(item: { type: string; [key: string]: unknown }) {
