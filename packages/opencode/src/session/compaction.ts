@@ -199,7 +199,7 @@ When constructing the summary, try to stick to this template:
 ---`
 
     const promptText = compacting.prompt ?? [defaultPrompt, ...compacting.context].join("\n\n")
-    const result = await processor.process({
+    let result = await processor.process({
       user: userMessage,
       agent,
       abort: input.abort,
@@ -207,7 +207,7 @@ When constructing the summary, try to stick to this template:
       tools: {},
       system: [],
       messages: [
-        ...MessageV2.toModelMessages(messages, model, { stripMedia: true }),
+        ...MessageV2.toModelMessages(messages, model),
         {
           role: "user",
           content: [
@@ -220,6 +220,33 @@ When constructing the summary, try to stick to this template:
       ],
       model,
     })
+
+    if (result === "compact") {
+      log.warn("compaction with images overflowed context, retrying with stripMedia: true", {
+        sessionID: input.sessionID,
+      })
+      result = await processor.process({
+        user: userMessage,
+        agent,
+        abort: input.abort,
+        sessionID: input.sessionID,
+        tools: {},
+        system: [],
+        messages: [
+          ...MessageV2.toModelMessages(messages, model, { stripMedia: true }),
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: promptText,
+              },
+            ],
+          },
+        ],
+        model,
+      })
+    }
 
     if (result === "compact") {
       processor.message.error = new MessageV2.ContextOverflowError({

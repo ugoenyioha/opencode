@@ -737,7 +737,7 @@ export namespace SessionPrompt {
 
       await Plugin.trigger(
         "chat.instructions.loaded",
-        { sessionID, agent: agent.name, model },
+        { sessionID, agent: agent.name, model: JSON.parse(JSON.stringify(model)) },
         { instructions: system },
       )
 
