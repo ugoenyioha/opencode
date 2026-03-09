@@ -735,6 +735,12 @@ export namespace SessionPrompt {
         system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
       }
 
+      await Plugin.trigger(
+        "chat.instructions.loaded",
+        { sessionID, agent: agent.name, model },
+        { instructions: system },
+      )
+
       const result = await processor.process({
         user: lastUser,
         agent,

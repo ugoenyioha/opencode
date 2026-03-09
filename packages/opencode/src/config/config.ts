@@ -1803,6 +1803,8 @@ export namespace Config {
     const filepath = path.join(Instance.directory, "config.json")
     const existing = await loadFile(filepath)
     await Filesystem.writeJson(filepath, mergeDeep(existing, config))
+    const { Plugin } = await import("../plugin")
+    await Plugin.trigger("config.change", {}, {})
     await Instance.dispose()
   }
 
@@ -1893,6 +1895,9 @@ export namespace Config {
     })()
 
     global.reset()
+
+    const { Plugin } = await import("../plugin")
+    await Plugin.trigger("config.change", {}, {})
 
     void Instance.disposeAll()
       .catch(() => undefined)

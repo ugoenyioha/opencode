@@ -371,4 +371,16 @@ export interface Hooks {
    * Modify tool definitions (description and parameters) sent to LLM
    */
   "tool.definition"?: (input: { toolID: string }, output: { description: string; parameters: any }) => Promise<void>
+  /**
+   * Called right after the system prompt (instructions) is compiled for a session.
+   * Allows plugins to inspect or dynamically mutate the final instructions.
+   */
+  "chat.instructions.loaded"?: (
+    input: { sessionID: string; agent: string; model: Model },
+    output: { instructions: string[] },
+  ) => Promise<void>
+  /**
+   * Called whenever the configuration is updated and saved to disk.
+   */
+  "config.change"?: (input: {}, output: {}) => Promise<void>
 }
