@@ -17,6 +17,7 @@ import { PermissionNext } from "@/permission/next"
 import { errors } from "../error"
 import { lazy } from "../../util/lazy"
 import { Identifier } from "../../id/id"
+import { SessionCron } from "@/session/cron"
 
 const log = Log.create({ service: "server" })
 
@@ -844,6 +845,79 @@ export const SessionRoutes = lazy(() =>
         const body = c.req.valid("json")
         const msg = await SessionPrompt.command({ ...body, sessionID })
         return c.json(msg)
+      },
+    )
+    .post(
+      "/:sessionID/loop",
+      describeRoute({
+        summary: "Create loop",
+        description: "Schedule a recurring synthetic prompt for a session.",
+        operationId: "session.loop.create",
+        responses: {
+          200: {
+            description: "Loop created",
+            content: {
+              "application/json": {
+                schema: resolver(
+                  z.object({
+                    id: z.string(),
+                    interval_ms: z.number(),
+                    prompt: z.string(),
+                    next_run_at: z.number(),
+                  }),
+                ),
+              },
+            },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: Identifier.schema("session").meta({ description: "Session ID" }),
+        }),
+      ),
+      validator("json", SessionCron.CreateInput.omit({ sessionID: true })),
+      async (c) => {
+        const sessionID = c.req.valid("param").sessionID
+        const body = c.req.valid("json")
+        const result = await SessionCron.create({
+          sessionID,
+          interval_ms: body.interval_ms,
+          prompt: body.prompt,
+        })
+        return c.json(result)
+      },
+    )
+    .delete(
+      "/:sessionID/loop",
+      describeRoute({
+        summary: "Stop loops",
+        description: "Remove all recurring prompts for a session.",
+        operationId: "session.loop.stop",
+        responses: {
+          200: {
+            description: "Loops removed",
+            content: {
+              "application/json": {
+                schema: resolver(z.object({ removed: z.number() })),
+              },
+            },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: Identifier.schema("session").meta({ description: "Session ID" }),
+        }),
+      ),
+      async (c) => {
+        const sessionID = c.req.valid("param").sessionID
+        const removed = await SessionCron.stop({ sessionID })
+        return c.json({ removed })
       },
     )
     .post(

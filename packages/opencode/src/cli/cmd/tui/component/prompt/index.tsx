@@ -34,6 +34,7 @@ import { useToast } from "../../ui/toast"
 import { useKV } from "../../context/kv"
 import { useTextareaKeybindings } from "../textarea-keybindings"
 import { DialogSkill } from "../dialog-skill"
+import { SessionLoop } from "@/session/loop"
 
 export type PromptProps = {
   sessionID?: string
@@ -567,10 +568,6 @@ export function Prompt(props: PromptProps) {
       return
     }
     const selectedModel = local.model.current()
-    if (!selectedModel) {
-      promptModelWarning()
-      return
-    }
     const sessionID = props.sessionID
       ? props.sessionID
       : await (async () => {
@@ -603,8 +600,31 @@ export function Prompt(props: PromptProps) {
     const currentMode = store.mode
     const variant = local.model.variant.current()
 
+    const loop = SessionLoop.parse(inputText)
+
     // Team message interception: when a teammate is selected, send via team_message endpoint
-    if (props.selectedTeammate) {
+    if (loop?.type === "invalid") {
+      toast.show({ message: loop.message, variant: "error" })
+    } else if (loop?.type === "stop") {
+      const result = await SessionLoop.stop(sdk as any, sessionID).catch(() => undefined)
+      if (!result?.ok) {
+        toast.show({ message: "Failed to stop /loop jobs", variant: "error" })
+      }
+      if (result?.ok) {
+        toast.show({ message: "Stopped loop jobs for this session", variant: "success" })
+      }
+    } else if (loop?.type === "create") {
+      const result = await SessionLoop.create(sdk as any, sessionID, {
+        interval_ms: loop.interval_ms,
+        prompt: loop.prompt,
+      }).catch(() => undefined)
+      if (!result?.ok) {
+        toast.show({ message: "Failed to schedule /loop job", variant: "error" })
+      }
+      if (result?.ok) {
+        toast.show({ message: `Scheduled loop every ${loop.minutes} minute(s)`, variant: "success" })
+      }
+    } else if (props.selectedTeammate) {
       const teammate = props.selectedTeammate
       try {
         const res = await sdk.fetch(`${sdk.url}/session/${sessionID}/team-message`, {
@@ -624,6 +644,9 @@ export function Prompt(props: PromptProps) {
       }
       props.onTeammateMessageSent?.()
       // Fall through to the clear logic below
+    } else if (!selectedModel) {
+      promptModelWarning()
+      return
     } else if (store.mode === "shell") {
       sdk.client.session.shell({
         sessionID,

@@ -9,6 +9,10 @@
 - **Output**: creates `migration/<timestamp>_<slug>/migration.sql` and `snapshot.json`.
 - **Tests**: migration tests should read the per-folder layout (no `_journal.json`).
 
+## Session cron
+
+The `/loop` command stores recurring jobs in the `session_cron` table (schema in `src/session/session.sql.ts`, logic in `src/session/cron.ts`). Jobs cascade-delete with their session. The ticker is started during bootstrap (`SessionCron.start()`) and polls every 30 seconds.
+
 ## MCP tool deferral
 
 When the total number of MCP tools exceeds `OPENCODE_MCP_DEFER_THRESHOLD` (default: `20`), unused tools are lazy-loaded to save context window tokens. A `tool_search` tool is injected as a fallback so the AI can discover deferred tools by name or description.

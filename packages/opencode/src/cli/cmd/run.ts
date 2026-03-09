@@ -27,6 +27,8 @@ import { SkillTool } from "../../tool/skill"
 import { BashTool } from "../../tool/bash"
 import { TodoWriteTool } from "../../tool/todo"
 import { Locale } from "../../util/locale"
+import { SessionCron } from "@/session/cron"
+import { SessionLoop } from "@/session/loop"
 
 type ToolProps<T extends Tool.Info> = {
   input: Tool.InferParameters<T>
@@ -651,6 +653,47 @@ export const RunCommand = cmd({
         process.exit(1)
       }
       await share(sdk, sessionID)
+
+      const loopCmd = SessionLoop.parse(message)
+      if (loopCmd?.type === "invalid") {
+        UI.error(loopCmd.message)
+        return
+      }
+      if (loopCmd?.type === "stop") {
+        if (args.attach) {
+          const result = await SessionLoop.stop(sdk as any, sessionID)
+          if (!result.ok) {
+            UI.error("Failed to stop /loop jobs")
+            return
+          }
+          UI.println(UI.Style.TEXT_INFO_BOLD + "~  " + `Stopped /loop jobs (${result.data.removed})`)
+          return
+        }
+        const removed = await SessionCron.stop({ sessionID })
+        UI.println(UI.Style.TEXT_INFO_BOLD + "~  " + `Stopped /loop jobs (${removed})`)
+        return
+      }
+      if (loopCmd?.type === "create") {
+        if (args.attach) {
+          const result = await SessionLoop.create(sdk as any, sessionID, {
+            interval_ms: loopCmd.interval_ms,
+            prompt: loopCmd.prompt,
+          })
+          if (!result.ok) {
+            UI.error("Failed to schedule /loop job")
+            return
+          }
+          UI.println(UI.Style.TEXT_INFO_BOLD + "~  " + `Scheduled /loop every ${loopCmd.minutes} minute(s)`)
+          return
+        }
+        await SessionCron.create({
+          sessionID,
+          interval_ms: loopCmd.interval_ms,
+          prompt: loopCmd.prompt,
+        })
+        UI.println(UI.Style.TEXT_INFO_BOLD + "~  " + `Scheduled /loop every ${loopCmd.minutes} minute(s)`)
+        return
+      }
 
       loop().catch((e) => {
         console.error(e)

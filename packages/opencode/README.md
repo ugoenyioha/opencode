@@ -41,6 +41,20 @@ bun run index.ts run --sandbox gvisor
 
 For more details on sandboxing, worktree isolation, and agent-to-agent (A2A) security, refer to the [main documentation](../../README.md) and [Security policy](../../SECURITY.md).
 
+### Loop scheduler
+
+Schedule a recurring prompt that fires automatically on a timer within the current session:
+
+```bash
+# Run a prompt every 5 minutes
+/loop 5 check for new issues and summarize them
+
+# Stop all scheduled loops for this session
+/loop stop
+```
+
+The interval is specified in minutes and must be positive. Each scheduled job is scoped to the session that created it — when the session ends, its jobs are cleaned up automatically. The background ticker checks for due jobs every 30 seconds, so the actual cadence has that much jitter.
+
 ### MCP tool deferral
 
 When an MCP server exposes a large number of tools, every tool definition is sent to the AI on each request. This eats into the context window and increases token costs.

@@ -104,3 +104,21 @@ export const PermissionTable = sqliteTable("permission", {
   ...Timestamps,
   data: text({ mode: "json" }).notNull().$type<PermissionNext.Ruleset>(),
 })
+
+export const SessionCronTable = sqliteTable(
+  "session_cron",
+  {
+    id: text().primaryKey(),
+    session_id: text()
+      .notNull()
+      .references(() => SessionTable.id, { onDelete: "cascade" }),
+    interval_ms: integer().notNull(),
+    prompt: text().notNull(),
+    next_run_at: integer().notNull(),
+    ...Timestamps,
+  },
+  (table) => [
+    index("session_cron_session_idx").on(table.session_id),
+    index("session_cron_next_run_idx").on(table.next_run_at),
+  ],
+)

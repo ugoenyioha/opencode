@@ -14,6 +14,7 @@ import { Snapshot } from "../snapshot"
 import { Truncate } from "../tool/truncation"
 import { Flag } from "@/flag/flag"
 import { SessionRecovery } from "@/session/recovery"
+import { SessionCron } from "@/session/cron"
 
 export async function InstanceBootstrap() {
   Log.Default.info("bootstrapping", { directory: Instance.directory })
@@ -26,6 +27,7 @@ export async function InstanceBootstrap() {
   Vcs.init()
   Snapshot.init()
   Truncate.init()
+  SessionCron.start()
 
   try {
     await Promise.resolve(SessionRecovery.recover())
