@@ -112,7 +112,7 @@ export namespace Config {
     return merged
   }
 
-  async function trustInputs() {
+  export async function trustInputs() {
     if (Flag.OPENCODE_DISABLE_PROJECT_CONFIG) return []
     const files = new Set<string>()
     for (const file of await ConfigPaths.projectFiles("opencode", Instance.directory, Instance.worktree)) {
@@ -205,11 +205,9 @@ export namespace Config {
       trustedContents = trustData.contents
       const trust = await Trust.ensure(Instance.project.id, trustData.hash, { directory: Instance.directory })
       if (!trust.approved) {
-        console.log("TRUST FAILED:", { id: Instance.project.id, expected: trustData.hash, trust })
-        const message =
-          "Untrusted or modified workspace configuration detected. Please review the workspace and run 'opencode trust' to proceed."
-        console.error(message)
-        throw new Error(message)
+        console.error("\x1b[33m" + "⚠️  Untrusted or modified workspace configuration detected." + "\x1b[0m")
+        console.error("Please review the workspace and run 'opencode trust' to proceed.")
+        process.exit(1)
       }
     }
 

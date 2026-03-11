@@ -15,7 +15,6 @@ export namespace Trust {
   }
 
   async function read(): Promise<TrustRecord> {
-    console.log("TRUST READ FROM:", filepath())
     return Filesystem.readJson<TrustRecord>(filepath()).catch(() => ({}))
   }
 
@@ -41,7 +40,6 @@ export namespace Trust {
     }
     const stored = await read().then((items) => items[projectId])
     if (!stored || stored !== hash) {
-      console.log("TRUST STORED VS HASH:", { stored, hash, projectId })
       log.warn("untrusted workspace", { projectId, ...context })
       const result = { approved: false, hash }
       cache.set(projectId, result)
@@ -50,6 +48,14 @@ export namespace Trust {
     const result = { approved: true, hash }
     cache.set(projectId, result)
     return result
+  }
+
+  export async function approve(projectId: string, hash: string): Promise<void> {
+    const data = await read()
+    data[projectId] = hash
+    await Filesystem.writeJson(filepath(), data)
+    cache.set(projectId, { approved: true, hash })
+    log.info("workspace trusted", { projectId, hash })
   }
 
   export async function hash(inputs: string[]) {
