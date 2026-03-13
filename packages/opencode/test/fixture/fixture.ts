@@ -125,6 +125,16 @@ export async function tmpdir<T>(options?: TmpDirOptions<T>) {
       stdout: "ignore",
       stderr: "ignore",
     })
+    Bun.spawnSync(["git", "config", "user.email", "test@opencode.test"], {
+      cwd: dirpath,
+      stdout: "ignore",
+      stderr: "ignore",
+    })
+    Bun.spawnSync(["git", "config", "user.name", "Test"], {
+      cwd: dirpath,
+      stdout: "ignore",
+      stderr: "ignore",
+    })
     Bun.spawnSync(["git", "commit", "--allow-empty", "-m", `root commit ${dirpath}`], {
       cwd: dirpath,
       stdout: "ignore",
