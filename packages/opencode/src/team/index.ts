@@ -691,7 +691,7 @@ export namespace Team {
     const { Provider } = await import("../provider/provider")
 
     if (input.model) {
-      const parsed = Provider.parseModel(input.model)
+      const parsed = Provider.parseModel(await Provider.resolveModel(input.model))
       try {
         await Provider.getModel(parsed.providerID, parsed.modelID)
       } catch (e: unknown) {

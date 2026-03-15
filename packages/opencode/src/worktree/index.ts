@@ -13,6 +13,7 @@ import { fn } from "../util/fn"
 import { Log } from "../util/log"
 import { BusEvent } from "@/bus/bus-event"
 import { GlobalBus } from "@/bus/global"
+import { Config } from "@/config/config"
 
 export namespace Worktree {
   const log = Log.create({ service: "worktree" })
@@ -48,6 +49,7 @@ export namespace Worktree {
   export const CreateInput = z
     .object({
       name: z.string().optional(),
+      sparsePaths: z.array(z.string()).optional().describe("Sparse-checkout paths to include in the worktree"),
       startCommand: z
         .string()
         .optional()
@@ -351,7 +353,31 @@ export namespace Worktree {
     return candidate(root, base || undefined)
   }
 
-  export async function createFromInfo(info: Info, startCommand?: string) {
+  async function sparse(directory: string, paths: string[]) {
+    const init = Bun.spawn(["git", "sparse-checkout", "init", "--cone"], {
+      cwd: directory,
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    if ((await init.exited) !== 0) {
+      throw new CreateFailedError({
+        message: (await new Response(init.stderr).text()) || "Failed to initialize sparse-checkout",
+      })
+    }
+
+    const set = Bun.spawn(["git", "sparse-checkout", "set", "--", ...paths], {
+      cwd: directory,
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    if ((await set.exited) !== 0) {
+      throw new CreateFailedError({
+        message: (await new Response(set.stderr).text()) || "Failed to configure sparse-checkout",
+      })
+    }
+  }
+
+  export async function createFromInfo(info: Info, startCommand?: string, sparsePaths?: string[]) {
     // Validate that the worktree directory is within the expected root (prevent path traversal)
     const root = path.join(Global.Path.data, "worktree", Instance.project.id)
     const canonicalRoot = await canonical(root)
@@ -375,6 +401,9 @@ export namespace Worktree {
 
     return () => {
       const start = async () => {
+        if (sparsePaths?.length) {
+          await sparse(info.directory, sparsePaths)
+        }
         const populated = await $`git reset --hard`.quiet().nothrow().cwd(info.directory)
         if (populated.exitCode !== 0) {
           const message = errorText(populated) || "Failed to populate worktree"
@@ -434,8 +463,9 @@ export namespace Worktree {
   }
 
   export const create = fn(CreateInput.optional(), async (input) => {
+    const sparsePaths = input?.sparsePaths ?? (await Config.get()).worktree?.sparsePaths
     const info = await makeWorktreeInfo(input?.name)
-    const bootstrap = await createFromInfo(info, input?.startCommand)
+    const bootstrap = await createFromInfo(info, input?.startCommand, sparsePaths)
     // This is needed due to how worktrees currently work in the
     // desktop app
     setTimeout(() => {

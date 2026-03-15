@@ -151,9 +151,11 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         })
 
       const args = useArgs()
+      const override = (value: string) =>
+        ((sync.data.config as Record<string, any>).modelOverrides?.[value] as string) ?? value
       const fallbackModel = createMemo(() => {
         if (args.model) {
-          const { providerID, modelID } = Provider.parseModel(args.model)
+          const { providerID, modelID } = Provider.parseModel(override(args.model))
           if (isModelValid({ providerID, modelID })) {
             return {
               providerID,
@@ -163,7 +165,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         }
 
         if (sync.data.config.model) {
-          const { providerID, modelID } = Provider.parseModel(sync.data.config.model)
+          const { providerID, modelID } = Provider.parseModel(override(sync.data.config.model))
           if (isModelValid({ providerID, modelID })) {
             return {
               providerID,

@@ -70,7 +70,7 @@ export const SkillTool = Tool.define("skill", async (ctx) => {
         permission: "skill",
         patterns: [params.name],
         always: [params.name],
-        metadata: {},
+        metadata: { source: "skill", name: params.name },
       })
 
       const dir = path.dirname(skill.location)

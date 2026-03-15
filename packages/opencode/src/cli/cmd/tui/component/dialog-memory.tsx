@@ -13,6 +13,21 @@ interface MemoryFile {
   exists: boolean
   label: string
   category: string
+  modified?: number
+}
+
+function stamp(mtime?: number) {
+  if (!mtime) return "new"
+  const delta = Date.now() - mtime
+  const days = Math.floor(delta / 86400000)
+  if (days <= 0) return "today"
+  if (days === 1) return "1d ago"
+  if (days < 30) return `${days}d ago`
+  const months = Math.floor(days / 30)
+  if (months === 1) return "1mo ago"
+  if (months < 12) return `${months}mo ago`
+  const years = Math.floor(months / 12)
+  return years === 1 ? "1y ago" : `${years}y ago`
 }
 
 /** Recursively find *.md files under a directory (sync) */
@@ -51,6 +66,7 @@ function collectFiles(dir: string, home: string): MemoryFile[] {
           exists: true,
           label: path.relative(dir, p),
           category: "Project",
+          modified: fs.statSync(p).mtimeMs,
         })
       }
     } catch {}
@@ -63,6 +79,7 @@ function collectFiles(dir: string, home: string): MemoryFile[] {
       exists: false,
       label: "AGENTS.md (create new)",
       category: "Project",
+      modified: undefined,
     })
   }
 
@@ -73,6 +90,7 @@ function collectFiles(dir: string, home: string): MemoryFile[] {
       exists: true,
       label: path.relative(dir, file),
       category: "Project Rules",
+      modified: fs.statSync(file).mtimeMs,
     })
   }
 
@@ -83,6 +101,7 @@ function collectFiles(dir: string, home: string): MemoryFile[] {
       exists: true,
       label: path.relative(dir, file),
       category: "Project Rules (.claude)",
+      modified: fs.statSync(file).mtimeMs,
     })
   }
 
@@ -101,6 +120,7 @@ function collectFiles(dir: string, home: string): MemoryFile[] {
       exists,
       label: p.replace(home, "~"),
       category: "Global",
+      modified: exists ? fs.statSync(p).mtimeMs : undefined,
     })
   }
 
@@ -111,6 +131,7 @@ function collectFiles(dir: string, home: string): MemoryFile[] {
       exists: true,
       label: file.replace(home, "~"),
       category: "Global Rules",
+      modified: fs.statSync(file).mtimeMs,
     })
   }
   for (const file of findMarkdownFiles(path.join(home, ".claude", "rules"))) {
@@ -119,6 +140,7 @@ function collectFiles(dir: string, home: string): MemoryFile[] {
       exists: true,
       label: file.replace(home, "~"),
       category: "Global Rules (.claude)",
+      modified: fs.statSync(file).mtimeMs,
     })
   }
 
@@ -142,6 +164,7 @@ export function DialogMemory() {
   const options = createMemo((): DialogSelectOption<string>[] => {
     return files().map((f) => ({
       title: f.label,
+      description: `Updated ${stamp(f.modified)}`,
       value: f.path,
       category: f.category,
       gutter: f.exists ? <text fg={theme.success}>ok</text> : <text fg={theme.textMuted}>new</text>,

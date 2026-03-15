@@ -112,41 +112,21 @@ export namespace Config {
     return merged
   }
 
-  export async function trustInputs() {
-    if (Flag.OPENCODE_DISABLE_PROJECT_CONFIG) return []
-    const files = new Set<string>()
-    for (const file of await ConfigPaths.projectFiles("opencode", Instance.directory, Instance.worktree)) {
-      files.add(file)
+  function applyModelOverrides(result: Info) {
+    const map = result.modelOverrides ?? {}
+    const resolve = (value?: string) => (value ? (map[value] ?? value) : value)
+    result.model = resolve(result.model)
+    result.small_model = resolve(result.small_model)
+    if (result.command) {
+      for (const item of Object.values(result.command)) item.model = resolve(item.model)
     }
-    for await (const dir of Filesystem.up({
-      targets: [".opencode"],
-      start: Instance.directory,
-      stop: Instance.worktree,
-    })) {
-      const matches = await Glob.scan("**/*", {
-        cwd: dir,
-        absolute: true,
-        include: "file",
-        dot: true,
-        symlink: true,
-      })
-      for (const match of matches) files.add(match)
+    if (result.agent) {
+      for (const item of Object.values(result.agent)) item.model = resolve(item.model)
     }
-    for await (const dir of Filesystem.up({
-      targets: [".claude", ".agents"],
-      start: Instance.directory,
-      stop: Instance.worktree,
-    })) {
-      const matches = await Glob.scan("skills/**/SKILL.md", {
-        cwd: dir,
-        absolute: true,
-        include: "file",
-        dot: true,
-        symlink: true,
-      })
-      for (const match of matches) files.add(match)
+    if (result.mode) {
+      for (const item of Object.values(result.mode)) item.model = resolve(item.model)
     }
-    return [...files]
+    return result
   }
 
   export const state = Instance.state(async () => {
@@ -199,16 +179,13 @@ export namespace Config {
     }
 
     const trustFiles = await trustInputs()
-    let trustedContents: Record<string, string | null> = {}
-    if (trustFiles.length) {
-      const trustData = await Trust.hash(trustFiles)
-      trustedContents = trustData.contents
-      const trust = await Trust.ensure(Instance.project.id, trustData.hash, { directory: Instance.directory })
-      if (!trust.approved) {
-        console.error("\x1b[33m" + "⚠️  Untrusted or modified workspace configuration detected." + "\x1b[0m")
-        console.error("Please review the workspace and run 'opencode trust' to proceed.")
-        process.exit(1)
-      }
+    const trustData = await Trust.hash(trustFiles)
+    const trustedContents = trustData.contents
+    const trust = await Trust.ensure(Instance.project.id, trustData.hash, { directory: Instance.directory })
+    if (!trust.approved) {
+      console.error("\x1b[33m" + "⚠️  Untrusted or modified workspace configuration detected." + "\x1b[0m")
+      console.error("Please review the workspace and run 'opencode trust' to proceed.")
+      process.exit(1)
     }
 
     // Project config overrides global and remote config.
@@ -323,6 +300,7 @@ export namespace Config {
     }
 
     result.plugin = deduplicatePlugins(result.plugin ?? [])
+    result = applyModelOverrides(result)
 
     return {
       config: result,
@@ -1490,6 +1468,10 @@ export namespace Config {
         })
         .optional(),
       plugin: z.string().array().optional(),
+      modelOverrides: z
+        .record(z.string(), z.string())
+        .optional()
+        .describe("Map friendly model aliases to concrete provider/model IDs"),
       snapshot: z.boolean().optional(),
       share: z
         .enum(["manual", "auto", "disabled"])
@@ -1628,6 +1610,14 @@ export namespace Config {
         })
         .optional(),
       sandbox: Sandbox.optional().describe("Sandbox runtime configuration"),
+      worktree: z
+        .object({
+          sparsePaths: z
+            .array(z.string())
+            .optional()
+            .describe("Paths to include when creating sparse worktrees for isolated agents"),
+        })
+        .optional(),
       compaction: z
         .object({
           auto: z.boolean().optional().describe("Enable automatic compaction when context is full (default: true)"),
@@ -1642,6 +1632,10 @@ export namespace Config {
         .optional(),
       experimental: z
         .object({
+          includeGitInstructions: z
+            .boolean()
+            .optional()
+            .describe("Include built-in git workflow instructions in compatible system prompts (default: true)"),
           disable_paste_summary: z.boolean().optional(),
           batch_tool: z.boolean().optional().describe("Enable the batch tool"),
           openTelemetry: z
@@ -1804,6 +1798,10 @@ export namespace Config {
     const { Plugin } = await import("../plugin")
     await Plugin.trigger("config.change", {}, {})
     await Instance.dispose()
+  }
+
+  export async function trustInputs() {
+    return ConfigPaths.projectFiles("opencode", Instance.directory, Instance.worktree)
   }
 
   function globalConfigFile() {

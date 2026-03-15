@@ -126,6 +126,28 @@ function TextBody(props: { title: string; description?: string; icon?: string })
   )
 }
 
+function sourceLabel(request: PermissionRequest) {
+  const source = request.metadata?.source
+  if (typeof source !== "string") return
+  if (source === "skill") {
+    const name = request.metadata?.name
+    return typeof name === "string" ? `Requested by skill: ${name}` : "Requested by a loaded skill"
+  }
+  if (source === "plugin") {
+    const name = request.metadata?.name
+    return typeof name === "string" ? `Requested by plugin tool: ${name}` : "Requested by an external plugin"
+  }
+  if (source === "built-in") {
+    const name = request.metadata?.name
+    return typeof name === "string" ? `Requested by built-in plugin: ${name}` : "Requested by a built-in plugin"
+  }
+  if (source === "tool") {
+    const name = request.metadata?.name
+    return typeof name === "string" ? `Requested by local tool: ${name}` : "Requested by a local tool"
+  }
+  return `Requested by: ${source}`
+}
+
 export function PermissionPrompt(props: { request: PermissionRequest }) {
   const sdk = useSDK()
   const sync = useSync()
@@ -423,6 +445,11 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
                 </text>
                 <text fg={theme.text}>{current.title}</text>
               </box>
+              <Show when={sourceLabel(props.request)}>
+                <box paddingLeft={2}>
+                  <text fg={theme.warning}>{sourceLabel(props.request)}</text>
+                </box>
+              </Show>
             </box>
           )
 

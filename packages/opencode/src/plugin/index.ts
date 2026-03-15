@@ -39,7 +39,7 @@ export namespace Plugin {
       baseUrl: "http://localhost:4096",
       directory: Instance.directory,
       // @ts-ignore - fetch type incompatibility
-      fetch: async (...args) => Server.App().fetch(...args),
+      fetch: Server.internalFetch,
     })
     const config = await Config.get()
     const hooks: {
@@ -143,6 +143,10 @@ export namespace Plugin {
 
   export async function list() {
     return state().then((x) => x.hooks.map((item) => item.hook))
+  }
+
+  export async function listWithSource() {
+    return state().then((x) => x.hooks)
   }
 
   export async function has(name: keyof Hooks) {

@@ -34,6 +34,8 @@ import { useToast } from "../../ui/toast"
 import { useKV } from "../../context/kv"
 import { useTextareaKeybindings } from "../textarea-keybindings"
 import { DialogSkill } from "../dialog-skill"
+import { DialogContext } from "../dialog-context"
+import { DialogBtw } from "../dialog-btw"
 import { SessionLoop } from "@/session/loop"
 
 export type PromptProps = {
@@ -185,6 +187,33 @@ export function Prompt(props: PromptProps) {
 
   command.register(() => {
     return [
+      {
+        title: "By the way",
+        value: "session.btw",
+        category: "Session",
+        slash: {
+          name: "btw",
+        },
+        enabled: !!props.sessionID,
+        onSelect: (dialog) => {
+          input.setText("/btw ")
+          input.gotoBufferEnd()
+          dialog.clear()
+        },
+      },
+      {
+        title: "Context diagnostics",
+        value: "session.context",
+        category: "Session",
+        slash: {
+          name: "context",
+        },
+        enabled: !!props.sessionID,
+        onSelect: (dialog) => {
+          if (!props.sessionID) return
+          dialog.replace(() => <DialogContext sessionID={props.sessionID!} />)
+        },
+      },
       {
         title: "Clear prompt",
         value: "prompt.clear",
@@ -563,6 +592,44 @@ export function Prompt(props: PromptProps) {
     if (autocomplete?.visible) return
     if (!store.prompt.input) return
     const trimmed = store.prompt.input.trim()
+    let inputText = store.prompt.input
+    const slash = (() => {
+      if (!inputText.startsWith("/")) return
+      const firstLine = inputText.split("\n")[0]
+      return firstLine.split(" ")[0].slice(1)
+    })()
+
+    if (slash === "btw") {
+      if (!props.sessionID) {
+        toast.show({ message: "Start a session before using /btw", variant: "error" })
+        return
+      }
+      const firstLineEnd = inputText.indexOf("\n")
+      const firstLine = firstLineEnd === -1 ? inputText : inputText.slice(0, firstLineEnd)
+      const args =
+        firstLine.split(" ").slice(1).join(" ") + (firstLineEnd === -1 ? "" : "\n" + inputText.slice(firstLineEnd + 1))
+      const question = args.trim()
+      if (!question) {
+        toast.show({ message: "Usage: /btw <your question>", variant: "error" })
+        return
+      }
+      input.extmarks.clear()
+      input.clear()
+      setStore("prompt", { input: "", parts: [] })
+      setStore("extmarkToPartIndex", new Map())
+      dialog.replace(() => <DialogBtw sessionID={props.sessionID!} question={question} />)
+      return
+    }
+
+    if (slash === "context") {
+      if (!props.sessionID) {
+        toast.show({ message: "Start a session before using /context", variant: "error" })
+        return
+      }
+      dialog.replace(() => <DialogContext sessionID={props.sessionID!} />)
+      return
+    }
+
     if (trimmed === "exit" || trimmed === "quit" || trimmed === ":q") {
       exit()
       return
@@ -575,8 +642,6 @@ export function Prompt(props: PromptProps) {
           return sessionID
         })()
     const messageID = Identifier.ascending("message")
-    let inputText = store.prompt.input
-
     // Expand pasted text inline before submitting
     const allExtmarks = input.extmarks.getAllForTypeId(promptPartTypeId)
     const sortedExtmarks = allExtmarks.sort((a: { start: number }, b: { start: number }) => b.start - a.start)

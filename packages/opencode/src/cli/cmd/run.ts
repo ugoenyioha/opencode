@@ -710,7 +710,7 @@ export const RunCommand = cmd({
           variant: args.variant,
         })
       } else {
-        const model = args.model ? Provider.parseModel(args.model) : undefined
+        const model = args.model ? Provider.parseModel(await Provider.resolveModel(args.model)) : undefined
         await sdk.session.prompt({
           sessionID,
           agent,
@@ -727,11 +727,10 @@ export const RunCommand = cmd({
     }
 
     await bootstrap(process.cwd(), async () => {
-      const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
-        const request = new Request(input, init)
-        return Server.App().fetch(request)
-      }) as typeof globalThis.fetch
-      const sdk = createOpencodeClient({ baseUrl: "http://opencode.internal", fetch: fetchFn })
+      const sdk = createOpencodeClient({
+        baseUrl: "http://opencode.internal",
+        fetch: Server.internalFetch as typeof globalThis.fetch,
+      })
       await execute(sdk)
     })
   },

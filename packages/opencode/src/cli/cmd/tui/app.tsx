@@ -328,26 +328,28 @@ function App() {
 
   const args = useArgs()
   onMount(() => {
-    batch(() => {
-      if (args.agent) local.agent.set(args.agent)
-      if (args.model) {
-        const { providerID, modelID } = Provider.parseModel(args.model)
-        if (!providerID || !modelID)
-          return toast.show({
-            variant: "warning",
-            message: `Invalid model format: ${args.model}`,
-            duration: 3000,
+    void (async () => {
+      batch(() => {
+        if (args.agent) local.agent.set(args.agent)
+        if (args.sessionID && !args.fork) {
+          route.navigate({
+            type: "session",
+            sessionID: args.sessionID,
           })
-        local.model.set({ providerID, modelID }, { recent: true })
-      }
-      // Handle --session without --fork immediately (fork is handled in createEffect below)
-      if (args.sessionID && !args.fork) {
-        route.navigate({
-          type: "session",
-          sessionID: args.sessionID,
+        }
+      })
+      if (!args.model) return
+      const { providerID, modelID } = Provider.parseModel(await Provider.resolveModel(args.model))
+      if (!providerID || !modelID) {
+        toast.show({
+          variant: "warning",
+          message: `Invalid model format: ${args.model}`,
+          duration: 3000,
         })
+        return
       }
-    })
+      local.model.set({ providerID, modelID }, { recent: true })
+    })()
   })
 
   let continued = false

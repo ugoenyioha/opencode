@@ -98,6 +98,17 @@ async function scanDir(rulesDir: string): Promise<RuleFile[]> {
   return rules
 }
 
+function modified(filepath: string) {
+  const value = Filesystem.stat(filepath)?.mtimeMs
+  if (typeof value === "bigint") return Number(value)
+  return value
+}
+
+function header(filepath: string, mtime?: number) {
+  if (!mtime) return "Instructions from: " + filepath
+  return `Instructions from: ${filepath}\nLast modified: ${new Date(mtime).toISOString()}`
+}
+
 async function scanRules(): Promise<RuleFile[]> {
   const rules: RuleFile[] = []
 
@@ -215,7 +226,7 @@ export namespace InstructionPrompt {
       if (!content) return ""
       const sanitizedPath = sanitizeFilePath(p)
       const sanitizedContent = stripInvisibleUnicode(content)
-      return "Instructions from: " + sanitizedPath + "\n" + sanitizedContent
+      return header(sanitizedPath, await modified(p)) + "\n" + sanitizedContent
     })
 
     const urls: string[] = []
@@ -238,9 +249,12 @@ export namespace InstructionPrompt {
     const rules = await getRules()
     const ruleContents = rules
       .filter((r) => r.paths.length === 0)
-      .map((r) => "Instructions from: " + sanitizeFilePath(r.filepath) + "\n" + stripInvisibleUnicode(r.content))
+      .map(
+        async (r) =>
+          header(sanitizeFilePath(r.filepath), await modified(r.filepath)) + "\n" + stripInvisibleUnicode(r.content),
+      )
 
-    return Promise.all([...files, ...fetches]).then((result) => [...result.filter(Boolean), ...ruleContents])
+    return Promise.all([...files, ...fetches, ...ruleContents]).then((result) => result.filter(Boolean))
   }
 
   export function loaded(messages: MessageV2.WithParts[]) {
@@ -286,7 +300,10 @@ export namespace InstructionPrompt {
           // G7 Security Fix: Sanitize file paths and content
           const sanitizedPath = sanitizeFilePath(found)
           const sanitizedContent = stripInvisibleUnicode(content)
-          results.push({ filepath: found, content: "Instructions from: " + sanitizedPath + "\n" + sanitizedContent })
+          results.push({
+            filepath: found,
+            content: header(sanitizedPath, await modified(found)) + "\n" + sanitizedContent,
+          })
         }
       }
       current = path.dirname(current)
@@ -315,7 +332,7 @@ export namespace InstructionPrompt {
         const sanitizedContent = stripInvisibleUnicode(rule.content)
         results.push({
           filepath: rule.filepath,
-          content: "Instructions from: " + sanitizedPath + "\n" + sanitizedContent,
+          content: header(sanitizedPath, await modified(rule.filepath)) + "\n" + sanitizedContent,
         })
       }
     }

@@ -79,7 +79,6 @@ export namespace ToolRegistry {
     const custom = [] as Tool.Info[]
 
     const files = await Config.directories().then((dirs) => {
-      console.log("[DEBUG] ToolRegistry scanning dirs", { dirs, instanceDir: Instance.directory })
       return dirs.flatMap((dir) =>
         Glob.scanSync("{tool,tools}/*.{js,ts,wasm}", { cwd: dir, absolute: true, dot: true, symlink: true }),
       )
@@ -87,28 +86,28 @@ export namespace ToolRegistry {
     if (files.length) await Config.waitForDependencies()
     for (const match of files.filter((file) => file.endsWith(".wasm"))) {
       const name = path.basename(match, path.extname(match))
-      console.log("[DEBUG] found wasm tool", { name, match })
       custom.push(fromWasm(name, match))
     }
     for (const match of files.filter((file) => !file.endsWith(".wasm"))) {
       const namespace = path.basename(match, path.extname(match))
       const mod = await import(pathToFileURL(match).href)
       for (const [id, def] of Object.entries<ToolDefinition>(mod)) {
-        custom.push(fromPlugin(id === "default" ? namespace : `${namespace}_${id}`, def))
+        custom.push(fromPlugin(id === "default" ? namespace : `${namespace}_${id}`, def, "tool"))
       }
     }
 
-    const plugins = await Plugin.list()
-    for (const plugin of plugins) {
+    const plugins = await Plugin.listWithSource()
+    for (const item of plugins) {
+      const plugin = item.hook
       for (const [id, def] of Object.entries(plugin.tool ?? {})) {
-        custom.push(fromPlugin(id, def))
+        custom.push(fromPlugin(id, def, item.source === "external" ? "plugin" : "built-in"))
       }
     }
 
     return { custom }
   })
 
-  function fromPlugin(id: string, def: ToolDefinition): Tool.Info {
+  function fromPlugin(id: string, def: ToolDefinition, source: string): Tool.Info {
     return {
       id,
       init: async (initCtx) => ({
@@ -122,6 +121,16 @@ export namespace ToolRegistry {
             ...ctx,
             directory: Instance.directory,
             worktree: Instance.worktree,
+            ask(input: any) {
+              return ctx.ask({
+                ...input,
+                metadata: {
+                  ...(input.metadata ?? {}),
+                  source,
+                  name: id,
+                },
+              })
+            },
             metadata(input: { title?: string; metadata?: Record<string, any> }) {
               if (input.title !== undefined) pluginTitle = input.title
               if (input.metadata) pluginMetadata = { ...pluginMetadata, ...input.metadata }

@@ -1280,7 +1280,7 @@ export namespace ACP {
         .providers({ directory: session.cwd }, { throwOnError: true })
         .then((x) => x.data!.providers)
 
-      const selection = parseModelSelection(params.modelId, providers)
+      const selection = await parseModelSelection(params.modelId, providers)
       this.sessionManager.setModel(session.id, selection.model)
       this.sessionManager.setVariant(session.id, selection.variant)
 
@@ -1556,10 +1556,10 @@ export namespace ACP {
 
     const specified = await sdk.config
       .get({ directory }, { throwOnError: true })
-      .then((resp) => {
+      .then(async (resp) => {
         const cfg = resp.data
         if (!cfg || !cfg.model) return undefined
-        const parsed = Provider.parseModel(cfg.model)
+        const parsed = Provider.parseModel(await Provider.resolveModel(cfg.model))
         return {
           providerID: parsed.providerID,
           modelID: parsed.modelID,
@@ -1730,11 +1730,11 @@ export namespace ACP {
     }
   }
 
-  function parseModelSelection(
+  async function parseModelSelection(
     modelId: string,
     providers: Array<{ id: string; models: Record<string, { variants?: Record<string, any> }> }>,
-  ): { model: { providerID: string; modelID: string }; variant?: string } {
-    const parsed = Provider.parseModel(modelId)
+  ): Promise<{ model: { providerID: string; modelID: string }; variant?: string }> {
+    const parsed = Provider.parseModel(await Provider.resolveModel(modelId))
     const provider = providers.find((p) => p.id === parsed.providerID)
     if (!provider) {
       return { model: parsed, variant: undefined }

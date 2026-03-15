@@ -1342,6 +1342,11 @@ export namespace Provider {
     }
   }
 
+  export async function resolveModel(model: string) {
+    const cfg = await Config.get()
+    return cfg.modelOverrides?.[model] ?? model
+  }
+
   export const ModelNotFoundError = NamedError.create(
     "ProviderModelNotFoundError",
     z.object({
