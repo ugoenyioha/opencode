@@ -912,17 +912,11 @@ export namespace SessionPrompt {
       })
     }
 
-    const activeTools = new Set<string>()
+    const activeTools = SessionCompaction.discovered(input.messages)
     for (const msg of input.messages) {
       for (const part of msg.parts) {
         if (part.type !== "tool") continue
         activeTools.add(part.tool)
-        if (part.tool !== "tool_search" || part.state.status !== "completed") continue
-        const discoveredTools = part.state.metadata?.discoveredTools
-        if (!Array.isArray(discoveredTools)) continue
-        for (const id of discoveredTools) {
-          if (typeof id === "string") activeTools.add(id)
-        }
       }
     }
 
@@ -1005,15 +999,34 @@ export namespace SessionPrompt {
                   }))
 
             const limited = matches.slice(0, max)
+            const pending = await MCP.status().then((items) => {
+              return Object.entries(items)
+                .filter(([, item]) => item.status !== "connected" && item.status !== "disabled")
+                .map(([name]) => name)
+            })
             const output = [
-              ...limited.map((match) => `- ${match.name}: ${match.description || "(no description)"}`),
+              ...(limited.length
+                ? [
+                    "These tools are now available to call directly by exact name:",
+                    ...limited.map(
+                      (match) =>
+                        `<tool_reference name="${match.name}">${match.description || "(no description)"}</tool_reference>`,
+                    ),
+                    ...limited.map((match) => `- ${match.name}: ${match.description || "(no description)"}`),
+                  ]
+                : []),
               ...(matches.length > max
                 ? [`(Showing ${max} of ${matches.length} matches. Please refine your search query to see others.)`]
+                : []),
+              ...(matches.length === 0 && pending.length > 0
+                ? [
+                    `Some MCP servers are not currently connected: ${pending.join(", ")}. Their tools may become available shortly — try searching again.`,
+                  ]
                 : []),
             ].join("\n")
             const result = {
               title: "Deferred MCP tools",
-              metadata: { discoveredTools: limited.map((match) => match.name) },
+              metadata: { discoveredTools: limited.map((match) => match.name), pendingServers: pending },
               output: output || "No deferred tools matched your query.",
             }
 

@@ -79,7 +79,9 @@ export const SessionTaskUpdateTool = Tool.define("session_task_update", {
   description: DESCRIPTION_UPDATE,
   parameters: z.object({
     id: z.string().max(64).describe("ID of the task to update"),
-    status: Todo.SettableStatus.optional().describe("New status: pending, in_progress, completed, cancelled"),
+    status: Todo.SettableStatus.or(z.literal("deleted"))
+      .optional()
+      .describe("New status: pending, in_progress, completed, cancelled, deleted"),
     content: z.string().max(2000).optional().describe("Updated task description"),
     priority: Todo.Priority.optional().describe("Updated priority: high, medium, low"),
     depends_on: z.array(z.string()).max(50).optional().describe("Updated dependency list"),
@@ -92,6 +94,18 @@ export const SessionTaskUpdateTool = Tool.define("session_task_update", {
       metadata: {},
     })
 
+    if (params.status === "deleted") {
+      await Todo.deleteTask({
+        sessionID: ctx.sessionID,
+        id: params.id,
+      })
+      return {
+        title: `Deleted task ${params.id}`,
+        output: `Task ${params.id} deleted.`,
+        metadata: { deleted: true, id: params.id } as Record<string, unknown>,
+      }
+    }
+
     const task = await Todo.updateTask({
       sessionID: ctx.sessionID,
       id: params.id,
@@ -103,7 +117,7 @@ export const SessionTaskUpdateTool = Tool.define("session_task_update", {
     return {
       title: `Updated task ${task.id}`,
       output: JSON.stringify(task, null, 2),
-      metadata: { task },
+      metadata: { deleted: false, id: task.id, task } as Record<string, unknown>,
     }
   },
 })

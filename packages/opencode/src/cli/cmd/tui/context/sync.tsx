@@ -40,7 +40,7 @@ type ElicitationRequest = {
   sessionID: string
   requestID: string
   tool: string
-  prompt: string
+  prompt: unknown
 }
 
 export const { use: useSync, provider: SyncProvider } = createSimpleContext({

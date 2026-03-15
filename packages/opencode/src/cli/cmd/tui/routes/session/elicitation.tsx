@@ -10,7 +10,7 @@ import { useDialog } from "../../ui/dialog"
 type ElicitationRequest = {
   sessionID: string
   requestID: string
-  prompt: string
+  prompt: unknown
 }
 
 export function ElicitationPrompt(props: { request: ElicitationRequest }) {
@@ -21,12 +21,43 @@ export function ElicitationPrompt(props: { request: ElicitationRequest }) {
   const dialog = useDialog()
   let input: TextareaRenderable
 
+  const payload = () => {
+    const text = input.plainText
+    if (typeof props.request.prompt === "object" && props.request.prompt) {
+      try {
+        return JSON.stringify({ data: JSON.parse(text) })
+      } catch {}
+    }
+    return JSON.stringify({ text })
+  }
+
   const reply = () =>
     sdk.fetch(`${sdk.url}/session/${props.request.sessionID}/elicitation/${props.request.requestID}/reply`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: input.plainText }),
+      body: payload(),
     })
+
+  const text = () => {
+    if (typeof props.request.prompt === "string") return props.request.prompt
+    if (!props.request.prompt || typeof props.request.prompt !== "object") return String(props.request.prompt ?? "")
+    const item = props.request.prompt as {
+      message?: string
+      url?: string
+      fields?: { name?: string; label?: string; type?: string; required?: boolean }[]
+    }
+    return [
+      item.message,
+      item.url ? `URL: ${item.url}` : undefined,
+      ...(item.fields ?? []).map((field) => {
+        const head = field.label || field.name || "field"
+        const meta = [field.type, field.required ? "required" : undefined].filter(Boolean).join(", ")
+        return meta ? `- ${head} (${meta})` : `- ${head}`
+      }),
+    ]
+      .filter(Boolean)
+      .join("\n")
+  }
 
   const reject = () =>
     sdk.fetch(`${sdk.url}/session/${props.request.sessionID}/elicitation/${props.request.requestID}/reject`, {
@@ -61,7 +92,7 @@ export function ElicitationPrompt(props: { request: ElicitationRequest }) {
           <text fg={theme.text}>MCP input required</text>
         </box>
         <box paddingLeft={1} border={["left"]} borderColor={theme.borderActive}>
-          <text fg={theme.textMuted}>{props.request.prompt}</text>
+          <text fg={theme.textMuted}>{text()}</text>
         </box>
       </box>
       <box

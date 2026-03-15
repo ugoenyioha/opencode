@@ -363,6 +363,33 @@ export interface Hooks {
     input: { sessionID: string },
     output: { context: string[]; prompt?: string },
   ) => Promise<void>
+  "experimental.session.compacted"?: (
+    input: { sessionID: string },
+    output: { summary: string; messageID: string },
+  ) => Promise<void>
+  "mcp.elicitation"?: (
+    input: {
+      sessionID: string
+      requestID: string
+      tool: string
+      prompt: unknown
+    },
+    output: {
+      response?: { text?: string; data?: Record<string, unknown> }
+      reject?: boolean
+    },
+  ) => Promise<void>
+  "mcp.elicitation.result"?: (
+    input: {
+      sessionID: string
+      requestID: string
+      tool: string
+      prompt: unknown
+    },
+    output: {
+      response: { text?: string; data?: Record<string, unknown> }
+    },
+  ) => Promise<void>
   "experimental.text.complete"?: (
     input: { sessionID: string; messageID: string; partID: string },
     output: { text: string },

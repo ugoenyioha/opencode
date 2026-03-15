@@ -203,6 +203,7 @@ export namespace MessageV2 {
     instructions: z.string().optional(),
     boundaryMessageID: z.string().optional(),
     overflow: z.boolean().optional(),
+    discoveredTools: z.array(z.string()).optional(),
   }).meta({
     ref: "CompactionPart",
   })

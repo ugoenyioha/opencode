@@ -52,6 +52,27 @@ export namespace SessionCompaction {
 
   const PRUNE_PROTECTED_TOOLS = ["skill"]
 
+  export function discovered(messages: MessageV2.WithParts[]) {
+    const ids = new Set<string>()
+    for (const msg of messages) {
+      for (const part of msg.parts) {
+        if (part.type === "tool" && part.tool === "tool_search" && part.state.status === "completed") {
+          const discoveredTools = part.state.metadata?.discoveredTools
+          if (!Array.isArray(discoveredTools)) continue
+          for (const id of discoveredTools) {
+            if (typeof id === "string") ids.add(id)
+          }
+        }
+        if (part.type === "compaction" && Array.isArray(part.discoveredTools)) {
+          for (const id of part.discoveredTools) {
+            if (typeof id === "string") ids.add(id)
+          }
+        }
+      }
+    }
+    return ids
+  }
+
   // goes backwards through parts until there are 40_000 tokens worth of tool
   // calls. then erases output of previous tool calls. idea is to throw away old
   // tool calls that are no longer relevant.
@@ -316,6 +337,19 @@ When constructing the summary, try to stick to this template:
       }
     }
     if (processor.message.error) return "stop"
+    const summary = await Session.messages({ sessionID: input.sessionID }).then((messages) => {
+      const msg = messages.find((item) => item.info.id === processor.message.id)
+      if (!msg) return ""
+      return msg.parts
+        .filter((part): part is MessageV2.TextPart => part.type === "text")
+        .map((part) => part.text)
+        .join("\n\n")
+    })
+    await Plugin.trigger(
+      "experimental.session.compacted",
+      { sessionID: input.sessionID },
+      { summary, messageID: processor.message.id },
+    )
     Bus.publish(Event.Compacted, { sessionID: input.sessionID })
     return "continue"
   }
@@ -330,6 +364,7 @@ When constructing the summary, try to stick to this template:
       }),
       auto: z.boolean(),
       overflow: z.boolean().optional(),
+      discoveredTools: z.array(z.string()).optional(),
     }),
     async (input) => {
       const msg = await Session.updateMessage({
@@ -349,6 +384,7 @@ When constructing the summary, try to stick to this template:
         type: "compaction",
         auto: input.auto,
         overflow: input.overflow,
+        discoveredTools: input.discoveredTools,
       })
     },
   )

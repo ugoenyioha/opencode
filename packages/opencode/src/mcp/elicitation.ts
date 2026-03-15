@@ -7,18 +7,47 @@ import z from "zod"
 export namespace McpElicitation {
   const TIMEOUT = 5 * 60 * 1000
 
+  const Field = z
+    .object({
+      name: z.string(),
+      label: z.string().optional(),
+      type: z.string().optional(),
+      required: z.boolean().optional(),
+      placeholder: z.string().optional(),
+      options: z.array(z.string()).optional(),
+    })
+    .passthrough()
+
+  export const Prompt = z.union([
+    z.string(),
+    z
+      .object({
+        type: z.string().optional(),
+        message: z.string().optional(),
+        url: z.string().optional(),
+        fields: z.array(Field).optional(),
+      })
+      .passthrough(),
+  ])
+  export type Prompt = z.infer<typeof Prompt>
+
   export const Request = z.object({
     sessionID: z.string(),
     requestID: z.string(),
     tool: z.string(),
-    prompt: z.string(),
+    prompt: Prompt,
   })
   export type Request = z.infer<typeof Request>
 
-  export const Reply = z.object({
-    requestID: z.string(),
-    text: z.string(),
-  })
+  export const Reply = z
+    .object({
+      requestID: z.string(),
+      text: z.string().optional(),
+      data: z.record(z.string(), z.unknown()).optional(),
+    })
+    .refine((input) => input.text !== undefined || input.data !== undefined, {
+      message: "Reply requires text or data.",
+    })
   export type Reply = z.infer<typeof Reply>
 
   export const Reject = z.object({
@@ -34,6 +63,7 @@ export namespace McpElicitation {
         sessionID: z.string(),
         requestID: z.string(),
         text: z.string().optional(),
+        data: z.record(z.string(), z.unknown()).optional(),
       }),
     ),
     Rejected: BusEvent.define(
@@ -107,6 +137,7 @@ export namespace McpElicitation {
       sessionID: item.request.sessionID,
       requestID: input.requestID,
       text: input.text,
+      data: input.data,
     })
     item.resolve(input)
   })

@@ -1,7 +1,7 @@
 Update the status or details of a single task in your session task list.
 
 - Provide the `id` of the task to update.
-- Set `status` to one of: "pending", "in_progress", "completed", "cancelled".
+- Set `status` to one of: "pending", "in_progress", "completed", "cancelled", "deleted".
   - Do NOT set status to "blocked" manually — it is set automatically when dependencies are unresolved.
 - Optionally update `content`, `priority`, or `depends_on`.
 
@@ -10,3 +10,4 @@ Guidelines:
 - Mark tasks "completed" IMMEDIATELY after finishing — do not batch completions.
 - When a task is completed, any tasks that depend on it are automatically unblocked.
 - Cancel tasks that become irrelevant.
+- Use "deleted" to remove tasks entirely when they should no longer remain in the list.

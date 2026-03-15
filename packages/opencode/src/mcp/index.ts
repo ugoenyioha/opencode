@@ -24,6 +24,7 @@ import { Bus } from "@/bus"
 import { TuiEvent } from "@/cli/cmd/tui/event"
 import open from "open"
 import { McpElicitation } from "./elicitation"
+import { Plugin } from "@/plugin"
 
 export namespace MCP {
   const log = Log.create({ service: "mcp" })
@@ -158,18 +159,29 @@ export namespace MCP {
             if (!match) throw error
             tries += 1
             if (tries > 3) throw new Error(`MCP elicitation retry limit reached for tool ${mcpTool.name}`)
-            const response = await McpElicitation.ask(
-              {
-                sessionID,
-                requestID: crypto.randomUUID(),
-                tool: mcpTool.name,
-                prompt: match,
-              },
-              opts.abortSignal,
-            )
+            const request = {
+              sessionID,
+              requestID: crypto.randomUUID(),
+              tool: mcpTool.name,
+              prompt: match,
+            }
+            const hook = await Plugin.trigger("mcp.elicitation", request, {
+              response: undefined as { text?: string; data?: Record<string, unknown> } | undefined,
+              reject: false,
+            })
+            if (hook.reject) throw new McpElicitation.RejectedError()
+            const response =
+              hook.response ??
+              (await McpElicitation.ask(request, opts.abortSignal).then((item) => ({
+                text: item.text,
+                data: item.data,
+              })))
+            const result = await Plugin.trigger("mcp.elicitation.result", request, { response })
+            const reply = result.response ?? response ?? {}
             body = {
               ...body,
-              text: response.text,
+              ...(reply.data ?? {}),
+              ...(reply.text !== undefined ? { text: reply.text } : {}),
             }
           }
         }
@@ -180,7 +192,7 @@ export namespace MCP {
   /** @internal Exported for testing */
   export const tool = convertMcpTool
 
-  function parseElicitation(error: unknown) {
+  function parseElicitation(error: unknown): McpElicitation.Prompt | undefined {
     if (!error || typeof error !== "object") return
     if (!("code" in error) || (error as { code?: number }).code !== -32042) return
     if (!("data" in error)) return
@@ -190,9 +202,10 @@ export namespace MCP {
     const list = (data as { elicitations?: unknown }).elicitations
     if (!Array.isArray(list) || !list.length) return
     const first = list[0]
+    if (typeof first === "string") return first
     if (!first || typeof first !== "object") return
-    if (!("message" in first) || typeof first.message !== "string") return
-    return first.message
+    if ("message" in first && typeof first.message === "string") return first as McpElicitation.Prompt
+    if ("url" in first || "fields" in first) return first as McpElicitation.Prompt
   }
 
   // Store transports for OAuth servers to allow finishing auth

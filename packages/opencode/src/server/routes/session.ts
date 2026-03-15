@@ -1045,9 +1045,12 @@ export const SessionRoutes = lazy(() =>
       ),
       validator(
         "json",
-        z.object({
-          text: z.string(),
-        }),
+        z
+          .object({
+            text: z.string().optional(),
+            data: z.record(z.string(), z.unknown()).optional(),
+          })
+          .refine((input) => input.text !== undefined || input.data !== undefined),
       ),
       async (c) => {
         const params = c.req.valid("param")
@@ -1055,6 +1058,7 @@ export const SessionRoutes = lazy(() =>
         await McpElicitation.reply({
           requestID: params.requestID,
           text: body.text,
+          data: body.data,
         })
         return c.json(true)
       },

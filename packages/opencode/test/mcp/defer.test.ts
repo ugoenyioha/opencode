@@ -104,4 +104,61 @@ describe("MCP Deferred Tool Loading", () => {
       },
     })
   })
+
+  test("keeps discovered tools active after compaction", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const { jsonSchema } = await import("ai")
+
+        const mockTools: Record<string, any> = {}
+        for (let i = 0; i < 25; i++) {
+          mockTools[`mcp_tool_${i}`] = {
+            description: `Test tool ${i}`,
+            parameters: jsonSchema({ type: "object", properties: {} }),
+            execute: async () => `Result ${i}`,
+          }
+        }
+
+        spyOn(MCP, "tools").mockResolvedValue(mockTools)
+
+        const originalThreshold = Flag.OPENCODE_MCP_DEFER_THRESHOLD
+        try {
+          ;(Flag as any).OPENCODE_MCP_DEFER_THRESHOLD = 20
+
+          const tools = await SessionPrompt.resolveTools({
+            messages: [
+              {
+                info: { id: "msg_1", role: "user" },
+                parts: [
+                  {
+                    id: "part_1",
+                    sessionID: "ses_1234",
+                    messageID: "msg_1",
+                    type: "compaction",
+                    auto: true,
+                    discoveredTools: ["mcp_tool_5"],
+                  },
+                ],
+              },
+            ] as any,
+            agent: {
+              permission: [{ permission: "*", action: "allow", pattern: "*" }],
+            } as any,
+            model: { api: { id: "test" }, providerID: "test" } as any,
+            session: { id: "ses_1234" } as any,
+            processor: { message: { id: "msg_2" } } as any,
+            bypassAgentCheck: true,
+          })
+
+          const names = Object.keys(tools).filter((name) => name.startsWith("mcp_") || name === "tool_search")
+          expect(names).toContain("tool_search")
+          expect(names).toContain("mcp_tool_5")
+        } finally {
+          ;(Flag as any).OPENCODE_MCP_DEFER_THRESHOLD = originalThreshold
+        }
+      },
+    })
+  })
 })
