@@ -1965,6 +1965,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     return next.length > 80 ? next.slice(0, 77) + "..." : next
   }
 
+  function messageError(msg?: MessageV2.WithParts) {
+    const err = msg?.info.role === "assistant" ? msg.info.error : undefined
+    if (!err) return
+    return (err.data as { message?: string } | undefined)?.message || err.name
+  }
+
   async function idle(sessionID: string) {
     while (SessionStatus.get(sessionID).type !== "idle") {
       await Bun.sleep(50)
@@ -2046,7 +2052,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         if (state.type === "retry") return `- ${child.title} (\`${child.id}\`) - retry ${state.attempt}`
         const msgs = await Session.messages({ sessionID: child.id, limit: 3 })
         const assistant = msgs.find((msg) => msg.info.role === "assistant")
-        const value = assistant ? text(assistant.parts) || "completed" : "idle"
+        const value = assistant
+          ? messageError(assistant)
+            ? `failed: ${messageError(assistant)}`
+            : text(assistant.parts) || "completed"
+          : "idle"
         return `- ${child.title} (\`${child.id}\`) - ${value}`
       }),
     )
@@ -2123,7 +2133,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       .then((result) =>
         update({
           part: note.parts[0] as MessageV2.TextPart,
-          text: `Child session \`${child.id}\` completed.\n\n${text(result.parts) || "(no text output)"}`,
+          text: messageError(result)
+            ? `Child session \`${child.id}\` failed: ${messageError(result)}`
+            : `Child session \`${child.id}\` completed.\n\n${text(result.parts) || "(no text output)"}`,
           wait: true,
         }),
       )

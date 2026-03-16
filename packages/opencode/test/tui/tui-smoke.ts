@@ -69,6 +69,10 @@ await fs.writeFile(path.join(testProject, ".gitkeep"), "")
 Bun.spawnSync(["git", "add", "."], { cwd: testProject })
 Bun.spawnSync(["git", "commit", "-m", "init", "--allow-empty"], { cwd: testProject })
 
+// Trust the test workspace so the TUI can boot into the real app instead of the trust gate
+const entryPoint = new URL("../../src/index.ts", import.meta.url).pathname
+const opencodeRoot = new URL("../../", import.meta.url).pathname
+
 // Write a minimal opencode.json config (no API keys — those go via env vars)
 const configDir = path.join(sandbox, "config", "opencode")
 await fs.mkdir(configDir, { recursive: true })
@@ -81,6 +85,7 @@ await fs.writeFile(path.join(cacheDir, "version"), "14")
 
 const baseEnv: Record<string, string> = {
   OPENCODE_TEST_HOME: testHome,
+  OPENCODE_SERVER_PASSWORD: "test-password",
   XDG_DATA_HOME: path.join(sandbox, "share"),
   XDG_CACHE_HOME: path.join(sandbox, "cache"),
   XDG_CONFIG_HOME: path.join(sandbox, "config"),
@@ -89,6 +94,18 @@ const baseEnv: Record<string, string> = {
   ANTHROPIC_API_KEY: "sk-test-dummy-key-for-tui-smoke",
   // Models path for deterministic model list
   OPENCODE_MODELS_PATH: path.join(import.meta.dir, "..", "tool", "fixtures", "models-api.json"),
+}
+
+const trust = Bun.spawnSync(["bun", "run", entryPoint, "trust"], {
+  cwd: testProject,
+  env: {
+    ...process.env,
+    ...baseEnv,
+  },
+})
+if (trust.exitCode !== 0) {
+  console.error("Failed to trust TUI smoke project:", trust.stderr.toString() || trust.stdout.toString())
+  process.exit(1)
 }
 
 // ============================================================
@@ -340,6 +357,30 @@ await test("/memory command appears in command palette", async () => {
   }
 })
 
+// ---------- Test 9b: /btw command appears in command palette ----------
+await test("/btw command appears in command palette", async () => {
+  const tui = await TuiHarness.spawn({
+    cwd: testProject,
+    env: baseEnv,
+    spawnTimeout: 15000,
+  })
+
+  try {
+    await tui.settle(3000)
+    tui.sendCtrl("k")
+    await tui.settle(1500)
+    tui.write("btw")
+    await tui.settle(500)
+    const text = tui.text.toLowerCase()
+    assert(
+      text.includes("btw") || text.includes("by the way"),
+      `Command palette should show 'btw'. Got: ${tui.text.slice(-800)}`,
+    )
+  } finally {
+    tui.kill()
+  }
+})
+
 // ---------- Test 10: /memory dialog finishes loading and shows file list ----------
 await test("/memory dialog loads and shows file list (not stuck on loading)", async () => {
   const tui = await TuiHarness.spawn({
@@ -512,23 +553,14 @@ await test("Sidebar outer box has explicit width constraint and children sum cor
 
   // Drag handle is width={1}, content is width={width() - 2}, right border is width={1}
   // Total: 1 + (width()-2) + 1 = width()
-  assert(
-    sidebarSrc.includes("width={width() - 2}"),
-    "Sidebar content panel should be width={width() - 2}",
-  )
+  assert(sidebarSrc.includes("width={width() - 2}"), "Sidebar content panel should be width={width() - 2}")
 
   // Right border box must exist with width={1}, matching panel background
   const rightBorderComment = sidebarSrc.includes("Right border")
-  assert(
-    rightBorderComment,
-    "Sidebar must have a right border spacer box",
-  )
+  assert(rightBorderComment, "Sidebar must have a right border spacer box")
 
   // Outer box must have flexShrink={0} to prevent being compressed
-  assert(
-    sidebarSrc.includes("flexShrink={0}"),
-    "Sidebar outer box must have flexShrink={0}",
-  )
+  assert(sidebarSrc.includes("flexShrink={0}"), "Sidebar outer box must have flexShrink={0}")
 })
 
 // ---------- Test 15: Sidebar toggle command is registered ----------
@@ -560,8 +592,7 @@ await test("Sidebar does not auto-show at narrow width (100 cols)", async () => 
     // At narrow width, the footer (which is shown when sidebar is hidden)
     // should be visible instead
     // We don't want to see both Context + LSP sections which are sidebar-only
-    const hasSidebarSections =
-      text.includes("Context") && text.includes("LSP")
+    const hasSidebarSections = text.includes("Context") && text.includes("LSP")
     assert(!hasSidebarSections, `Sidebar should NOT auto-show at 100 cols. Got: ${text.slice(-1200)}`)
   } finally {
     tui.kill()

@@ -92,6 +92,9 @@ await fs.writeFile(path.join(testProject, ".gitkeep"), "")
 Bun.spawnSync(["git", "add", "."], { cwd: testProject })
 Bun.spawnSync(["git", "commit", "-m", "init"], { cwd: testProject })
 
+const entryPoint = new URL("../../src/index.ts", import.meta.url).pathname
+const opencodeRoot = new URL("../../", import.meta.url).pathname
+
 // Create sandbox dirs that mirror real structure
 const sandboxDataHome = path.join(sandbox, "share")
 const sandboxConfigHome = path.join(sandbox, "config")
@@ -133,6 +136,7 @@ await fs.writeFile(path.join(sandboxCacheHome, "opencode", "version"), "14")
 // Use real home (for ~/.claude.json metadata) but sandbox XDG dirs
 const baseEnv: Record<string, string> = {
   HOME: os.homedir(), // Real home for ~/.claude.json access
+  OPENCODE_SERVER_PASSWORD: "test-password",
   XDG_DATA_HOME: sandboxDataHome,
   XDG_CACHE_HOME: sandboxCacheHome,
   XDG_CONFIG_HOME: sandboxConfigHome,
@@ -143,6 +147,18 @@ const baseEnv: Record<string, string> = {
   OPENCODE_DISABLE_SHARE: "true",
   // Auto-approve ALL tool permissions so memory_save doesn't block on dialog
   OPENCODE_PERMISSION: JSON.stringify({ "*": "allow" }),
+}
+
+const trust = Bun.spawnSync(["bun", "run", entryPoint, "trust"], {
+  cwd: testProject,
+  env: {
+    ...process.env,
+    ...baseEnv,
+  },
+})
+if (trust.exitCode !== 0) {
+  console.error("Failed to trust TUI live project:", trust.stderr.toString() || trust.stdout.toString())
+  process.exit(1)
 }
 
 // ============================================================
@@ -445,6 +461,48 @@ await test("/memory from session shows memory file list", async () => {
       text.includes("create new") ||
       text.includes("memory") // fallback: at least the word "memory" should appear in the dialog
     assert(hasMemory, `Memory dialog should appear. Got: ${text.slice(-800)}`)
+  } finally {
+    tui.kill()
+  }
+})
+
+// ---------- Test 8b: /btw asks an ephemeral side question from session ----------
+await test("/btw from session answers without switching away from the main session", async () => {
+  const tui = await TuiHarness.spawn({
+    cwd: testProject,
+    env: baseEnv,
+    spawnTimeout: 20000,
+  })
+
+  try {
+    await tui.settle(4000)
+
+    // Create a session first
+    tui.write("reply with exactly: session ready")
+    tui.write("\r")
+    await tui.waitForText("session ready", 30000)
+    await tui.settle(1500)
+
+    // Trigger /btw via command palette so we exercise the real slash-command path
+    tui.sendCtrl("k")
+    await tui.settle(1500)
+    tui.write("/btw reply with exactly: side answer")
+    await tui.settle(500)
+    tui.write("\r")
+
+    // The ephemeral BTW dialog should show the prompt and then the answer
+    await tui.waitForText("/btw reply with exactly: side answer", 10000)
+    await tui.waitForText("side answer", 45000)
+    await tui.settle(1000)
+
+    // Dismiss the dialog and ensure the original session content is still visible
+    tui.write("\x1b")
+    await tui.settle(1500)
+    const text = tui.text.toLowerCase()
+    assert(
+      text.includes("session ready"),
+      `Main session should still be visible after /btw dismiss. Got: ${tui.text.slice(-800)}`,
+    )
   } finally {
     tui.kill()
   }
