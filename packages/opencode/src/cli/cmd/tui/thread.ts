@@ -14,6 +14,7 @@ import type { EventSource } from "./context/sdk"
 import { win32DisableProcessedInput, win32InstallCtrlCGuard } from "./win32"
 import { TuiConfig } from "@/config/tui"
 import { Instance } from "@/project/instance"
+import { Config } from "@/config/config"
 
 declare global {
   const OPENCODE_WORKER_PATH: string
@@ -167,7 +168,10 @@ export const TuiThreadCommand = cmd({
       const prompt = await input(args.prompt)
       const config = await Instance.provide({
         directory: cwd,
-        fn: () => TuiConfig.get(),
+        fn: async () => {
+          await Config.get()
+          return TuiConfig.get()
+        },
       })
 
       const network = await resolveNetworkOptions(args)
