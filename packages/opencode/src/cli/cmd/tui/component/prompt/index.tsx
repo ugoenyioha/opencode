@@ -610,15 +610,23 @@ export function Prompt(props: PromptProps) {
         firstLine.split(" ").slice(1).join(" ") + (firstLineEnd === -1 ? "" : "\n" + inputText.slice(firstLineEnd + 1))
       const question = args.trim()
       if (!question) {
-        toast.show({ message: "Usage: /btw <your question>", variant: "error" })
+        toast.show({
+          message: "Usage: /btw <question>, /btw background <task>, /btw todo <item>, or /btw status",
+          variant: "error",
+        })
         return
       }
-      input.extmarks.clear()
-      input.clear()
-      setStore("prompt", { input: "", parts: [] })
-      setStore("extmarkToPartIndex", new Map())
-      dialog.replace(() => <DialogBtw sessionID={props.sessionID!} question={question} />)
-      return
+      const first = question.split(/\s+/)[0]
+      if (!["background", "todo", "status"].includes(first)) {
+        input.extmarks.clear()
+        input.clear()
+        setStore("prompt", { input: "", parts: [] })
+        setStore("extmarkToPartIndex", new Map())
+        dialog.replace(() => (
+          <DialogBtw sessionID={props.sessionID!} question={question.replace(/^ask\s+/, "").trim()} />
+        ))
+        return
+      }
     }
 
     if (slash === "context") {

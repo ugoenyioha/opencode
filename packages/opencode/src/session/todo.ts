@@ -239,6 +239,30 @@ export namespace Todo {
     })
   }
 
+  export async function append(input: { sessionID: string; todo: Omit<Info, "id"> & { id?: string } }) {
+    return withLock(input.sessionID, async () => {
+      const list = await get(input.sessionID)
+      const id = input.todo.id ?? `btw-${list.filter((x) => x.id.startsWith("btw-")).length + 1}`
+      const next = [
+        ...list,
+        {
+          id,
+          content: input.todo.content,
+          status: input.todo.status,
+          priority: input.todo.priority,
+          ...(input.todo.depends_on ? { depends_on: input.todo.depends_on } : {}),
+        },
+      ]
+      if (hasCircularDeps(next)) {
+        log.warn("circular dependency detected in todo list", { sessionID: input.sessionID })
+      }
+      const resolved = resolveDependencies(next)
+      await Storage.write(["todo", input.sessionID], resolved)
+      Bus.publish(Event.Updated, { sessionID: input.sessionID, todos: resolved })
+      return resolved.find((x) => x.id === id)
+    })
+  }
+
   export async function get(sessionID: string) {
     return Storage.read<Info[]>(["todo", sessionID])
       .then((x) => x || [])

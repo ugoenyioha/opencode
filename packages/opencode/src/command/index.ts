@@ -60,6 +60,13 @@ export namespace Command {
     const cfg = await Config.get()
 
     const result: Record<string, Info> = {
+      btw: {
+        name: "btw",
+        description: "ask a quick side question, run background work, or append a todo",
+        source: "command",
+        template: "",
+        hints: [],
+      },
       [Default.INIT]: {
         name: Default.INIT,
         description: "create/update AGENTS.md",

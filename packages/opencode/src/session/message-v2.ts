@@ -624,7 +624,7 @@ export namespace MessageV2 {
           parts: [],
         }
         for (const part of msg.parts) {
-          if (part.type === "text" && part.text)
+          if (part.type === "text" && part.text && !part.synthetic)
             assistantMessage.parts.push({
               type: "text",
               text: part.text,
