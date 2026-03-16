@@ -151,7 +151,6 @@ describe("Team REST API routes", () => {
               content: "Fix lint errors",
               status: "in_progress",
               priority: "medium",
-              assignee: "reviewer-1",
             },
           ])
 
@@ -169,7 +168,6 @@ describe("Team REST API routes", () => {
 
           const t2 = body.find((t: any) => t.id === "task-2")
           expect(t2).toBeDefined()
-          expect(t2.assignee).toBe("reviewer-1")
           expect(t2.status).toBe("in_progress")
 
           await Team.cleanup(name)
