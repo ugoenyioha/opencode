@@ -1,0 +1,37 @@
+@startuml syscall-interposition
+!theme plain
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontSize 13
+skinparam rectangleBorderThickness 2
+skinparam ArrowThickness 2
+skinparam packageBorderThickness 2
+
+title Syscall Interposition: bwrap vs gVisor
+
+package "**bwrap / namespace** — Shared Kernel" as P1 #FFEAA7 {
+    rectangle "🤖 Agent" as A1 #74b9ff
+    rectangle "🐧 Linux Kernel\n//(shared with host)//" as K1 #ff7675
+    rectangle "💥 Kernel Exploit\n→ **ESCAPE**" as E1 #d63031
+
+    A1 -right-> K1 : syscall (SYS_mmap, ...)
+    K1 -right-> E1 : <color:red>CVE exploit</color>
+}
+
+package "**gVisor** — Syscall Interposition" as P2 #DFE6E9 {
+    rectangle "🤖 Agent" as A2 #74b9ff
+    rectangle "🛡️ gVisor Sentry\n//(Go process)//\nintercepts · emulates · rejects" as S2 #00b894
+    rectangle "🐧 Host Kernel\n//(filtered calls only)//" as K2 #b2bec3
+
+    A2 -right-> S2 : syscall (SYS_mmap, ...)
+    S2 -right-> K2 : <color:green>safe calls only</color>
+}
+
+P1 -[hidden]down- P2
+
+note bottom of P2
+  Even if a reverse shell starts inside gVisor:
+  • ""--network=none"" blocks all network access
+  • Sentry blocks kernel exploits from reaching the host
+end note
+
+@enduml

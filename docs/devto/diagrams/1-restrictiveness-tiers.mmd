@@ -1,0 +1,33 @@
+%%{init: {'theme': 'base', 'themeVariables': {'fontSize': '14px'}}}%%
+graph TB
+    subgraph lattice["Restrictiveness Lattice — Merge Always Moves Up"]
+        direction TB
+
+        AUTO["<b>auto</b> · level 5<br/><i>Most restrictive available</i>"]
+        FC["<b>firecracker</b> · level 4<br/><i>Hardware-isolated microVM</i>"]
+        GV["<b>gvisor</b> · level 3<br/><i>User-space kernel</i>"]
+        BW["<b>bwrap</b> · level 2<br/><i>Unprivileged namespace isolation</i>"]
+        SB["<b>seatbelt / namespace</b> · level 1<br/><i>Basic MAC / namespace</i>"]
+        NONE["<b>none</b> · level 0<br/><i>No isolation</i>"]
+
+        NONE --> SB --> BW --> GV --> FC --> AUTO
+    end
+
+    ROGUE["🚫 Rogue agent config<br/>requests <code>sandbox: none</code>"]
+    GLOBAL["🛡️ Global config<br/>sets <code>sandbox: bwrap</code>"]
+    RESULT["✅ Effective: <b>bwrap</b><br/><i>Global floor holds</i>"]
+
+    ROGUE -.->|"blocked"| NONE
+    GLOBAL -.->|"enforced"| BW
+    BW -.->|"lattice merge"| RESULT
+
+    style NONE fill:#ff6b6b,color:#fff,stroke:#c0392b
+    style SB fill:#ffa502,color:#fff,stroke:#e67e22
+    style BW fill:#ffd32a,color:#333,stroke:#f1c40f
+    style GV fill:#7bed9f,color:#333,stroke:#2ecc71
+    style FC fill:#2ed573,color:#fff,stroke:#27ae60
+    style AUTO fill:#70a1ff,color:#fff,stroke:#3498db
+    style ROGUE fill:#ff4757,color:#fff,stroke:#c0392b
+    style GLOBAL fill:#2ed573,color:#fff,stroke:#27ae60
+    style RESULT fill:#1e90ff,color:#fff,stroke:#2980b9
+    style lattice fill:#f8f9fa,stroke:#dee2e6

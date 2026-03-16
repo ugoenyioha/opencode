@@ -56,10 +56,11 @@ Full disclosure: OpenCode was on Mindgard's affected list too. We're not claimin
 
 ## The Technical Details
 
-For the implementation-level details — Linux namespace configuration, macOS Seatbelt profiles, WASM capability models, the AST shell parser, SSRF defenses, Promptfoo red-team integration — I've published two deep-dive articles:
+For the implementation-level details — Linux namespace configuration, macOS Seatbelt profiles, WASM capability models, the AST shell parser, SSRF defenses, Promptfoo red-team integration — I've published three deep-dive articles:
 
-- **Part 2: The Sandbox Architecture** — How we built OS-level isolation with defense in depth, and where the gaps still are
-- **Part 3: Testing the Sandbox** — How we used Promptfoo to run automated jailbreak evaluations against real LLMs
+- **[Part 2A: OS-Level Sandboxing — Kernel Isolation for AI Agents](https://dev.to/uenyioha/os-level-sandboxing-kernel-isolation-for-ai-agents-3fdg)** — Restrictiveness lattices, Bubblewrap, gVisor, Seatbelt, and the MCP server gap
+- **[Part 2B: Application-Layer Defense — Stopping Exfiltration Inside the Sandbox](https://dev.to/uenyioha/application-layer-defense-stopping-exfiltration-inside-the-sandbox-4l6c)** — Input sanitization, SSRF defense, phantom credential proxying, content-addressed trust, and WASM capability isolation
+- **Part 3: Testing the Sandbox** — How we used multi-model red teams and Promptfoo to run automated jailbreak evaluations against real LLMs _(coming soon)_
 
 These are dense, code-level documents written for the engineers on your team who will evaluate and implement these defenses.
 

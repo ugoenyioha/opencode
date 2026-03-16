@@ -1,0 +1,41 @@
+%%{init: {'theme': 'base', 'themeVariables': {'fontSize': '13px'}}}%%
+graph LR
+    subgraph sandbox["🔒 Sandbox"]
+        direction TB
+        AGENT["🤖 Agent Process"]
+        ENV["ENV:<br/><code>OPENAI_API_KEY = a3f7c9...random</code><br/><code>OPENAI_BASE_URL = http://127.0.0.1:4096/phantom/openai</code>"]
+        AGENT --- ENV
+    end
+
+    subgraph proxy["🛡️ Phantom Proxy<br/><i>(OpenCode supervisor)</i>"]
+        direction TB
+        V["1. Verify phantom token"]
+        S["2. Strip phantom token"]
+        I["3. Inject REAL credential<br/>from host env"]
+        V --> S --> I
+    end
+
+    subgraph upstream["☁️ Upstream API<br/><i>(e.g. OpenAI)</i>"]
+        API["Processes request<br/>normally"]
+    end
+
+    sandbox -->|"POST /v1/chat/completions<br/>Auth: Bearer <b>a3f7c9...random</b>"| proxy
+    proxy -->|"POST /v1/chat/completions<br/>Auth: Bearer <b>sk-prod-real-key-...</b>"| upstream
+
+    ATTACKER["🏴‍☠️ Attacker<br/>exfiltrates env vars"]
+    STOLEN["❌ Stolen token:<br/><code>a3f7c9...random</code><br/><i>Invalid outside local proxy</i><br/><i>Expires with session</i><br/><i>No relation to real key</i>"]
+
+    sandbox -.->|"exfil attempt"| ATTACKER
+    ATTACKER -.-> STOLEN
+
+    style sandbox fill:#e8f4fd,stroke:#3498db,stroke-width:2px
+    style proxy fill:#e8f8f5,stroke:#2ecc71,stroke-width:2px
+    style upstream fill:#f5f5f5,stroke:#95a5a6,stroke-width:2px
+    style AGENT fill:#74b9ff,color:#333
+    style ENV fill:#dfe6e9,color:#333,stroke:#b2bec3
+    style V fill:#a8e6cf,color:#333
+    style S fill:#a8e6cf,color:#333
+    style I fill:#a8e6cf,color:#333
+    style API fill:#dfe6e9,color:#333
+    style ATTACKER fill:#ff7675,color:#fff,stroke:#d63031
+    style STOLEN fill:#636e72,color:#fff,stroke:#2d3436

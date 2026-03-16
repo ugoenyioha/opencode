@@ -1,0 +1,26 @@
+%%{init: {'theme': 'base', 'themeVariables': {'fontSize': '13px'}}}%%
+graph LR
+    PLANT["1️⃣ Attacker plants<br/>adversarial dir name<br/><i>(invisible Unicode)</i>"]
+    READ["2️⃣ Agent reads<br/>directory listing"]
+    KPA["3️⃣ <b>KILL POINT A</b><br/>stripInvisibleUnicode<br/>strips payload"]
+    LLM["4️⃣ LLM processes<br/>sanitized context"]
+    KPB["5️⃣ <b>KILL POINT B</b><br/>SSRF defense blocks<br/>exfiltration URL"]
+    SAFE["6️⃣ Exfiltration<br/><b>BLOCKED</b>"]
+
+    PLANT --> READ --> KPA --> LLM --> KPB --> SAFE
+
+    FAIL["⚠️ If both kill points fail<br/>→ secrets exfiltrated"]
+
+    LLM -.->|"worst case"| FAIL
+
+    style PLANT fill:#ff7675,color:#fff,stroke:#d63031
+    style READ fill:#fdcb6e,color:#333,stroke:#f39c12
+    style KPA fill:#00b894,color:#fff,stroke:#00cec9
+    style LLM fill:#74b9ff,color:#333,stroke:#0984e3
+    style KPB fill:#00b894,color:#fff,stroke:#00cec9
+    style SAFE fill:#00b894,color:#fff,stroke:#00cec9
+    style FAIL fill:#636e72,color:#fff,stroke:#2d3436
+
+    linkStyle 2 stroke:#00b894,stroke-width:3px
+    linkStyle 4 stroke:#00b894,stroke-width:3px
+    linkStyle 5 stroke:#636e72,stroke-width:1px,stroke-dasharray:5

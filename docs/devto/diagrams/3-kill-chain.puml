@@ -1,0 +1,55 @@
+@startuml kill-chain
+!theme plain
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontSize 13
+skinparam rectangleBorderThickness 2
+skinparam ArrowThickness 2
+skinparam ActivityBorderThickness 2
+
+title Kiro Exfiltration Attack — Kill Chain with Two Defense Points
+
+|Attack Flow|
+
+start
+
+:1️⃣ Attacker plants adversarial
+directory name (invisible Unicode payload); <<#ff7675>>
+
+:2️⃣ Agent reads directory listing
+(payload is invisible to developer,
+visible to LLM); <<#fdcb6e>>
+
+:3️⃣ **KILL POINT A** ❌
+""stripInvisibleUnicode()""
+strips invisible Unicode, Bidi overrides,
+zero-width characters
+——
+//Payload defanged before LLM sees it//; <<#00b894>>
+
+:4️⃣ LLM processes sanitized context
+(if payload survived, LLM may
+compose exfiltration URL); <<#74b9ff>>
+
+if (Overt injection\nbypassed Kill Point A?) then (yes — worst case)
+    :⚠️ Agent composes URL with
+    stolen secrets as query params; <<#636e72>>
+
+    :5️⃣ **KILL POINT B** ❌
+    ""validateURLForSSRF()""
+    resolves DNS, checks IP denylist,
+    pins resolved IP
+    ——
+    + OS-level ""--unshare-net"" blocks bash; <<#00b894>>
+
+    :6️⃣ Exfiltration **BLOCKED**
+    (no network path to attacker); <<#00b894>>
+
+    stop
+else (no — payload stripped)
+    :Agent operates normally
+    on clean context; <<#00b894>>
+
+    stop
+endif
+
+@enduml

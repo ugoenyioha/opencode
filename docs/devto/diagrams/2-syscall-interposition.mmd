@@ -1,0 +1,30 @@
+%%{init: {'theme': 'base', 'themeVariables': {'fontSize': '14px'}}}%%
+graph LR
+    subgraph row1["<b>bwrap / namespace</b> — Shared Kernel"]
+        direction LR
+        A1["🤖 Agent"]
+        K1["🐧 Linux Kernel<br/><i>(shared with host)</i>"]
+        E1["💥 Kernel Exploit<br/>→ <b>ESCAPE</b>"]
+
+        A1 -->|"syscall<br/>(SYS_mmap, ...)"| K1
+        K1 -->|"CVE exploit"| E1
+    end
+
+    subgraph row2["<b>gVisor</b> — Syscall Interposition"]
+        direction LR
+        A2["🤖 Agent"]
+        S2["🛡️ gVisor Sentry<br/><i>(Go process)</i><br/>intercepts · emulates · rejects"]
+        K2["🐧 Host Kernel<br/><i>(filtered calls only)</i>"]
+
+        A2 -->|"syscall<br/>(SYS_mmap, ...)"| S2
+        S2 -->|"safe calls<br/>only"| K2
+    end
+
+    style A1 fill:#74b9ff,color:#333
+    style K1 fill:#ff7675,color:#fff,stroke:#d63031
+    style E1 fill:#d63031,color:#fff,stroke:#c0392b
+    style A2 fill:#74b9ff,color:#333
+    style S2 fill:#00b894,color:#fff,stroke:#00cec9
+    style K2 fill:#dfe6e9,color:#333,stroke:#b2bec3
+    style row1 fill:#ffeaa7,stroke:#fdcb6e
+    style row2 fill:#dfe6e9,stroke:#b2bec3

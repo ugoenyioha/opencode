@@ -1,0 +1,54 @@
+@startuml defense-composition
+!theme plain
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontSize 12
+skinparam rectangleBorderThickness 2
+skinparam ArrowThickness 2
+skinparam nodesep 10
+skinparam ranksep 20
+
+title Defense Composition: No Single Layer Stops Everything
+
+' Left side: defense layers as a stack
+rectangle "**Content-Addressed Trust** (G1, G3)\nBlocks: zero-click MCP, TOCTOU" as TRUST #70a1ff
+rectangle "**Input Sanitization** (G7)\nBlocks: invisible Unicode injection" as INPUT #a8e6cf
+rectangle "**Phantom Proxy**\nBlocks: HTTP credential exfiltration" as PROXY #a8e6cf
+rectangle "**SSRF Defense + Network Isolation** (G8)\nBlocks: DNS exfil, SSRF, metadata access" as SSRF #a8e6cf
+rectangle "**WASM Capability Isolation**\nBlocks: shell hijack, env read, binary planting" as WASMBOX #00b894
+rectangle "**OS Sandbox** (bwrap / gVisor / Seatbelt)\nBlocks: filesystem escape, network exfil via bash" as OS #ffd32a
+
+' Stack them
+OS -up-> SSRF : ""
+SSRF -up-> PROXY : ""
+PROXY -up-> INPUT : ""
+INPUT -up-> TRUST : ""
+WASMBOX -up[hidden]-> OS
+
+' Right side: attacks
+rectangle "Zero-click MCP autoload" as A1 #ff7675
+rectangle "TOCTOU trust persistence" as A2 #ff7675
+rectangle "Adversarial Unicode injection" as A3 #ff7675
+rectangle "HTTP credential exfiltration" as A4 #ff7675
+rectangle "DNS / SSRF exfiltration" as A5 #ff7675
+rectangle "Shell hijack / binary planting" as A6 #ff7675
+rectangle "Kernel exploit escape" as A7 #ff7675
+
+' Attack → blocked-by arrows
+A1 -left[#green,dashed]-> TRUST : blocked
+A2 -left[#green,dashed]-> TRUST : blocked
+A3 -left[#green,dashed]-> INPUT : blocked
+A4 -left[#green,dashed]-> PROXY : blocked
+A5 -left[#green,dashed]-> SSRF : blocked
+A6 -left[#green,dashed]-> WASMBOX : blocked
+A7 -left[#red,dashed]-> OS : <color:red>**NOT blocked**</color>\n<color:red>(needs gVisor/Firecracker)</color>
+
+' Position WASM alongside OS
+WASMBOX -right[hidden]-> A6
+
+note bottom of OS
+  **Key insight:** No single layer stops all 7 attacks.
+  Layers compose — each blocks a different category.
+  The kernel exploit gap requires hardware isolation (Firecracker).
+end note
+
+@enduml

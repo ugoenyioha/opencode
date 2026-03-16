@@ -1,0 +1,36 @@
+@startuml restrictiveness-tiers
+!theme plain
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontSize 13
+skinparam rectangleBorderThickness 2
+skinparam ArrowThickness 2
+
+title Restrictiveness Lattice — Merge Always Moves Up
+
+rectangle "**auto** · level 5\n//Most restrictive available//" as AUTO #70a1ff
+rectangle "**firecracker** · level 4\n//Hardware-isolated microVM//" as FC #2ed573
+rectangle "**gvisor** · level 3\n//User-space kernel//" as GV #7bed9f
+rectangle "**bwrap** · level 2\n//Unprivileged namespace isolation//" as BW #ffd32a
+rectangle "**seatbelt / namespace** · level 1\n//Basic MAC / namespace//" as SB #ffa502
+rectangle "**none** · level 0\n//No isolation//" as NONE #ff6b6b
+
+NONE -up-> SB : ""
+SB -up-> BW : ""
+BW -up-> GV : ""
+GV -up-> FC : ""
+FC -up-> AUTO : ""
+
+note right of AUTO
+  Arrow direction = merge direction.
+  **Agents can only escalate, never downgrade.**
+end note
+
+rectangle "🚫 Rogue agent config\nrequests ""sandbox: none""" as ROGUE #ff4757
+rectangle "🛡️ Global config\nsets ""sandbox: bwrap""" as GLOBAL #2ed573
+rectangle "✅ Effective: **bwrap**\n//Global floor holds//" as RESULT #1e90ff
+
+ROGUE -[#red,dashed]-> NONE : blocked
+GLOBAL -[#green,dashed]-> BW : enforced
+BW -[#blue,dashed]-> RESULT : lattice merge
+
+@enduml

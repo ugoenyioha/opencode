@@ -1,0 +1,44 @@
+@startuml wasm-before-after
+!theme plain
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontSize 14
+skinparam rectangleBorderThickness 2
+skinparam nodesep 15
+skinparam ranksep 15
+
+title Capability Access: Host Process vs WASM Module
+
+package "Host Process (TypeScript tool)" as HP #FFEAA7 {
+    rectangle "**process.env**\nAll vars visible" as HP1 #ff7675
+    rectangle "**fetch()**\nAny URL, any host" as HP2 #ff7675
+    rectangle "**fs.***\nEntire filesystem" as HP3 #ff7675
+    rectangle "**child_process**\nArbitrary commands" as HP4 #ff7675
+}
+
+package "WASM Module (Extism plugin)" as WM #DFE6E9 {
+    rectangle "**No env**\nAPI doesn't exist" as WM1 #00b894
+    rectangle "**allowedHosts: []**\nNo network by default" as WM2 #00b894
+    rectangle "**allowedPaths: []**\nNo filesystem by default" as WM3 #00b894
+    rectangle "**No shell**\nAPI doesn't exist" as WM4 #00b894
+}
+
+HP1 .[#999,dashed].> WM1 : <size:18>→</size>
+HP2 .[#999,dashed].> WM2 : <size:18>→</size>
+HP3 .[#999,dashed].> WM3 : <size:18>→</size>
+HP4 .[#999,dashed].> WM4 : <size:18>→</size>
+
+note right of HP
+  <color:red><size:14>**Opt-out model**</size></color>
+  Everything is available.
+  Must trust the tool not
+  to abuse access.
+end note
+
+note right of WM
+  <color:green><size:14>**Opt-in model**</size></color>
+  Nothing is available.
+  Each capability requires
+  an explicit grant.
+end note
+
+@enduml

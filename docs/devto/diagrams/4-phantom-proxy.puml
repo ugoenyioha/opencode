@@ -1,0 +1,62 @@
+@startuml phantom-proxy
+!theme plain
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontSize 13
+skinparam participantBorderThickness 2
+skinparam sequenceArrowThickness 2
+skinparam BoxPadding 10
+
+title Phantom Proxy — Credentials Never Touch the Sandbox
+
+box "🔒 Sandbox" #e8f4fd
+    participant "🤖 Agent" as Agent
+    note over Agent
+        ENV:
+        ""OPENAI_API_KEY = a3f7c9...random hex""
+        ""OPENAI_BASE_URL = http://127.0.0.1:4096/phantom/openai""
+    end note
+end box
+
+box "🛡️ OpenCode Supervisor" #e8f8f5
+    participant "Phantom\nProxy" as Proxy
+end box
+
+box "☁️ Upstream" #f5f5f5
+    participant "OpenAI API" as API
+end box
+
+actor "🏴‍☠️ Attacker" as Attacker #ff7675
+
+== Normal Request Flow ==
+
+Agent -> Proxy : POST /v1/chat/completions\nAuth: Bearer **a3f7c9...random**
+activate Proxy
+
+Proxy -> Proxy : 1. Verify phantom token (Map lookup)
+Proxy -> Proxy : 2. Strip phantom token from headers
+Proxy -> Proxy : 3. Inject **REAL** credential\n   from host environment
+
+Proxy -> API : POST /v1/chat/completions\nAuth: Bearer **sk-prod-real-key-...**
+activate API
+API --> Proxy : 200 OK (streamed response)
+deactivate API
+Proxy --> Agent : 200 OK (forwarded)
+deactivate Proxy
+
+== Exfiltration Attempt ==
+
+Agent -[#red,dashed]-> Attacker : exfiltrates env vars
+note right of Attacker #636e72
+    Stolen token: ""a3f7c9...random hex""
+    ❌ Invalid outside local proxy
+    ❌ Expires when session ends
+    ❌ No relationship to real key ""sk-prod-...""
+end note
+
+note over Proxy #e8f8f5
+    The **real credential** (""sk-prod-..."") only exists
+    in the supervisor process. It never enters the
+    sandbox's memory, environment, or process tree.
+end note
+
+@enduml

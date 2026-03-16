@@ -1,0 +1,33 @@
+@startuml wasm-capability
+!theme plain
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontSize 14
+skinparam rectangleBorderThickness 2
+
+skinparam map {
+    FontSize 14
+    BackgroundColor #FFFFFF
+    BorderThickness 2
+}
+
+title WASM Capability Model: Opt-In vs Opt-Out
+
+map "**Host Process** (TypeScript tool)" as host #FFEAA7 {
+    Environment => ❌ process.env — **all vars visible**
+    Network => ❌ fetch() — **unrestricted**
+    Filesystem => ❌ fs.* — **full read/write**
+    Shell => ❌ child_process — **full access**
+    Default => **Everything available.** Must be trusted.
+}
+
+map "**WASM Module** (Extism plugin)" as wasm #DFE6E9 {
+    Environment => ✅ **No env access** — doesn't exist
+    Network => ✅ allowedHosts — **empty by default**
+    Filesystem => ✅ allowedPaths — **empty by default**
+    Shell => ✅ **No shell** — doesn't exist
+    Default => **Nothing available.** Each capability explicitly granted.
+}
+
+host -[hidden]right- wasm
+
+@enduml

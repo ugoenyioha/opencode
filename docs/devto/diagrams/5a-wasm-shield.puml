@@ -1,0 +1,47 @@
+@startuml wasm-shield
+!theme plain
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontSize 14
+skinparam rectangleBorderThickness 2
+skinparam ArrowThickness 2
+skinparam nodesep 20
+skinparam ranksep 30
+
+title Host Process vs WASM: Attack Surface Comparison
+
+' --- Attacks on left ---
+together {
+    rectangle "Read env vars\n(steal API keys)" as ATK1 #ff7675
+    rectangle "Fetch to attacker.com\n(exfiltrate data)" as ATK2 #ff7675
+    rectangle "Read ~/.ssh/id_rsa\n(steal credentials)" as ATK3 #ff7675
+    rectangle "Spawn reverse shell\n(persistent access)" as ATK4 #ff7675
+}
+
+' --- Host process in middle ---
+rectangle "**Host Process**\n(TypeScript tool)" as HOST #FFEAA7
+
+' --- WASM on right ---
+rectangle "**WASM Module**\n(Extism plugin)" as WASM #DFE6E9
+
+ATK1 -right-> HOST : <color:red>**✓ succeeds**</color>\nprocess.env.*
+ATK2 -right-> HOST : <color:red>**✓ succeeds**</color>\nfetch() unrestricted
+ATK3 -right-> HOST : <color:red>**✓ succeeds**</color>\nfs.readFile()
+ATK4 -right-> HOST : <color:red>**✓ succeeds**</color>\nchild_process.exec()
+
+ATK1 -right-> WASM : <color:green>**✗ no env API**</color>
+ATK2 -right-> WASM : <color:green>**✗ allowedHosts: []**</color>
+ATK3 -right-> WASM : <color:green>**✗ allowedPaths: []**</color>
+ATK4 -right-> WASM : <color:green>**✗ no shell exists**</color>
+
+note bottom of HOST
+  4/4 attacks succeed.
+  Tool must be **trusted**.
+end note
+
+note bottom of WASM
+  0/4 attacks succeed.
+  Capabilities **don't exist**
+  unless explicitly granted.
+end note
+
+@enduml

