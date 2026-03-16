@@ -4,6 +4,36 @@ export type ClientOptions = {
   baseUrl: `${string}://${string}` | (string & {})
 }
 
+export type BadRequestError = {
+  data: unknown
+  errors: Array<{
+    [key: string]: unknown
+  }>
+  success: false
+}
+
+export type OAuth = {
+  type: "oauth"
+  refresh: string
+  access: string
+  expires: number
+  accountId?: string
+  enterpriseUrl?: string
+}
+
+export type ApiAuth = {
+  type: "api"
+  key: string
+}
+
+export type WellKnownAuth = {
+  type: "wellknown"
+  key: string
+  token: string
+}
+
+export type Auth = OAuth | ApiAuth | WellKnownAuth
+
 export type EventInstallationUpdated = {
   type: "installation.updated"
   properties: {
@@ -505,6 +535,8 @@ export type CompactionPart = {
   messageID: string
   type: "compaction"
   auto: boolean
+  instructions?: string
+  boundaryMessageID?: string
   overflow?: boolean
 }
 
@@ -678,10 +710,78 @@ export type EventQuestionRejected = {
   }
 }
 
+export type EventMcpElicitationAsked = {
+  type: "mcp.elicitation.asked"
+  properties: {
+    sessionID: string
+    requestID: string
+    tool: string
+    prompt: string
+  }
+}
+
+export type EventMcpElicitationReplied = {
+  type: "mcp.elicitation.replied"
+  properties: {
+    sessionID: string
+    requestID: string
+    text?: string
+  }
+}
+
+export type EventMcpElicitationRejected = {
+  type: "mcp.elicitation.rejected"
+  properties: {
+    sessionID: string
+    requestID: string
+  }
+}
+
 export type EventSessionCompacted = {
   type: "session.compacted"
   properties: {
     sessionID: string
+  }
+}
+
+export type EventTaskCreated = {
+  type: "task.created"
+  properties: {
+    info: {
+      id: string
+      pid: number
+      command: string
+      startTime: number
+      status: "running" | "completed" | "failed"
+      exitCode?: number
+      workdir: string
+      description?: string
+    }
+  }
+}
+
+export type EventTaskOutput = {
+  type: "task.output"
+  properties: {
+    id: string
+    data: string
+    isError: boolean
+  }
+}
+
+export type EventTaskCompleted = {
+  type: "task.completed"
+  properties: {
+    id: string
+    exitCode: number | null
+    status: "running" | "completed" | "failed"
+  }
+}
+
+export type EventTaskKilled = {
+  type: "task.killed"
+  properties: {
+    id: string
   }
 }
 
@@ -693,19 +793,42 @@ export type EventFileWatcherUpdated = {
   }
 }
 
+export type EventWorktreeReady = {
+  type: "worktree.ready"
+  properties: {
+    name: string
+    branch: string
+  }
+}
+
+export type EventWorktreeFailed = {
+  type: "worktree.failed"
+  properties: {
+    message: string
+  }
+}
+
 export type Todo = {
   /**
    * Brief description of the task
    */
   content: string
   /**
-   * Current status of the task: pending, in_progress, completed, cancelled
+   * Current status of the task: pending, in_progress, completed, cancelled, blocked
    */
-  status: string
+  status: "pending" | "in_progress" | "completed" | "cancelled" | "blocked"
   /**
    * Priority level of the task: high, medium, low
    */
-  priority: string
+  priority: "high" | "medium" | "low"
+  /**
+   * Unique identifier for the todo item
+   */
+  id: string
+  /**
+   * IDs of tasks that must be completed before this task can start
+   */
+  depends_on?: Array<string>
 }
 
 export type EventTodoUpdated = {
@@ -713,6 +836,197 @@ export type EventTodoUpdated = {
   properties: {
     sessionID: string
     todos: Array<Todo>
+  }
+}
+
+export type EventTeamCreated = {
+  type: "team.created"
+  properties: {
+    team: {
+      name: string
+      leadSessionID: string | null
+      members: Array<{
+        name: string
+        sessionID: string
+        agent: string
+        status: "ready" | "busy" | "shutdown_requested" | "shutdown" | "error"
+        execution_status?:
+          | "idle"
+          | "starting"
+          | "running"
+          | "cancel_requested"
+          | "cancelling"
+          | "cancelled"
+          | "completing"
+          | "completed"
+          | "failed"
+          | "timed_out"
+        prompt?: string
+        model?: string
+        planApproval?: "none" | "pending" | "approved" | "rejected"
+      }>
+      created: number
+      updated?: number
+      delegate?: boolean
+    }
+  }
+}
+
+export type EventTeamMemberSpawned = {
+  type: "team.member.spawned"
+  properties: {
+    teamName: string
+    member: {
+      name: string
+      sessionID: string
+      agent: string
+      status: "ready" | "busy" | "shutdown_requested" | "shutdown" | "error"
+      execution_status?:
+        | "idle"
+        | "starting"
+        | "running"
+        | "cancel_requested"
+        | "cancelling"
+        | "cancelled"
+        | "completing"
+        | "completed"
+        | "failed"
+        | "timed_out"
+      prompt?: string
+      model?: string
+      planApproval?: "none" | "pending" | "approved" | "rejected"
+    }
+  }
+}
+
+export type EventTeamMemberStatus = {
+  type: "team.member.status"
+  properties: {
+    teamName: string
+    memberName: string
+    status: "ready" | "busy" | "shutdown_requested" | "shutdown" | "error"
+  }
+}
+
+export type EventTeamMemberExecution = {
+  type: "team.member.execution"
+  properties: {
+    teamName: string
+    memberName: string
+    status:
+      | "idle"
+      | "starting"
+      | "running"
+      | "cancel_requested"
+      | "cancelling"
+      | "cancelled"
+      | "completing"
+      | "completed"
+      | "failed"
+      | "timed_out"
+  }
+}
+
+export type EventTeamMessage = {
+  type: "team.message"
+  properties: {
+    teamName: string
+    from: string
+    to: string
+    text: string
+  }
+}
+
+export type EventTeamBroadcast = {
+  type: "team.broadcast"
+  properties: {
+    teamName: string
+    from: string
+    text: string
+  }
+}
+
+export type EventTeamTaskUpdated = {
+  type: "team.task.updated"
+  properties: {
+    teamName: string
+    tasks: Array<{
+      id: string
+      content: string
+      status: "pending" | "in_progress" | "completed" | "cancelled" | "blocked"
+      priority: "high" | "medium" | "low"
+      assignee?: string
+      depends_on?: Array<string>
+    }>
+  }
+}
+
+export type EventTeamTaskClaimed = {
+  type: "team.task.claimed"
+  properties: {
+    teamName: string
+    taskId: string
+    memberName: string
+  }
+}
+
+export type EventTeamTeammateIdle = {
+  type: "team.teammate.idle"
+  properties: {
+    teamName: string
+    memberName: string
+    reason: "completed" | "cancelled"
+  }
+}
+
+export type EventTeamTaskCompleted = {
+  type: "team.task.completed"
+  properties: {
+    teamName: string
+    task: {
+      id: string
+      content: string
+      status: "pending" | "in_progress" | "completed" | "cancelled" | "blocked"
+      priority: "high" | "medium" | "low"
+      assignee?: string
+      depends_on?: Array<string>
+    }
+  }
+}
+
+export type EventTeamShutdownRequest = {
+  type: "team.shutdown.request"
+  properties: {
+    teamName: string
+    memberName: string
+  }
+}
+
+export type EventTeamPlanApproval = {
+  type: "team.plan.approval"
+  properties: {
+    teamName: string
+    memberName: string
+    approved: boolean
+    feedback?: string
+  }
+}
+
+export type EventTeamMessageRead = {
+  type: "team.message.read"
+  properties: {
+    teamName: string
+    agentName: string
+    count: number
+  }
+}
+
+export type EventTeamCleaned = {
+  type: "team.cleaned"
+  properties: {
+    teamName: string
+    leadSessionID: string | null
+    delegate: boolean
   }
 }
 
@@ -812,6 +1126,18 @@ export type Session = {
   workspaceID?: string
   directory: string
   parentID?: string
+  teammate?: boolean
+  teamID?: string
+  teamRole?: "lead" | "member"
+  planApproval?: "none" | "pending" | "approved" | "rejected"
+  teamMeta?: {
+    name: string
+    agent: string
+    status: string
+    execution_status?: string
+    prompt?: string
+    model?: string
+  }
   summary?: {
     additions: number
     deletions: number
@@ -942,21 +1268,6 @@ export type EventPtyDeleted = {
   }
 }
 
-export type EventWorktreeReady = {
-  type: "worktree.ready"
-  properties: {
-    name: string
-    branch: string
-  }
-}
-
-export type EventWorktreeFailed = {
-  type: "worktree.failed"
-  properties: {
-    message: string
-  }
-}
-
 export type Event =
   | EventInstallationUpdated
   | EventInstallationUpdateAvailable
@@ -979,9 +1290,32 @@ export type Event =
   | EventQuestionAsked
   | EventQuestionReplied
   | EventQuestionRejected
+  | EventMcpElicitationAsked
+  | EventMcpElicitationReplied
+  | EventMcpElicitationRejected
   | EventSessionCompacted
+  | EventTaskCreated
+  | EventTaskOutput
+  | EventTaskCompleted
+  | EventTaskKilled
   | EventFileWatcherUpdated
+  | EventWorktreeReady
+  | EventWorktreeFailed
   | EventTodoUpdated
+  | EventTeamCreated
+  | EventTeamMemberSpawned
+  | EventTeamMemberStatus
+  | EventTeamMemberExecution
+  | EventTeamMessage
+  | EventTeamBroadcast
+  | EventTeamTaskUpdated
+  | EventTeamTaskClaimed
+  | EventTeamTeammateIdle
+  | EventTeamTaskCompleted
+  | EventTeamShutdownRequest
+  | EventTeamPlanApproval
+  | EventTeamMessageRead
+  | EventTeamCleaned
   | EventTuiPromptAppend
   | EventTuiCommandExecute
   | EventTuiToastShow
@@ -1001,8 +1335,6 @@ export type Event =
   | EventPtyUpdated
   | EventPtyExited
   | EventPtyDeleted
-  | EventWorktreeReady
-  | EventWorktreeFailed
 
 export type GlobalEvent = {
   directory: string
@@ -1027,6 +1359,10 @@ export type ServerConfig = {
    */
   hostname?: string
   /**
+   * Unix socket path to listen on (overrides port/hostname)
+   */
+  unix?: string
+  /**
    * Enable mDNS service discovery
    */
   mdns?: boolean
@@ -1038,6 +1374,263 @@ export type ServerConfig = {
    * Additional domains to allow for CORS
    */
   cors?: Array<string>
+  /**
+   * Allow external plugins to register http.route handlers (disabled by default)
+   */
+  allowExternalRoutes?: boolean
+  /**
+   * Tool endpoint configuration
+   */
+  toolEndpoint?: {
+    /**
+     * Enable POST /tool/:toolName endpoint
+     */
+    enabled?: boolean
+    /**
+     * Auth mode for tool endpoint. api-key requires OPENCODE_TOOL_ENDPOINT_API_KEY (X-API-Key header). For A2A endpoints, api-key uses OPENCODE_A2A_API_KEY (X-A2A-Key header). plugin requires custom http.request hook; jwt/oidc/oauth2 use strict bearer verification.
+     */
+    auth?: "api-key" | "plugin" | "jwt" | "oidc" | "oauth2" | Array<"api-key" | "plugin" | "jwt" | "oidc" | "oauth2">
+    /**
+     * Allowlist of tools exposed via HTTP endpoint
+     */
+    allowedTools?: Array<string>
+    /**
+     * Allow sensitive tools in allowlist (disabled by default)
+     */
+    allowSensitiveTools?: boolean
+  }
+  /**
+   * Runtime safety limits for server requests and agent execution
+   */
+  limits?: {
+    /**
+     * Maximum requests per minute allowed per principal
+     */
+    rate_limit_rpm?: number
+    /**
+     * Maximum concurrently active sessions
+     */
+    max_concurrent_sessions?: number
+    /**
+     * Maximum concurrent LLM streaming responses
+     */
+    max_llm_streams?: number
+    /**
+     * Distributed rate limit backend configuration
+     */
+    rate_limit_backend?: {
+      /**
+       * Rate limit backend driver (sqlite|memory). Default: sqlite.
+       */
+      driver: "sqlite" | "memory"
+      sqlite?: {
+        /**
+         * Override sqlite database path for rate limit state
+         */
+        path?: string
+      }
+    }
+    /**
+     * Maximum number of teammates allowed in a team
+     */
+    max_team_members?: number
+    /**
+     * Maximum team lifespan in milliseconds. Default: 6 hours.
+     */
+    team_max_lifespan?: number
+    /**
+     * Maximum idle time before team is shut down. Default: 1 hour.
+     */
+    team_idle_timeout?: number
+    /**
+     * Maximum number of concurrent active teams.
+     */
+    max_teams?: number
+    /**
+     * Maximum pending messages per team inbox.
+     */
+    max_team_messages?: number
+    /**
+     * Maximum allowed subagent nesting depth
+     */
+    max_subagent_depth?: number
+    /**
+     * Maximum number of execution steps per session
+     */
+    max_steps?: number
+  }
+  /**
+   * A2A runtime configuration
+   */
+  a2a?: {
+    /**
+     * Enable A2A routes and agent card generation
+     */
+    enabled?: boolean
+    /**
+     * Public base URL used in A2A supportedInterfaces
+     */
+    baseUrl?: string
+    /**
+     * A2A agent name
+     */
+    name?: string
+    /**
+     * A2A agent description
+     */
+    description?: string
+    /**
+     * A2A agent version
+     */
+    version?: string
+    /**
+     * Default A2A auth strategies for exposed skills
+     */
+    auth?: Array<"api-key" | "jwt" | "spiffe" | "oauth2" | "oidc" | "plugin">
+    /**
+     * Named security schemes referenced by A2A routes and skills
+     */
+    securitySchemes?: {
+      [key: string]:
+        | {
+            type: "apiKey"
+            location: "header" | "query" | "cookie"
+            name: string
+          }
+        | {
+            type: "http"
+            scheme: string
+            bearerFormat?: string
+            jwksUrl?: string
+            [key: string]: unknown | "http" | string | undefined
+          }
+        | {
+            type: "mutualTls"
+            trustDomain?: string
+            [key: string]: unknown | "mutualTls" | string | undefined
+          }
+        | {
+            type: "oauth2"
+            [key: string]: unknown | "oauth2"
+          }
+        | {
+            type: "oidc"
+            openIdConnectUrl?: string
+            [key: string]: unknown | "oidc" | string | undefined
+          }
+    }
+    /**
+     * Authorization config (runs after authentication). Mirrors Envoy filter chain model.
+     */
+    authz?: {
+      /**
+       * Authorization provider
+       */
+      provider?: "ext_authz" | "plugin"
+      /**
+       * Envoy-compatible ext_authz gRPC authorization
+       */
+      extAuthz?: {
+        /**
+         * gRPC endpoint (e.g. grpc://opa:9191, dns:///opa.svc.cluster.local:9191)
+         */
+        endpoint: string
+        /**
+         * Timeout for ext_authz calls (number in ms or string like '500ms')
+         */
+        timeout?: number | string
+        /**
+         * Allow requests when ext_authz server is unreachable (default: false)
+         */
+        failOpen?: boolean
+        /**
+         * HTTP status to return when ext_authz errors and failOpen is false (default: 403)
+         */
+        statusOnError?: number
+        /**
+         * Optional: forward request body to the authz server
+         */
+        withRequestBody?: {
+          /**
+           * Max request body bytes to forward
+           */
+          maxBytes?: number
+          /**
+           * Allow partial body if body exceeds maxBytes
+           */
+          allowPartial?: boolean
+        }
+        /**
+         * Static key-value pairs added to CheckRequest.attributes.context_extensions
+         */
+        contextExtensions?: {
+          [key: string]: string
+        }
+        /**
+         * Optional: gRPC endpoint for opencode.authz.v1.BatchAuthorizationService. Enables batch discovery authz. Defaults to endpoint if unset.
+         */
+        batchEndpoint?: string
+      }
+      /**
+       * Plugin-based authorization configuration
+       */
+      plugin?: {
+        /**
+         * ID of the authz plugin to invoke
+         */
+        id: string
+        /**
+         * Policy configuration passed to the plugin
+         */
+        policy: {
+          [key: string]: unknown
+        }
+        /**
+         * HTTP status to return when plugin authz hook throws or times out (default: 403)
+         */
+        statusOnError?: number
+      }
+      /**
+       * If true, include provider deny reason in HTTP responses. If false, return generic deny message while keeping detailed logs
+       */
+      exposeDenyReason?: boolean
+    }
+  }
+  /**
+   * Provider compatibility HTTP configuration
+   */
+  compat?: {
+    /**
+     * OpenAI compatibility API configuration
+     */
+    openai?: {
+      /**
+       * Enable provider compatibility HTTP surface
+       */
+      enabled?: boolean
+      /**
+       * Provider-specific max output token cap for compatibility routes
+       */
+      max_output_tokens?: number
+    }
+    /**
+     * Anthropic compatibility API configuration
+     */
+    anthropic?: {
+      /**
+       * Enable provider compatibility HTTP surface
+       */
+      enabled?: boolean
+      /**
+       * Provider-specific max output token cap for compatibility routes
+       */
+      max_output_tokens?: number
+    }
+    /**
+     * Global max output token cap for compatibility routes (default: 32000)
+     */
+    max_output_tokens?: number
+  }
 }
 
 export type PermissionActionConfig = "ask" | "allow" | "deny"
@@ -1061,6 +1654,10 @@ export type PermissionConfig =
       external_directory?: PermissionRuleConfig
       todowrite?: PermissionActionConfig
       todoread?: PermissionActionConfig
+      session_task_create?: PermissionActionConfig
+      session_task_update?: PermissionActionConfig
+      session_task_get?: PermissionActionConfig
+      session_task_list?: PermissionActionConfig
       question?: PermissionActionConfig
       webfetch?: PermissionActionConfig
       websearch?: PermissionActionConfig
@@ -1092,7 +1689,157 @@ export type AgentConfig = {
    * Description of when to use the agent
    */
   description?: string
-  mode?: "subagent" | "primary" | "all"
+  mode?: "subagent" | "primary" | "all" | "a2a"
+  /**
+   * Execution isolation mode (default: none)
+   */
+  isolation?: "none" | "worktree"
+  /**
+   * A2A-specific configuration (only applies when mode: 'a2a')
+   */
+  a2a?: {
+    /**
+     * Public base URL for this agent's A2A endpoints
+     */
+    baseUrl?: string
+    /**
+     * Agent version for A2A card
+     */
+    version?: string
+    /**
+     * Auth strategies for this A2A agent
+     */
+    auth?: Array<"api-key" | "jwt" | "spiffe" | "oauth2" | "oidc" | "plugin">
+    /**
+     * How the agent selects skills: semantic (LLM decides) or metadata (client hints)
+     */
+    skillRouting?: "semantic" | "metadata"
+    /**
+     * Security schemes specific to this agent (merged with server-level schemes)
+     */
+    securitySchemes?: {
+      [key: string]:
+        | {
+            type: "apiKey"
+            location: "header" | "query" | "cookie"
+            name: string
+          }
+        | {
+            type: "http"
+            scheme: string
+            bearerFormat?: string
+            jwksUrl?: string
+            [key: string]: unknown | "http" | string | undefined
+          }
+        | {
+            type: "mutualTls"
+            trustDomain?: string
+            [key: string]: unknown | "mutualTls" | string | undefined
+          }
+        | {
+            type: "oauth2"
+            [key: string]: unknown | "oauth2"
+          }
+        | {
+            type: "oidc"
+            openIdConnectUrl?: string
+            [key: string]: unknown | "oidc" | string | undefined
+          }
+    }
+    /**
+     * SPIFFE-specific configuration for this agent
+     */
+    spiffe?: {
+      /**
+       * SPIFFE trust domain for this agent
+       */
+      trustDomain?: string
+      /**
+       * Override OPENCODE_SPIFFE_AUDIENCE for this agent
+       */
+      audience?: string
+      /**
+       * Allowed SPIFFE ID patterns (glob) for this agent
+       */
+      allowedIds?: Array<string>
+    }
+    /**
+     * Per-agent authorization config (overrides server.a2a.authz)
+     */
+    authz?: {
+      /**
+       * Authorization provider
+       */
+      provider?: "ext_authz" | "plugin"
+      /**
+       * Envoy-compatible ext_authz gRPC authorization
+       */
+      extAuthz?: {
+        /**
+         * gRPC endpoint (e.g. grpc://opa:9191, dns:///opa.svc.cluster.local:9191)
+         */
+        endpoint: string
+        /**
+         * Timeout for ext_authz calls (number in ms or string like '500ms')
+         */
+        timeout?: number | string
+        /**
+         * Allow requests when ext_authz server is unreachable (default: false)
+         */
+        failOpen?: boolean
+        /**
+         * HTTP status to return when ext_authz errors and failOpen is false (default: 403)
+         */
+        statusOnError?: number
+        /**
+         * Optional: forward request body to the authz server
+         */
+        withRequestBody?: {
+          /**
+           * Max request body bytes to forward
+           */
+          maxBytes?: number
+          /**
+           * Allow partial body if body exceeds maxBytes
+           */
+          allowPartial?: boolean
+        }
+        /**
+         * Static key-value pairs added to CheckRequest.attributes.context_extensions
+         */
+        contextExtensions?: {
+          [key: string]: string
+        }
+        /**
+         * Optional: gRPC endpoint for opencode.authz.v1.BatchAuthorizationService. Enables batch discovery authz. Defaults to endpoint if unset.
+         */
+        batchEndpoint?: string
+      }
+      /**
+       * Plugin-based authorization configuration
+       */
+      plugin?: {
+        /**
+         * ID of the authz plugin to invoke
+         */
+        id: string
+        /**
+         * Policy configuration passed to the plugin
+         */
+        policy: {
+          [key: string]: unknown
+        }
+        /**
+         * HTTP status to return when plugin authz hook throws or times out (default: 403)
+         */
+        statusOnError?: number
+      }
+      /**
+       * If true, include provider deny reason in HTTP responses. If false, return generic deny message while keeping detailed logs
+       */
+      exposeDenyReason?: boolean
+    }
+  }
   /**
    * Hide this subagent from the @ autocomplete menu (default: false, only applies to mode: subagent)
    */
@@ -1112,6 +1859,71 @@ export type AgentConfig = {
    * @deprecated Use 'steps' field instead.
    */
   maxSteps?: number
+  /**
+   * Skill names to preload into the agent's context at startup
+   */
+  skills?: Array<string>
+  /**
+   * Agent-specific sandbox overrides
+   */
+  sandbox?: {
+    wasm?: {
+      enabled?: boolean
+      timeout_ms?: number
+      memory_pages?: number
+      network?: boolean
+      allowed_hosts?: Array<string>
+      allowed_paths?: Array<string>
+    }
+    /**
+     * Sandbox mode for bash tool. 'firecracker' requires Linux with firecracker assets, 'gvisor' requires Linux with runsc, 'namespace' uses Linux namespaces, 'bwrap' uses bubblewrap (Linux), 'sandbox-exec' (macOS). 'auto' picks best available. Default: 'none'.
+     */
+    bash?: "none" | "namespace" | "bwrap" | "gvisor" | "firecracker" | "sandbox-exec" | "auto"
+    /**
+     * Allow network access in sandboxed bash. Default: false.
+     */
+    network?: boolean
+    /**
+     * Additional directories writable inside the sandbox. Project directory is always writable.
+     */
+    writable?: Array<string>
+    /**
+     * Memory limit in MB for sandboxed processes (Linux only, requires cgroups v2). Default: 256.
+     */
+    memory_mb?: number
+    /**
+     * CPU limit as percentage for sandboxed processes (Linux only). Default: 100.
+     */
+    cpu_percent?: number
+    envPassthrough?: Array<string>
+    /**
+     * Configuration for Phantom Proxy credential injection
+     */
+    proxyCredentials?: {
+      [key: string]: {
+        /**
+         * Upstream proxy URL this credential applies to
+         */
+        upstream: string
+        /**
+         * HTTP header to inject the credential into
+         */
+        injectHeader?: string
+        /**
+         * Format string for the credential value ({} is replaced with the token)
+         */
+        credentialFormat?: string
+        /**
+         * Name of the environment variable containing the secret token
+         */
+        envVarKey: string
+        /**
+         * Environment variable that should be overridden to point to the local phantom proxy
+         */
+        baseUrlEnvVar: string
+      }
+    }
+  }
   permission?: PermissionConfig
   [key: string]:
     | unknown
@@ -1124,6 +1936,152 @@ export type AgentConfig = {
     | "subagent"
     | "primary"
     | "all"
+    | "a2a"
+    | "none"
+    | "worktree"
+    | {
+        /**
+         * Public base URL for this agent's A2A endpoints
+         */
+        baseUrl?: string
+        /**
+         * Agent version for A2A card
+         */
+        version?: string
+        /**
+         * Auth strategies for this A2A agent
+         */
+        auth?: Array<"api-key" | "jwt" | "spiffe" | "oauth2" | "oidc" | "plugin">
+        /**
+         * How the agent selects skills: semantic (LLM decides) or metadata (client hints)
+         */
+        skillRouting?: "semantic" | "metadata"
+        /**
+         * Security schemes specific to this agent (merged with server-level schemes)
+         */
+        securitySchemes?: {
+          [key: string]:
+            | {
+                type: "apiKey"
+                location: "header" | "query" | "cookie"
+                name: string
+              }
+            | {
+                type: "http"
+                scheme: string
+                bearerFormat?: string
+                jwksUrl?: string
+                [key: string]: unknown | "http" | string | undefined
+              }
+            | {
+                type: "mutualTls"
+                trustDomain?: string
+                [key: string]: unknown | "mutualTls" | string | undefined
+              }
+            | {
+                type: "oauth2"
+                [key: string]: unknown | "oauth2"
+              }
+            | {
+                type: "oidc"
+                openIdConnectUrl?: string
+                [key: string]: unknown | "oidc" | string | undefined
+              }
+        }
+        /**
+         * SPIFFE-specific configuration for this agent
+         */
+        spiffe?: {
+          /**
+           * SPIFFE trust domain for this agent
+           */
+          trustDomain?: string
+          /**
+           * Override OPENCODE_SPIFFE_AUDIENCE for this agent
+           */
+          audience?: string
+          /**
+           * Allowed SPIFFE ID patterns (glob) for this agent
+           */
+          allowedIds?: Array<string>
+        }
+        /**
+         * Per-agent authorization config (overrides server.a2a.authz)
+         */
+        authz?: {
+          /**
+           * Authorization provider
+           */
+          provider?: "ext_authz" | "plugin"
+          /**
+           * Envoy-compatible ext_authz gRPC authorization
+           */
+          extAuthz?: {
+            /**
+             * gRPC endpoint (e.g. grpc://opa:9191, dns:///opa.svc.cluster.local:9191)
+             */
+            endpoint: string
+            /**
+             * Timeout for ext_authz calls (number in ms or string like '500ms')
+             */
+            timeout?: number | string
+            /**
+             * Allow requests when ext_authz server is unreachable (default: false)
+             */
+            failOpen?: boolean
+            /**
+             * HTTP status to return when ext_authz errors and failOpen is false (default: 403)
+             */
+            statusOnError?: number
+            /**
+             * Optional: forward request body to the authz server
+             */
+            withRequestBody?: {
+              /**
+               * Max request body bytes to forward
+               */
+              maxBytes?: number
+              /**
+               * Allow partial body if body exceeds maxBytes
+               */
+              allowPartial?: boolean
+            }
+            /**
+             * Static key-value pairs added to CheckRequest.attributes.context_extensions
+             */
+            contextExtensions?: {
+              [key: string]: string
+            }
+            /**
+             * Optional: gRPC endpoint for opencode.authz.v1.BatchAuthorizationService. Enables batch discovery authz. Defaults to endpoint if unset.
+             */
+            batchEndpoint?: string
+          }
+          /**
+           * Plugin-based authorization configuration
+           */
+          plugin?: {
+            /**
+             * ID of the authz plugin to invoke
+             */
+            id: string
+            /**
+             * Policy configuration passed to the plugin
+             */
+            policy: {
+              [key: string]: unknown
+            }
+            /**
+             * HTTP status to return when plugin authz hook throws or times out (default: 403)
+             */
+            statusOnError?: number
+          }
+          /**
+           * If true, include provider deny reason in HTTP responses. If false, return generic deny message while keeping detailed logs
+           */
+          exposeDenyReason?: boolean
+        }
+      }
     | {
         [key: string]: unknown
       }
@@ -1136,6 +2094,65 @@ export type AgentConfig = {
     | "error"
     | "info"
     | number
+    | Array<string>
+    | {
+        wasm?: {
+          enabled?: boolean
+          timeout_ms?: number
+          memory_pages?: number
+          network?: boolean
+          allowed_hosts?: Array<string>
+          allowed_paths?: Array<string>
+        }
+        /**
+         * Sandbox mode for bash tool. 'firecracker' requires Linux with firecracker assets, 'gvisor' requires Linux with runsc, 'namespace' uses Linux namespaces, 'bwrap' uses bubblewrap (Linux), 'sandbox-exec' (macOS). 'auto' picks best available. Default: 'none'.
+         */
+        bash?: "none" | "namespace" | "bwrap" | "gvisor" | "firecracker" | "sandbox-exec" | "auto"
+        /**
+         * Allow network access in sandboxed bash. Default: false.
+         */
+        network?: boolean
+        /**
+         * Additional directories writable inside the sandbox. Project directory is always writable.
+         */
+        writable?: Array<string>
+        /**
+         * Memory limit in MB for sandboxed processes (Linux only, requires cgroups v2). Default: 256.
+         */
+        memory_mb?: number
+        /**
+         * CPU limit as percentage for sandboxed processes (Linux only). Default: 100.
+         */
+        cpu_percent?: number
+        envPassthrough?: Array<string>
+        /**
+         * Configuration for Phantom Proxy credential injection
+         */
+        proxyCredentials?: {
+          [key: string]: {
+            /**
+             * Upstream proxy URL this credential applies to
+             */
+            upstream: string
+            /**
+             * HTTP header to inject the credential into
+             */
+            injectHeader?: string
+            /**
+             * Format string for the credential value ({} is replaced with the token)
+             */
+            credentialFormat?: string
+            /**
+             * Name of the environment variable containing the secret token
+             */
+            envVarKey: string
+            /**
+             * Environment variable that should be overridden to point to the local phantom proxy
+             */
+            baseUrlEnvVar: string
+          }
+        }
+      }
     | PermissionConfig
     | undefined
 }
@@ -1309,6 +2326,10 @@ export type Config = {
    */
   $schema?: string
   logLevel?: LogLevel
+  /**
+   * Enable hardened mode for security-sensitive execution paths
+   */
+  hardened?: boolean
   server?: ServerConfig
   /**
    * Command configuration, see https://opencode.ai/docs/commands
@@ -1460,6 +2481,67 @@ export type Config = {
      */
     url?: string
   }
+  /**
+   * Sandbox runtime configuration
+   */
+  sandbox?: {
+    wasm?: {
+      enabled?: boolean
+      timeout_ms?: number
+      memory_pages?: number
+      network?: boolean
+      allowed_hosts?: Array<string>
+      allowed_paths?: Array<string>
+    }
+    /**
+     * Sandbox mode for bash tool. 'firecracker' requires Linux with firecracker assets, 'gvisor' requires Linux with runsc, 'namespace' uses Linux namespaces, 'bwrap' uses bubblewrap (Linux), 'sandbox-exec' (macOS). 'auto' picks best available. Default: 'none'.
+     */
+    bash?: "none" | "namespace" | "bwrap" | "gvisor" | "firecracker" | "sandbox-exec" | "auto"
+    /**
+     * Allow network access in sandboxed bash. Default: false.
+     */
+    network?: boolean
+    /**
+     * Additional directories writable inside the sandbox. Project directory is always writable.
+     */
+    writable?: Array<string>
+    /**
+     * Memory limit in MB for sandboxed processes (Linux only, requires cgroups v2). Default: 256.
+     */
+    memory_mb?: number
+    /**
+     * CPU limit as percentage for sandboxed processes (Linux only). Default: 100.
+     */
+    cpu_percent?: number
+    envPassthrough?: Array<string>
+    /**
+     * Configuration for Phantom Proxy credential injection
+     */
+    proxyCredentials?: {
+      [key: string]: {
+        /**
+         * Upstream proxy URL this credential applies to
+         */
+        upstream: string
+        /**
+         * HTTP header to inject the credential into
+         */
+        injectHeader?: string
+        /**
+         * Format string for the credential value ({} is replaced with the token)
+         */
+        credentialFormat?: string
+        /**
+         * Name of the environment variable containing the secret token
+         */
+        envVarKey: string
+        /**
+         * Environment variable that should be overridden to point to the local phantom proxy
+         */
+        baseUrlEnvVar: string
+      }
+    }
+  }
   compaction?: {
     /**
      * Enable automatic compaction when context is full (default: true)
@@ -1496,38 +2578,20 @@ export type Config = {
      * Timeout in milliseconds for model context protocol (MCP) requests
      */
     mcp_timeout?: number
+    /**
+     * Enable the experimental Remote Control feature (requires /remote)
+     */
+    remote_control?: boolean
+    /**
+     * Maximum number of turns (LLM calls) per session before auto-stopping. Safety guard against infinite loops.
+     */
+    max_turns?: number
+    /**
+     * Maximum cost in USD per session. Session is aborted when cumulative cost exceeds this limit.
+     */
+    max_budget_usd?: number
   }
 }
-
-export type BadRequestError = {
-  data: unknown
-  errors: Array<{
-    [key: string]: unknown
-  }>
-  success: false
-}
-
-export type OAuth = {
-  type: "oauth"
-  refresh: string
-  access: string
-  expires: number
-  accountId?: string
-  enterpriseUrl?: string
-}
-
-export type ApiAuth = {
-  type: "api"
-  key: string
-}
-
-export type WellKnownAuth = {
-  type: "wellknown"
-  key: string
-  token: string
-}
-
-export type Auth = OAuth | ApiAuth | WellKnownAuth
 
 export type NotFoundError = {
   name: "NotFoundError"
@@ -1676,6 +2740,18 @@ export type GlobalSession = {
   workspaceID?: string
   directory: string
   parentID?: string
+  teammate?: boolean
+  teamID?: string
+  teamRole?: "lead" | "member"
+  planApproval?: "none" | "pending" | "approved" | "rejected"
+  teamMeta?: {
+    name: string
+    agent: string
+    status: string
+    execution_status?: string
+    prompt?: string
+    model?: string
+  }
   summary?: {
     additions: number
     deletions: number
@@ -1845,6 +2921,103 @@ export type McpStatus =
   | McpStatusNeedsAuth
   | McpStatusNeedsClientRegistration
 
+export type TeamInfo = {
+  name: string
+  leadSessionID: string | null
+  members: Array<{
+    name: string
+    sessionID: string
+    agent: string
+    status: "ready" | "busy" | "shutdown_requested" | "shutdown" | "error"
+    execution_status?:
+      | "idle"
+      | "starting"
+      | "running"
+      | "cancel_requested"
+      | "cancelling"
+      | "cancelled"
+      | "completing"
+      | "completed"
+      | "failed"
+      | "timed_out"
+    prompt?: string
+    model?: string
+    planApproval?: "none" | "pending" | "approved" | "rejected"
+  }>
+  created: number
+  updated?: number
+  delegate?: boolean
+}
+
+export type TeamTask = {
+  id: string
+  content: string
+  status: "pending" | "in_progress" | "completed" | "cancelled" | "blocked"
+  priority: "high" | "medium" | "low"
+  assignee?: string
+  depends_on?: Array<string>
+}
+
+export type TeamBySession = {
+  team: TeamInfo
+  tasks: Array<TeamTask>
+  role: "lead" | "member"
+  memberName?: string
+}
+
+export type TeamSpawned = {
+  sessionID: string
+}
+
+export type TeamModel = {
+  providerID: string
+  modelID: string
+}
+
+export type TeamSpawnRequest = {
+  leadSessionID: string
+  name: string
+  agent: string
+  model?: TeamModel
+  prompt: string
+  claimTask?: string
+  requirePlanApproval?: boolean
+}
+
+export type TeamOk = {
+  ok: true
+}
+
+export type TeamMessageRequest = {
+  sessionID: string
+  to: string
+  text: string
+}
+
+export type TeamShutdownRequest = {
+  leadSessionID: string
+  member: string
+}
+
+export type TeamCleanupRequest = {
+  leadSessionID: string
+}
+
+export type TeamApprovePlanRequest = {
+  leadSessionID: string
+  member: string
+  approved: boolean
+  feedback?: string
+}
+
+export type TeamMessageItem = {
+  id: string
+  from: string
+  text: string
+  timestamp: number
+  read: boolean
+}
+
 export type Path = {
   home: string
   state: string
@@ -1871,7 +3044,8 @@ export type Command = {
 export type Agent = {
   name: string
   description?: string
-  mode: "subagent" | "primary" | "all"
+  mode: "subagent" | "primary" | "all" | "a2a"
+  isolation?: "none" | "worktree"
   native?: boolean
   hidden?: boolean
   topP?: number
@@ -1888,6 +3062,74 @@ export type Agent = {
     [key: string]: unknown
   }
   steps?: number
+  skills?: Array<string>
+  sandbox?: {
+    wasm?: {
+      enabled?: boolean
+      timeout_ms?: number
+      memory_pages?: number
+      network?: boolean
+      allowed_hosts?: Array<string>
+      allowed_paths?: Array<string>
+    }
+    /**
+     * Sandbox mode for bash tool. 'firecracker' requires Linux with firecracker assets, 'gvisor' requires Linux with runsc, 'namespace' uses Linux namespaces, 'bwrap' uses bubblewrap (Linux), 'sandbox-exec' (macOS). 'auto' picks best available. Default: 'none'.
+     */
+    bash?: "none" | "namespace" | "bwrap" | "gvisor" | "firecracker" | "sandbox-exec" | "auto"
+    /**
+     * Allow network access in sandboxed bash. Default: false.
+     */
+    network?: boolean
+    /**
+     * Additional directories writable inside the sandbox. Project directory is always writable.
+     */
+    writable?: Array<string>
+    /**
+     * Memory limit in MB for sandboxed processes (Linux only, requires cgroups v2). Default: 256.
+     */
+    memory_mb?: number
+    /**
+     * CPU limit as percentage for sandboxed processes (Linux only). Default: 100.
+     */
+    cpu_percent?: number
+    envPassthrough?: Array<string>
+    /**
+     * Configuration for Phantom Proxy credential injection
+     */
+    proxyCredentials?: {
+      [key: string]: {
+        /**
+         * Upstream proxy URL this credential applies to
+         */
+        upstream: string
+        /**
+         * HTTP header to inject the credential into
+         */
+        injectHeader?: string
+        /**
+         * Format string for the credential value ({} is replaced with the token)
+         */
+        credentialFormat?: string
+        /**
+         * Name of the environment variable containing the secret token
+         */
+        envVarKey: string
+        /**
+         * Environment variable that should be overridden to point to the local phantom proxy
+         */
+        baseUrlEnvVar: string
+      }
+    }
+  }
+  a2a?: {
+    baseUrl?: string
+    version?: string
+    auth?: Array<string>
+    skillRouting?: "semantic" | "metadata"
+    securitySchemes?: {
+      [key: string]: unknown
+    }
+  }
 }
 
 export type LspStatus = {
@@ -1903,97 +3145,7 @@ export type FormatterStatus = {
   enabled: boolean
 }
 
-export type GlobalHealthData = {
-  body?: never
-  path?: never
-  query?: never
-  url: "/global/health"
-}
-
-export type GlobalHealthResponses = {
-  /**
-   * Health information
-   */
-  200: {
-    healthy: true
-    version: string
-  }
-}
-
-export type GlobalHealthResponse = GlobalHealthResponses[keyof GlobalHealthResponses]
-
-export type GlobalEventData = {
-  body?: never
-  path?: never
-  query?: never
-  url: "/global/event"
-}
-
-export type GlobalEventResponses = {
-  /**
-   * Event stream
-   */
-  200: GlobalEvent
-}
-
-export type GlobalEventResponse = GlobalEventResponses[keyof GlobalEventResponses]
-
-export type GlobalConfigGetData = {
-  body?: never
-  path?: never
-  query?: never
-  url: "/global/config"
-}
-
-export type GlobalConfigGetResponses = {
-  /**
-   * Get global config info
-   */
-  200: Config
-}
-
-export type GlobalConfigGetResponse = GlobalConfigGetResponses[keyof GlobalConfigGetResponses]
-
-export type GlobalConfigUpdateData = {
-  body?: Config
-  path?: never
-  query?: never
-  url: "/global/config"
-}
-
-export type GlobalConfigUpdateErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequestError
-}
-
-export type GlobalConfigUpdateError = GlobalConfigUpdateErrors[keyof GlobalConfigUpdateErrors]
-
-export type GlobalConfigUpdateResponses = {
-  /**
-   * Successfully updated global config
-   */
-  200: Config
-}
-
-export type GlobalConfigUpdateResponse = GlobalConfigUpdateResponses[keyof GlobalConfigUpdateResponses]
-
-export type GlobalDisposeData = {
-  body?: never
-  path?: never
-  query?: never
-  url: "/global/dispose"
-}
-
-export type GlobalDisposeResponses = {
-  /**
-   * Global disposed
-   */
-  200: boolean
-}
-
-export type GlobalDisposeResponse = GlobalDisposeResponses[keyof GlobalDisposeResponses]
+export type TeamMessagesQuery = string
 
 export type AuthRemoveData = {
   body?: never
@@ -2048,6 +3200,113 @@ export type AuthSetResponses = {
 }
 
 export type AuthSetResponse = AuthSetResponses[keyof AuthSetResponses]
+
+export type GlobalHealthData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/global/health"
+}
+
+export type GlobalHealthResponses = {
+  /**
+   * Health information
+   */
+  200: {
+    healthy: true
+    version: string
+  }
+}
+
+export type GlobalHealthResponse = GlobalHealthResponses[keyof GlobalHealthResponses]
+
+export type GlobalEventData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/global/event"
+}
+
+export type GlobalEventResponses = {
+  /**
+   * Event stream
+   */
+  200: GlobalEvent
+}
+
+export type GlobalEventResponse = GlobalEventResponses[keyof GlobalEventResponses]
+
+export type GlobalConfigGetData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/global/config"
+}
+
+export type GlobalConfigGetResponses = {
+  /**
+   * Get global config info
+   */
+  200: Config
+}
+
+export type GlobalConfigGetResponse = GlobalConfigGetResponses[keyof GlobalConfigGetResponses]
+
+export type GlobalConfigUpdateData = {
+  body?: Config
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/global/config"
+}
+
+export type GlobalConfigUpdateErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type GlobalConfigUpdateError = GlobalConfigUpdateErrors[keyof GlobalConfigUpdateErrors]
+
+export type GlobalConfigUpdateResponses = {
+  /**
+   * Successfully updated global config
+   */
+  200: Config
+}
+
+export type GlobalConfigUpdateResponse = GlobalConfigUpdateResponses[keyof GlobalConfigUpdateResponses]
+
+export type GlobalDisposeData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/global/dispose"
+}
+
+export type GlobalDisposeResponses = {
+  /**
+   * Global disposed
+   */
+  200: boolean
+}
+
+export type GlobalDisposeResponse = GlobalDisposeResponses[keyof GlobalDisposeResponses]
 
 export type ProjectListData = {
   body?: never
@@ -2761,9 +4020,11 @@ export type SessionListResponse = SessionListResponses[keyof SessionListResponse
 
 export type SessionCreateData = {
   body?: {
+    id?: string
     parentID?: string
     title?: string
     permission?: PermissionRuleset
+    directory?: string
   }
   path?: never
   query?: {
@@ -3320,7 +4581,7 @@ export type SessionPromptResponses = {
    * Created message
    */
   200: {
-    info: AssistantMessage
+    info: Message
     parts: Array<Part>
   }
 }
@@ -3612,6 +4873,90 @@ export type SessionCommandResponses = {
 
 export type SessionCommandResponse = SessionCommandResponses[keyof SessionCommandResponses]
 
+export type SessionLoopStopData = {
+  body?: never
+  path: {
+    /**
+     * Session ID
+     */
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/session/{sessionID}/loop"
+}
+
+export type SessionLoopStopErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionLoopStopError = SessionLoopStopErrors[keyof SessionLoopStopErrors]
+
+export type SessionLoopStopResponses = {
+  /**
+   * Loops removed
+   */
+  200: {
+    removed: number
+  }
+}
+
+export type SessionLoopStopResponse = SessionLoopStopResponses[keyof SessionLoopStopResponses]
+
+export type SessionLoopCreateData = {
+  body?: {
+    interval_ms: number
+    prompt: string
+  }
+  path: {
+    /**
+     * Session ID
+     */
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/session/{sessionID}/loop"
+}
+
+export type SessionLoopCreateErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionLoopCreateError = SessionLoopCreateErrors[keyof SessionLoopCreateErrors]
+
+export type SessionLoopCreateResponses = {
+  /**
+   * Loop created
+   */
+  200: {
+    id: string
+    interval_ms: number
+    prompt: string
+    next_run_at: number
+  }
+}
+
+export type SessionLoopCreateResponse = SessionLoopCreateResponses[keyof SessionLoopCreateResponses]
+
 export type SessionShellData = {
   body?: {
     agent: string
@@ -3726,6 +5071,79 @@ export type SessionUnrevertResponses = {
 }
 
 export type SessionUnrevertResponse = SessionUnrevertResponses[keyof SessionUnrevertResponses]
+
+export type SessionElicitationReplyData = {
+  body?: {
+    text: string
+  }
+  path: {
+    sessionID: string
+    requestID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/session/{sessionID}/elicitation/{requestID}/reply"
+}
+
+export type SessionElicitationReplyErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionElicitationReplyError = SessionElicitationReplyErrors[keyof SessionElicitationReplyErrors]
+
+export type SessionElicitationReplyResponses = {
+  /**
+   * Elicitation reply accepted
+   */
+  200: boolean
+}
+
+export type SessionElicitationReplyResponse = SessionElicitationReplyResponses[keyof SessionElicitationReplyResponses]
+
+export type SessionElicitationRejectData = {
+  body?: never
+  path: {
+    sessionID: string
+    requestID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/session/{sessionID}/elicitation/{requestID}/reject"
+}
+
+export type SessionElicitationRejectErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionElicitationRejectError = SessionElicitationRejectErrors[keyof SessionElicitationRejectErrors]
+
+export type SessionElicitationRejectResponses = {
+  /**
+   * Elicitation rejected
+   */
+  200: boolean
+}
+
+export type SessionElicitationRejectResponse =
+  SessionElicitationRejectResponses[keyof SessionElicitationRejectResponses]
 
 export type PermissionRespondData = {
   body?: {
@@ -4237,6 +5655,44 @@ export type FileStatusResponses = {
 
 export type FileStatusResponse = FileStatusResponses[keyof FileStatusResponses]
 
+export type ToolExecuteData = {
+  body?: {
+    sessionID: string
+    args?: {
+      [key: string]: unknown
+    }
+  }
+  path: {
+    toolName: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/tool/{toolName}"
+}
+
+export type ToolExecuteResponses = {
+  /**
+   * Tool execution result
+   */
+  200: {
+    title: string
+    output: string
+    metadata: {
+      [key: string]: unknown
+    }
+    attachments?: Array<{
+      type: "file"
+      mime?: string
+      filename?: string
+      url: string
+    }>
+  }
+}
+
+export type ToolExecuteResponse = ToolExecuteResponses[keyof ToolExecuteResponses]
+
 export type McpStatusData = {
   body?: never
   path?: never
@@ -4476,6 +5932,344 @@ export type McpDisconnectResponses = {
 }
 
 export type McpDisconnectResponse = McpDisconnectResponses[keyof McpDisconnectResponses]
+
+export type TeamListData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/team"
+}
+
+export type TeamListResponses = {
+  /**
+   * List of teams
+   */
+  200: Array<TeamInfo>
+}
+
+export type TeamListResponse = TeamListResponses[keyof TeamListResponses]
+
+export type TeamGetData = {
+  body?: never
+  path: {
+    name: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/team/{name}"
+}
+
+export type TeamGetErrors = {
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type TeamGetError = TeamGetErrors[keyof TeamGetErrors]
+
+export type TeamGetResponses = {
+  /**
+   * Team info
+   */
+  200: TeamInfo
+}
+
+export type TeamGetResponse = TeamGetResponses[keyof TeamGetResponses]
+
+export type TeamTasksListData = {
+  body?: never
+  path: {
+    name: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/team/{name}/tasks"
+}
+
+export type TeamTasksListResponses = {
+  /**
+   * List of tasks
+   */
+  200: Array<TeamTask>
+}
+
+export type TeamTasksListResponse = TeamTasksListResponses[keyof TeamTasksListResponses]
+
+export type TeamBySessionData = {
+  body?: never
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/team/by-session/{sessionID}"
+}
+
+export type TeamBySessionResponses = {
+  /**
+   * Team info with role and tasks
+   */
+  200: TeamBySession | null
+}
+
+export type TeamBySessionResponse = TeamBySessionResponses[keyof TeamBySessionResponses]
+
+export type TeamDelegateData = {
+  body?: {
+    enabled: boolean
+    leadSessionID?: string
+  }
+  path: {
+    name: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/team/{name}/delegate"
+}
+
+export type TeamDelegateErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type TeamDelegateError = TeamDelegateErrors[keyof TeamDelegateErrors]
+
+export type TeamDelegateResponses = {
+  /**
+   * Delegate mode updated
+   */
+  200: unknown
+}
+
+export type TeamSpawnData = {
+  body?: TeamSpawnRequest
+  path: {
+    name: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/team/{name}/spawn"
+}
+
+export type TeamSpawnErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type TeamSpawnError = TeamSpawnErrors[keyof TeamSpawnErrors]
+
+export type TeamSpawnResponses = {
+  /**
+   * Spawned teammate session
+   */
+  201: TeamSpawned
+}
+
+export type TeamSpawnResponse = TeamSpawnResponses[keyof TeamSpawnResponses]
+
+export type TeamMessageData = {
+  body?: TeamMessageRequest
+  path: {
+    name: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/team/{name}/message"
+}
+
+export type TeamMessageErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type TeamMessageError = TeamMessageErrors[keyof TeamMessageErrors]
+
+export type TeamMessageResponses = {
+  /**
+   * Message sent
+   */
+  200: TeamOk
+}
+
+export type TeamMessageResponse = TeamMessageResponses[keyof TeamMessageResponses]
+
+export type TeamShutdownData = {
+  body?: TeamShutdownRequest
+  path: {
+    name: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/team/{name}/shutdown"
+}
+
+export type TeamShutdownErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type TeamShutdownError = TeamShutdownErrors[keyof TeamShutdownErrors]
+
+export type TeamShutdownResponses = {
+  /**
+   * Shutdown requested
+   */
+  200: TeamOk
+}
+
+export type TeamShutdownResponse = TeamShutdownResponses[keyof TeamShutdownResponses]
+
+export type TeamCleanupData = {
+  body?: TeamCleanupRequest
+  path: {
+    name: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/team/{name}/cleanup"
+}
+
+export type TeamCleanupErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type TeamCleanupError = TeamCleanupErrors[keyof TeamCleanupErrors]
+
+export type TeamCleanupResponses = {
+  /**
+   * Team cleaned up
+   */
+  200: TeamOk
+}
+
+export type TeamCleanupResponse = TeamCleanupResponses[keyof TeamCleanupResponses]
+
+export type TeamApprovePlanData = {
+  body?: TeamApprovePlanRequest
+  path: {
+    name: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/team/{name}/approve-plan"
+}
+
+export type TeamApprovePlanErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type TeamApprovePlanError = TeamApprovePlanErrors[keyof TeamApprovePlanErrors]
+
+export type TeamApprovePlanResponses = {
+  /**
+   * Plan decision saved
+   */
+  200: TeamOk
+}
+
+export type TeamApprovePlanResponse = TeamApprovePlanResponses[keyof TeamApprovePlanResponses]
+
+export type TeamMessagesData = {
+  body?: never
+  path: {
+    name: string
+  }
+  query: {
+    directory?: string
+    workspace?: string
+    sessionID: string
+  }
+  url: "/team/{name}/messages"
+}
+
+export type TeamMessagesErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type TeamMessagesError = TeamMessagesErrors[keyof TeamMessagesErrors]
+
+export type TeamMessagesResponses = {
+  /**
+   * Inbox messages
+   */
+  200: Array<TeamMessageItem>
+}
+
+export type TeamMessagesResponse = TeamMessagesResponses[keyof TeamMessagesResponses]
+
+export type TeamCancelData = {
+  body?: {
+    leadSessionID?: string
+    member?: string
+  }
+  path: {
+    name: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/team/{name}/cancel"
+}
+
+export type TeamCancelErrors = {
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type TeamCancelError = TeamCancelErrors[keyof TeamCancelErrors]
+
+export type TeamCancelResponses = {
+  /**
+   * Number of cancelled members
+   */
+  200: unknown
+}
 
 export type TuiAppendPromptData = {
   body?: {
@@ -4783,6 +6577,49 @@ export type TuiControlResponseResponses = {
 }
 
 export type TuiControlResponseResponse = TuiControlResponseResponses[keyof TuiControlResponseResponses]
+
+export type InstanceRemoteStartData = {
+  body?: {
+    relay: string
+    viewer: string
+  }
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/instance/remote/start"
+}
+
+export type InstanceRemoteStartResponses = {
+  /**
+   * Remote control started
+   */
+  200: {
+    url: string
+  }
+}
+
+export type InstanceRemoteStartResponse = InstanceRemoteStartResponses[keyof InstanceRemoteStartResponses]
+
+export type InstanceRemoteStopData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/instance/remote/stop"
+}
+
+export type InstanceRemoteStopResponses = {
+  /**
+   * Remote control stopped
+   */
+  200: boolean
+}
+
+export type InstanceRemoteStopResponse = InstanceRemoteStopResponses[keyof InstanceRemoteStopResponses]
 
 export type InstanceDisposeData = {
   body?: never

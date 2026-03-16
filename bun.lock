@@ -3731,7 +3731,7 @@
 
     "no-case": ["no-case@3.0.4", "", { "dependencies": { "lower-case": "^2.0.2", "tslib": "^2.0.3" } }, "sha512-fgAN3jGAh+RoxUGZHTSOLJIqUc2wmoBwGR4tbpNAKmmovFoWq0OdRkb0VkldReO2a2iBT/OEulG9XSUc10r3zg=="],
 
-    "node-abi": ["node-abi@4.26.0", "", { "dependencies": { "semver": "^7.6.3" } }, "sha512-8QwIZqikRvDIkXS2S93LjzhsSPJuIbfaMETWH+Bx8oOT9Sa9UsUtBFQlc3gBNd1+QINjaTloitXr1W3dQLi9Iw=="],
+    "node-abi": ["node-abi@3.87.0", "", { "dependencies": { "semver": "^7.3.5" } }, "sha512-+CGM1L1CgmtheLcBuleyYOn7NWPVu0s0EJH2C4puxgEZb9h8QpR9G2dBfZJOAUhi7VQxuBPMd0hiISWcTyiYyQ=="],
 
     "node-addon-api": ["node-addon-api@7.1.1", "", {}, "sha512-5m3bsyrjFWE1xf7nz7YXdN4udnVtXK6/Yfgn5qnahL6bCkf2yKt4k3nuTKAtT4r3IG8JNR2ncsIMdZuAzJjHQQ=="],
 
@@ -5099,6 +5099,8 @@
 
     "@electron/rebuild/detect-libc": ["detect-libc@2.1.2", "", {}, "sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ=="],
 
+    "@electron/rebuild/node-abi": ["node-abi@4.26.0", "", { "dependencies": { "semver": "^7.6.3" } }, "sha512-8QwIZqikRvDIkXS2S93LjzhsSPJuIbfaMETWH+Bx8oOT9Sa9UsUtBFQlc3gBNd1+QINjaTloitXr1W3dQLi9Iw=="],
+
     "@electron/rebuild/yargs": ["yargs@17.7.2", "", { "dependencies": { "cliui": "^8.0.1", "escalade": "^3.1.1", "get-caller-file": "^2.0.5", "require-directory": "^2.1.1", "string-width": "^4.2.3", "y18n": "^5.0.5", "yargs-parser": "^21.1.1" } }, "sha512-7dSzzRQ++CKnNI/krKnYRV7JKKPUXMEh61soaHKg9mrWEhzFWhFnxPxGl+69cD1Ou63C13NUPCnmIcrvqCuM6w=="],
 
     "@electron/universal/fs-extra": ["fs-extra@11.3.4", "", { "dependencies": { "graceful-fs": "^4.2.0", "jsonfile": "^6.0.1", "universalify": "^2.0.0" } }, "sha512-CTXd6rk/M3/ULNQj8FBqBWHYBVYybQ3VPBw0xGKFe3tuH7ytT6ACnvzpIQ3UZtB8yvUKC2cXn1a+x+5EVQLovA=="],
@@ -5644,8 +5646,6 @@
     "postject/commander": ["commander@9.5.0", "", {}, "sha512-KRs7WVDKg86PWiuAqhDrAQnTXZKraVcCc6vFdL14qrZ/DcWwuRo7VoiYXalXO7S5GKpqYiVEwCbgFDfxNHKJBQ=="],
 
     "prebuild-install/detect-libc": ["detect-libc@2.1.2", "", {}, "sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ=="],
-
-    "prebuild-install/node-abi": ["node-abi@3.87.0", "", { "dependencies": { "semver": "^7.3.5" } }, "sha512-+CGM1L1CgmtheLcBuleyYOn7NWPVu0s0EJH2C4puxgEZb9h8QpR9G2dBfZJOAUhi7VQxuBPMd0hiISWcTyiYyQ=="],
 
     "pretty-format/ansi-regex": ["ansi-regex@5.0.1", "", {}, "sha512-quJQXlTSUGL2LH9SUXo8VwsY4soanhgo6LNSm84E1LBcE8s3O0wpdiRzyR9z/ZZJMlMWv37qOOb9pdJlMUEKFQ=="],
 
