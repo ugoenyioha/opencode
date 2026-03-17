@@ -188,20 +188,6 @@ export function Prompt(props: PromptProps) {
   command.register(() => {
     return [
       {
-        title: "By the way",
-        value: "session.btw",
-        category: "Session",
-        slash: {
-          name: "btw",
-        },
-        enabled: !!props.sessionID,
-        onSelect: (dialog) => {
-          input.setText("/btw ")
-          input.gotoBufferEnd()
-          dialog.clear()
-        },
-      },
-      {
         title: "Context diagnostics",
         value: "session.context",
         category: "Session",
