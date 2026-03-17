@@ -50,6 +50,27 @@ export namespace LLM {
 
   export type StreamOutput = StreamTextResult<ToolSet, unknown>
 
+  function scrubHeaders(input: Record<string, string>) {
+    const out: Record<string, string> = {}
+    for (const [k, v] of Object.entries(input)) {
+      const x = k.toLowerCase()
+      if (
+        x === "authorization" ||
+        x === "proxy-authorization" ||
+        x === "cookie" ||
+        x === "set-cookie" ||
+        x.includes("token") ||
+        x.includes("secret") ||
+        x.includes("key")
+      ) {
+        out[k] = "[redacted]"
+        continue
+      }
+      out[k] = v
+    }
+    return out
+  }
+
   export async function stream(input: StreamInput) {
     const l = log
       .clone()
@@ -194,6 +215,55 @@ export namespace LLM {
 
     let result: StreamTextResult<ToolSet, unknown>
     try {
+      const req = {
+        system: [...system],
+        messages: [
+          ...system.map((x) => ({ role: "system", content: x })),
+          ...input.messages,
+        ] as Record<string, unknown>[],
+        toolNames: Object.keys(tools),
+        headers: {
+          ...(input.model.providerID.startsWith("opencode")
+            ? {
+                "x-opencode-project": Instance.project.id,
+                "x-opencode-session": input.sessionID,
+                "x-opencode-request": input.user.id,
+                "x-opencode-client": Flag.OPENCODE_CLIENT,
+              }
+            : input.model.providerID !== "anthropic"
+              ? {
+                  "User-Agent": `opencode/${Installation.VERSION}`,
+                }
+              : undefined),
+          ...input.model.headers,
+          ...headers,
+        },
+        temperature: params.temperature,
+        topP: params.topP,
+        topK: params.topK,
+        options: params.options,
+      }
+      const obs = {
+        system: [...req.system],
+        messages: JSON.parse(JSON.stringify(req.messages)) as Record<string, unknown>[],
+        toolNames: [...req.toolNames],
+        headers: scrubHeaders(req.headers),
+        temperature: req.temperature,
+        topP: req.topP,
+        topK: req.topK,
+        options: JSON.parse(JSON.stringify(req.options ?? {})) as Record<string, any>,
+      }
+      await Plugin.trigger(
+        "llm_input",
+        {
+          sessionID: input.sessionID,
+          agent: input.agent,
+          model: input.model,
+          provider,
+          message: input.user,
+        },
+        obs,
+      )
       result = streamText({
         onError(error) {
           l.error("stream error", {
@@ -230,32 +300,9 @@ export namespace LLM {
         toolChoice: input.toolChoice,
         maxOutputTokens,
         abortSignal: input.abort,
-        headers: {
-          ...(input.model.providerID.startsWith("opencode")
-            ? {
-                "x-opencode-project": Instance.project.id,
-                "x-opencode-session": input.sessionID,
-                "x-opencode-request": input.user.id,
-                "x-opencode-client": Flag.OPENCODE_CLIENT,
-              }
-            : input.model.providerID !== "anthropic"
-              ? {
-                  "User-Agent": `opencode/${Installation.VERSION}`,
-                }
-              : undefined),
-          ...input.model.headers,
-          ...headers,
-        },
+        headers: req.headers,
         maxRetries: input.retries ?? 0,
-        messages: [
-          ...system.map(
-            (x): ModelMessage => ({
-              role: "system",
-              content: x,
-            }),
-          ),
-          ...input.messages,
-        ],
+        messages: req.messages as ModelMessage[],
         model: wrapLanguageModel({
           model: language,
           middleware: [
@@ -286,6 +333,40 @@ export namespace LLM {
     const fullStream = (async function* () {
       try {
         for await (const item of originalFullStream) {
+          if (item.type === "finish-step") {
+            await Plugin.trigger(
+              "llm_output",
+              {
+                sessionID: input.sessionID,
+                agent: input.agent,
+                model: input.model,
+                provider,
+                message: input.user,
+              },
+              {
+                type: "finish-step",
+                finishReason: item.finishReason,
+                usage: item.usage as Record<string, unknown>,
+                providerMetadata: item.providerMetadata as Record<string, unknown> | undefined,
+              },
+            )
+          }
+          if (item.type === "error") {
+            await Plugin.trigger(
+              "llm_output",
+              {
+                sessionID: input.sessionID,
+                agent: input.agent,
+                model: input.model,
+                provider,
+                message: input.user,
+              },
+              {
+                type: "error",
+                error: item.error instanceof Error ? item.error.message : String(item.error),
+              },
+            )
+          }
           yield item
         }
       } finally {

@@ -316,6 +316,43 @@ export interface Hooks {
     input: { sessionID: string; agent: string; model: Model; provider: ProviderContext; message: UserMessage },
     output: { headers: Record<string, string> },
   ) => Promise<void>
+  /**
+   * Called immediately before an LLM request is issued.
+   * Intended for observability and auditing of the final request payload.
+   * This hook is observational only: runtime passes a sanitized snapshot and
+   * ignores any mutations made by plugins.
+   */
+  llm_input?: (
+    input: { sessionID: string; agent: string; model: Model; provider: ProviderContext; message: UserMessage },
+    output: {
+      system: string[]
+      messages: Record<string, unknown>[]
+      toolNames: string[]
+      headers: Record<string, string>
+      temperature?: number
+      topP?: number
+      topK?: number
+      options: Record<string, any>
+    },
+  ) => Promise<void>
+  /**
+   * Called when an LLM step completes or errors.
+   * Intended for observability of finish reason, usage, and provider metadata.
+   */
+  llm_output?: (
+    input: { sessionID: string; agent: string; model: Model; provider: ProviderContext; message: UserMessage },
+    output:
+      | {
+          type: "finish-step"
+          finishReason: string
+          usage: Record<string, unknown>
+          providerMetadata?: Record<string, unknown>
+        }
+      | {
+          type: "error"
+          error: string
+        },
+  ) => Promise<void>
   "permission.ask"?: (input: Permission, output: { status: "ask" | "deny" | "allow" }) => Promise<void>
   "command.execute.before"?: (
     input: { command: string; sessionID: string; arguments: string },
