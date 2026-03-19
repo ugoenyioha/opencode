@@ -161,4 +161,61 @@ describe("MCP Deferred Tool Loading", () => {
       },
     })
   })
+
+  test("keeps alwaysLoadTools pinned even when MCP tools are deferred", async () => {
+    await using tmp = await tmpdir({
+      config: {
+        mcp: {
+          gemini: {
+            type: "local",
+            command: ["npx", "gemini"],
+            alwaysLoadTools: ["web_search"],
+            instructions: "Use this server for comprehensive web search.",
+          },
+        },
+      },
+    })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const { jsonSchema } = await import("ai")
+        spyOn(MCP, "tools").mockResolvedValue({
+          gemini_web_search: {
+            description: "Search the web",
+            parameters: jsonSchema({ type: "object", properties: {} }),
+            execute: async () => "search",
+          },
+          gemini_other_tool: {
+            description: "Other deferred tool",
+            parameters: jsonSchema({ type: "object", properties: {} }),
+            execute: async () => "other",
+          },
+        } as any)
+        spyOn(MCP, "toolMeta").mockResolvedValue({
+          gemini_web_search: { server: "gemini", tool: "web_search" },
+          gemini_other_tool: { server: "gemini", tool: "other_tool" },
+        })
+
+        const originalThreshold = Flag.OPENCODE_MCP_DEFER_THRESHOLD
+        try {
+          ;(Flag as any).OPENCODE_MCP_DEFER_THRESHOLD = 1
+          const tools = await SessionPrompt.resolveTools({
+            messages: [],
+            agent: { permission: [{ permission: "*", action: "allow", pattern: "*" }] } as any,
+            model: { api: { id: "test" }, providerID: "test" } as any,
+            session: { id: "ses_1234" } as any,
+            processor: { message: { id: "msg_1" } } as any,
+            bypassAgentCheck: true,
+          })
+
+          const names = Object.keys(tools).filter((name) => name.startsWith("gemini_") || name === "tool_search")
+          expect(names).toContain("gemini_web_search")
+          expect(names).toContain("tool_search")
+          expect(names).not.toContain("gemini_other_tool")
+        } finally {
+          ;(Flag as any).OPENCODE_MCP_DEFER_THRESHOLD = originalThreshold
+        }
+      },
+    })
+  })
 })

@@ -730,6 +730,8 @@ export namespace SessionPrompt {
 
       // Build system prompt, adding structured output instruction if needed
       const system = [...(await SystemPrompt.environment(model)), ...(await InstructionPrompt.system())]
+      const mcpInstructions = await deferredInstructions(msgs)
+      if (mcpInstructions) system.push(mcpInstructions)
       const format = lastUser.format ?? { type: "text" }
       if (format.type === "json_schema") {
         system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
@@ -921,13 +923,18 @@ export namespace SessionPrompt {
       }
     }
 
+    const cfg = await Config.get()
     const allMcpTools = await MCP.tools()
+    const mcpMeta = await MCP.toolMeta()
     let mcpToolsToLoad = allMcpTools
     const deferredList = new Map<string, string>()
     if (Object.keys(allMcpTools).length > Flag.OPENCODE_MCP_DEFER_THRESHOLD) {
       mcpToolsToLoad = {}
       for (const [name, item] of Object.entries(allMcpTools)) {
-        if (activeTools.has(name)) {
+        const meta = mcpMeta[name]
+        const server = meta ? cfg.mcp?.[meta.server] : undefined
+        const pinned = !!(server && "alwaysLoadTools" in server && server.alwaysLoadTools?.includes(meta.tool))
+        if (activeTools.has(name) || pinned) {
           mcpToolsToLoad[name] = item
           continue
         }
@@ -2061,6 +2068,45 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       }),
     )
     return lines.join("\n")
+  }
+
+  export async function deferredInstructions(messages: MessageV2.WithParts[]) {
+    const cfg = await Config.get()
+    const activeTools = SessionCompaction.discovered(messages)
+    for (const msg of messages) {
+      for (const part of msg.parts) {
+        if (part.type !== "tool") continue
+        activeTools.add(part.tool)
+      }
+    }
+
+    const allMcpTools = await MCP.tools()
+    if (Object.keys(allMcpTools).length <= Flag.OPENCODE_MCP_DEFER_THRESHOLD) return
+    const meta = await MCP.toolMeta()
+    const servers = new Set<string>()
+
+    for (const name of Object.keys(allMcpTools)) {
+      const item = meta[name]
+      if (!item) continue
+      const server = cfg.mcp?.[item.server]
+      const pinned = !!(server && "alwaysLoadTools" in server && server.alwaysLoadTools?.includes(item.tool))
+      if (activeTools.has(name) || pinned) continue
+      servers.add(item.server)
+    }
+
+    const blocks = Array.from(servers)
+      .flatMap((name) => {
+        const item = cfg.mcp?.[name]
+        if (!item || !("instructions" in item) || !item.instructions) return []
+        return [`## ${name}\n${item.instructions}`]
+      })
+      .sort()
+
+    if (blocks.length === 0) return
+    return [
+      "Some MCP servers have deferred tools. Use `tool_search` to discover and load them when needed.",
+      ...blocks,
+    ].join("\n\n")
   }
 
   export async function commandBtw(input: {

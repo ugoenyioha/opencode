@@ -8,6 +8,7 @@ import { SessionPrompt } from "../../src/session/prompt"
 import { Log } from "../../src/util/log"
 import { tmpdir } from "../fixture/fixture"
 import { MCP } from "../../src/mcp"
+import { Flag } from "../../src/flag/flag"
 
 Log.init({ print: false })
 
@@ -305,6 +306,56 @@ describe("session.prompt binary MCP content", () => {
         const saved = Buffer.from(await Bun.file(p).arrayBuffer()).toString("utf8")
         expect(saved).toBe("phase4-resource-bytes")
         mockTools.mockRestore()
+      },
+    })
+  })
+})
+
+describe("session.prompt deferred MCP instructions", () => {
+  test("includes MCP server instructions when tools are deferred", async () => {
+    await using tmp = await tmpdir({
+      config: {
+        mcp: {
+          gemini: {
+            type: "local",
+            command: ["npx", "gemini"],
+            instructions: "Use this server for comprehensive web search.",
+          },
+        },
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const { jsonSchema } = await import("ai")
+        spyOn(MCP, "tools").mockResolvedValue({
+          gemini_web_search: {
+            description: "Search the web",
+            parameters: jsonSchema({ type: "object", properties: {} }),
+            execute: async () => "search",
+          },
+          gemini_other_tool: {
+            description: "Other deferred tool",
+            parameters: jsonSchema({ type: "object", properties: {} }),
+            execute: async () => "other",
+          },
+        } as any)
+        spyOn(MCP, "toolMeta").mockResolvedValue({
+          gemini_web_search: { server: "gemini", tool: "web_search" },
+          gemini_other_tool: { server: "gemini", tool: "other_tool" },
+        })
+
+        const originalThreshold = Flag.OPENCODE_MCP_DEFER_THRESHOLD
+        try {
+          ;(Flag as any).OPENCODE_MCP_DEFER_THRESHOLD = 1
+          const block = await SessionPrompt.deferredInstructions([] as any)
+          expect(block).toContain("Some MCP servers have deferred tools")
+          expect(block).toContain("## gemini")
+          expect(block).toContain("Use this server for comprehensive web search.")
+        } finally {
+          ;(Flag as any).OPENCODE_MCP_DEFER_THRESHOLD = originalThreshold
+        }
       },
     })
   })

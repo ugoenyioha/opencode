@@ -64,6 +64,10 @@ export namespace MCP {
   )
 
   type MCPClient = Client
+  export type ToolMeta = {
+    server: string
+    tool: string
+  }
 
   export const Status = z
     .discriminatedUnion("status", [
@@ -704,6 +708,41 @@ export namespace MCP {
       }
     }
     s.toolsCache = result
+    return result
+  }
+
+  export async function toolMeta() {
+    const s = await state()
+    const cfg = await Config.get()
+    const config = cfg.mcp ?? {}
+    const clientsSnapshot = await clients()
+    const result: Record<string, ToolMeta> = {}
+
+    const connectedClients = Object.entries(clientsSnapshot).filter(
+      ([clientName]) => s.status[clientName]?.status === "connected",
+    )
+
+    const toolsResults = await Promise.all(
+      connectedClients.map(async ([clientName, client]) => {
+        const toolsResult = await client.listTools().catch(() => undefined)
+        return { clientName, toolsResult }
+      }),
+    )
+
+    for (const { clientName, toolsResult } of toolsResults) {
+      if (!toolsResult) continue
+      const mcpConfig = config[clientName]
+      if (!isMcpConfigured(mcpConfig)) continue
+      for (const mcpTool of toolsResult.tools) {
+        const sanitizedClientName = clientName.replace(/[^a-zA-Z0-9_-]/g, "_")
+        const sanitizedToolName = mcpTool.name.replace(/[^a-zA-Z0-9_-]/g, "_")
+        result[sanitizedClientName + "_" + sanitizedToolName] = {
+          server: clientName,
+          tool: mcpTool.name,
+        }
+      }
+    }
+
     return result
   }
 
