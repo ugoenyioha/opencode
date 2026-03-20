@@ -10,7 +10,20 @@ import z from "zod"
 import { Config } from "@/config/config"
 import { Plugin } from "@/plugin"
 
-const SENSITIVE_TOOLS = new Set(["bash", "read", "write", "edit", "glob", "grep", "patch", "apply_patch"])
+const SENSITIVE_TOOLS = new Set([
+  "bash",
+  "read",
+  "write",
+  "edit",
+  "glob",
+  "grep",
+  "patch",
+  "apply_patch",
+  "approve_action",
+  "workspace_identity_update",
+  "workspace_soul_update",
+  "workspace_user_update",
+])
 
 export function isSensitiveTool(tool: string) {
   return SENSITIVE_TOOLS.has(tool)

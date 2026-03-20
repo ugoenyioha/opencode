@@ -118,6 +118,7 @@ export async function startCompat(req: CompatRequest) {
   const session = await Session.create({})
   const pending = SessionPrompt.prompt({
     sessionID: session.id,
+    agent: "build",
     model,
     parts: [
       {
