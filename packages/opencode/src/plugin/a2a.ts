@@ -5,6 +5,7 @@ import { Skill } from "@/skill/skill"
 import { Agent } from "@/agent/agent"
 import { Log } from "@/util/log"
 import { Session } from "@/session"
+import { SessionContext } from "@/session/context"
 import { SessionPrompt } from "@/session/prompt"
 import { SessionStatus } from "@/session/status"
 import { MessageV2 } from "@/session/message-v2"
@@ -18,9 +19,14 @@ import { emitAuthDecision } from "../server/auth-observability"
 import { mapA2AAuthzStatus } from "../server/authz-status"
 import { A2ATaskTable } from "./a2a.sql"
 import { A2AObs } from "./a2a-observability"
+import { createHash } from "node:crypto"
 // Auth is enforced per-agent in agentHandler() — agent config replaces server-level auth.
 
 const log = Log.create({ service: "a2a" })
+
+function out(event: string, data: Record<string, unknown>) {
+  A2AObs.emit(event, data)
+}
 
 const JSON_MIME = "application/a2a+json"
 const A2A_VERSION = "1.0"
@@ -695,6 +701,13 @@ async function finalizeTaskFromSession(task: A2ATask, agentId: string, sessionID
   }
 
   transitionTask(task, "TASK_STATE_COMPLETED")
+  out("a2a.task.completed", {
+    agent: agentId,
+    task_id: task.id,
+    context_id: task.contextId,
+    session_id: sessionID,
+    state: task.status.state,
+  })
 }
 
 function subscribeTaskLifecycle(task: A2ATask, agentId: string, sessionID: string, onUpdate?: (task: A2ATask) => void) {
@@ -714,6 +727,14 @@ function subscribeTaskLifecycle(task: A2ATask, agentId: string, sessionID: strin
       log.error("A2A session status handler failed", { taskId: task.id })
       if (!isTerminalState(task.status.state)) {
         transitionTask(task, "TASK_STATE_FAILED", sanitizeFailureMessage("Internal error processing request"))
+        out("a2a.task.failed", {
+          agent: agentId,
+          task_id: task.id,
+          context_id: task.contextId,
+          session_id: sessionID,
+          state: task.status.state,
+          reason: "Internal error processing request",
+        })
         onUpdate?.(task)
       }
       unsubscribe()
@@ -818,6 +839,7 @@ async function handleSendMessage(
   _agent: A2AAgent,
   req: SendMessageRequest,
   blocking: boolean,
+  auth?: { subject_token?: string; workload_token?: string },
 ): Promise<A2ATask> {
   // 1. Validate request
   if (!req.message.messageId) {
@@ -842,6 +864,14 @@ async function handleSendMessage(
     updatedAt: Date.now(),
   }
   setTask(task)
+  out("a2a.task.created", {
+    agent: agentId,
+    task_id: task.id,
+    context_id: task.contextId,
+    state: task.status.state,
+    blocking,
+    message_id: req.message.messageId,
+  })
 
   // 3. Extract prompt from message parts
   const prompt = req.message.parts
@@ -854,7 +884,22 @@ async function handleSendMessage(
   try {
     const session = await Session.create({})
     task.sessionId = session.id
+    if (auth?.subject_token || auth?.workload_token) {
+      SessionContext.set(session.id, {
+        a2a: {
+          subject_token: auth.subject_token,
+          workload_token: auth.workload_token,
+        },
+      })
+    }
     transitionTask(task, "TASK_STATE_WORKING", "Processing request...")
+    out("a2a.task.working", {
+      agent: agentId,
+      task_id: task.id,
+      context_id: task.contextId,
+      session_id: session.id,
+      state: task.status.state,
+    })
 
     // 5. Subscribe to session status updates
     const unsubscribe = subscribeTaskLifecycle(task, agentId, session.id)
@@ -869,6 +914,14 @@ async function handleSendMessage(
       log.error("A2A session prompt failed", { taskId: task.id })
       if (isTerminalState(task.status.state)) return
       transitionTask(task, "TASK_STATE_FAILED", sanitizeFailureMessage("Session prompt failed"))
+      out("a2a.task.failed", {
+        agent: agentId,
+        task_id: task.id,
+        context_id: task.contextId,
+        session_id: session.id,
+        state: task.status.state,
+        reason: "Session prompt failed",
+      })
       unsubscribe()
     })
 
@@ -879,6 +932,14 @@ async function handleSendMessage(
       while (!isTerminalState(task.status.state)) {
         if (Date.now() - start > timeout) {
           transitionTask(task, "TASK_STATE_FAILED", "Request timed out")
+          out("a2a.task.failed", {
+            agent: agentId,
+            task_id: task.id,
+            context_id: task.contextId,
+            session_id: session.id,
+            state: task.status.state,
+            reason: "Request timed out",
+          })
           unsubscribe()
           break
         }
@@ -888,7 +949,34 @@ async function handleSendMessage(
   } catch (error) {
     log.error("A2A session creation failed", { taskId: task.id })
     transitionTask(task, "TASK_STATE_FAILED", sanitizeFailureMessage("Failed to create session"))
+    out("a2a.task.failed", {
+      agent: agentId,
+      task_id: task.id,
+      context_id: task.contextId,
+      state: task.status.state,
+      reason: "Failed to create session",
+    })
   }
+
+  if (task.status.state === "TASK_STATE_COMPLETED") {
+    out("a2a.task.completed", {
+      agent: agentId,
+      task_id: task.id,
+      context_id: task.contextId,
+      session_id: task.sessionId,
+      state: task.status.state,
+    })
+  }
+  if (task.status.state === "TASK_STATE_AUTH_REQUIRED") {
+    out("a2a.task.auth_required", {
+      agent: agentId,
+      task_id: task.id,
+      context_id: task.contextId,
+      session_id: task.sessionId,
+      state: task.status.state,
+    })
+  }
+  if (isTerminalState(task.status.state) && task.sessionId) SessionContext.clear(task.sessionId)
 
   return task
 }
@@ -911,6 +999,7 @@ async function handleCancelTask(taskId: string): Promise<A2ATask | undefined> {
   }
 
   transitionTask(task, "TASK_STATE_CANCELED", "Task canceled by client")
+  if (task.sessionId) SessionContext.clear(task.sessionId)
   return task
 }
 
@@ -984,7 +1073,14 @@ export const A2APlugin: Plugin = async () => {
 
     for (const strategy of strategies) {
       if (strategy === "api-key") {
-        if (validA2AApiKey(headers)) return { ok: true, strategy: "api-key", principal: "api-key" }
+        if (validA2AApiKey(headers)) {
+          out("a2a.auth.verify.pass", {
+            agent: agentId,
+            strategy: "api-key",
+            principal: "api-key",
+          })
+          return { ok: true, strategy: "api-key", principal: "api-key" }
+        }
         continue
       }
       if (strategy === "plugin") continue // Enforced by plugin hooks, not here
@@ -1015,7 +1111,14 @@ export const A2APlugin: Plugin = async () => {
 
           const { verifySPIFFE } = await import("../server/spiffe")
           const spiffeId = await verifySPIFFE(token, audience, allowedIds)
-          if (spiffeId) return { ok: true, strategy: "spiffe", principal: spiffeId }
+          if (spiffeId) {
+            out("a2a.auth.verify.pass", {
+              agent: agentId,
+              strategy: "spiffe",
+              principal: spiffeId,
+            })
+            return { ok: true, strategy: "spiffe", principal: spiffeId }
+          }
         } catch (error) {
           // SPIFFE verification errors should fail closed (deny auth)
           // This includes SPIRE Agent unavailability, validation failures, etc.
@@ -1063,6 +1166,10 @@ export const A2APlugin: Plugin = async () => {
         return { ok: true, strategy: strategy as any, principal: result.sub, claims: result as Record<string, unknown> }
       }
     }
+    out("a2a.auth.verify.fail", {
+      agent: agentId,
+      strategies,
+    })
     return { ok: false, strategy: "none", principal: "" }
   }
 
@@ -1310,11 +1417,22 @@ export const A2APlugin: Plugin = async () => {
     // Step 1: Authentication (who are you?)
     const authn = await checkAgentAuth(agent.auth, req.headers, agentId)
     if (!authn.ok) {
+      out("a2a.request.denied", {
+        agent: agentId,
+        route: `a2a.${agentId}`,
+        reason: "authentication_required",
+      })
       return json({ error: { code: "Unauthorized", message: "Authentication required" } }, 401)
     }
 
     // Stash the authn result so ext_authz and handlers can access the caller identity
     _authnResults.set(req, authn)
+    out("a2a.request.accepted", {
+      agent: agentId,
+      route: `a2a.${agentId}`,
+      strategy: authn.strategy,
+      principal: authn.principal,
+    })
 
     // Step 2: Authorization (ext_authz or plugin)
     const authzConfig = await resolveAuthzConfig(agentId)
@@ -2044,6 +2162,10 @@ export const A2APlugin: Plugin = async () => {
 
         try {
           const body = (await req.json()) as SendMessageRequest
+          const auth = {
+            subject_token: req.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim(),
+            workload_token: req.headers.get("x-opencode-workload")?.replace(/^Bearer\s+/i, "").trim(),
+          }
           const blocking = body.configuration?.blocking ?? false
           out("a2a.request.received", {
             agent: agentId,
@@ -2052,14 +2174,19 @@ export const A2APlugin: Plugin = async () => {
             principal: getAuthnResult(req)?.principal,
             strategy: getAuthnResult(req)?.strategy,
             message_id: body.message?.messageId,
-            task_id: (body as any).taskId,
+            task_id: body.taskId,
             context_id: body.contextId,
             parts_count: Array.isArray(body.message?.parts) ? body.message.parts.length : 0,
           })
-          const task = await handleSendMessage(agentId, agent, body, blocking)
+          const task = await handleSendMessage(agentId, agent, body, blocking, auth)
           return addA2AVersionHeader(json(taskResponse(task)))
         } catch (error: any) {
           log.error("message:send failed", { error, agentId })
+          out("a2a.request.failed", {
+            agent: agentId,
+            route: `a2a.${agentId}`,
+            error: error.message || "Invalid request",
+          })
           return addA2AVersionHeader(a2aError(-32600, error.message || "Invalid request"))
         }
       },

@@ -38,6 +38,7 @@ import { NamedError } from "@opencode-ai/util/error"
 import { Config } from "@/config/config"
 import { ConcurrencyLimitError } from "@/limit"
 import { fn } from "@/util/fn"
+import { SessionContext } from "./context"
 import { SessionProcessor } from "./processor"
 import { TaskTool } from "@/tool/task"
 import { Tool } from "@/tool/tool"
@@ -830,13 +831,18 @@ export namespace SessionPrompt {
   }) {
     using _ = log.time("resolveTools")
     const tools: Record<string, AITool> = {}
+    const info = SessionContext.get(input.session.id)
 
     const context = (args: any, options: ToolCallOptions): Tool.Context => ({
       sessionID: input.session.id,
       abort: options.abortSignal!,
       messageID: input.processor.message.id,
       callID: options.toolCallId,
-      extra: { model: input.model, bypassAgentCheck: input.bypassAgentCheck },
+      extra: {
+        model: input.model,
+        bypassAgentCheck: input.bypassAgentCheck,
+        ...(info ? { session: info } : {}),
+      },
       agent: input.agent.name,
       messages: input.messages,
       metadata: async (val: { title?: string; metadata?: any }) => {
