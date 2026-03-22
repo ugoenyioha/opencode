@@ -32,6 +32,8 @@ export type AuthnResult = {
   strategy: AuthStrategyLabel
   /** The authenticated identity — empty when auth is not required or failed. */
   principal: string
+  /** Decoded JWT claims from the verified bearer token (if available). */
+  claims?: Record<string, unknown>
 }
 
 export type AuthorizationDecision = {

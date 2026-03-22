@@ -291,6 +291,60 @@ function parsePath(url: string) {
   }
 }
 
+function x5t(headers: Headers) {
+  const xfcc = headers.get("x-forwarded-client-cert")?.trim()
+  if (!xfcc) return
+  const hash = xfcc.match(/(?:^|;)Hash=([0-9A-Fa-f]+)/)
+  if (hash) {
+    try {
+      return Buffer.from(hash[1], "hex").toString("base64url")
+    } catch {}
+  }
+  const match = xfcc.match(/(?:^|;)Cert="([^"]+)"/)
+  if (!match) return
+  try {
+    const pem = decodeURIComponent(match[1])
+    const body = pem
+      .replace(/-----BEGIN CERTIFICATE-----/g, "")
+      .replace(/-----END CERTIFICATE-----/g, "")
+      .replace(/\s+/g, "")
+    const der = Buffer.from(body, "base64")
+    return createHash("sha256").update(der).digest("base64url")
+  } catch {
+    return
+  }
+}
+
+function prefix(value: unknown) {
+  if (typeof value !== "string") return
+  return value.slice(0, 12)
+}
+
+// Structured JSON log to stdout (read by telemetry pipelines / demo-ui)
+// AND emit through A2AObs so tests can observe events via setA2AEventSink().
+// AND broadcast to the GlobalBus so the SSE /event stream delivers it to clients.
+function out(event: string, data: Record<string, unknown>) {
+  console.log(JSON.stringify({ event, ts: new Date().toISOString(), ...data }))
+  A2AObs.emit(event, { event, ...data })
+  // Broadcast to the SSE event stream so external consumers (e.g., Mattermost plugin)
+  // can react to A2A lifecycle events like task.auth_required.
+  broadcastToSSE(event, data)
+}
+
+async function broadcastToSSE(event: string, data: Record<string, unknown>) {
+  try {
+    const { GlobalBus } = await import("../bus/global")
+    const { Instance } = await import("../project/instance")
+    GlobalBus.emit("event", {
+      directory: Instance.directory,
+      payload: {
+        type: event,
+        properties: data,
+      },
+    })
+  } catch {}
+}
+
 function securityRequirements(
   auth: AuthStrategy[],
   schemes: Record<string, { type: "apiKey" | "http" | "mutualTls" | "oauth2" | "oidc" }>,
@@ -978,7 +1032,34 @@ export const A2APlugin: Plugin = async () => {
         source: "centralized",
       })
       if (typeof result === "object" && result?.sub) {
-        return { ok: true, strategy: strategy as any, principal: result.sub }
+        const bound = result.cnf && typeof result.cnf === "object" ? (result.cnf as Record<string, unknown>)["x5t#S256"] : undefined
+        if (typeof bound === "string") {
+          const presented = x5t(headers)
+          if (!presented || presented !== bound) {
+            out("a2a.auth.sender_constraint.fail", {
+              agent: agentId,
+              strategy,
+              principal: result.sub,
+              expected_x5t_prefix: bound.slice(0, 12),
+              presented_x5t_prefix: presented?.slice(0, 12),
+            })
+            continue
+          }
+          out("a2a.auth.sender_constraint.pass", {
+            agent: agentId,
+            strategy,
+            principal: result.sub,
+            expected_x5t_prefix: bound.slice(0, 12),
+            presented_x5t_prefix: presented.slice(0, 12),
+          })
+        }
+        out("a2a.auth.verify.pass", {
+          agent: agentId,
+          strategy,
+          principal: result.sub,
+          cnf_present: !!result.cnf,
+        })
+        return { ok: true, strategy: strategy as any, principal: result.sub, claims: result as Record<string, unknown> }
       }
     }
     return { ok: false, strategy: "none", principal: "" }
@@ -1175,6 +1256,9 @@ export const A2APlugin: Plugin = async () => {
       principal: authn.principal,
       user_principal: authn.principal,
       workload_principal,
+      // Pass the decoded JWT claims so authz plugins (e.g., Cedar) can evaluate
+      // rich token attributes like authorization_details, act_depth, step_up_verified.
+      claims: authn.claims,
       plugin: {
         id: pluginAuthz.id,
         policy: pluginAuthz.policy,
