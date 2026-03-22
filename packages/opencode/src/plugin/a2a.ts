@@ -2044,6 +2044,17 @@ export const A2APlugin: Plugin = async () => {
         try {
           const body = (await req.json()) as SendMessageRequest
           const blocking = body.configuration?.blocking ?? false
+          out("a2a.request.received", {
+            agent: agentId,
+            route: `a2a.${agentId}`,
+            blocking,
+            principal: getAuthnResult(req)?.principal,
+            strategy: getAuthnResult(req)?.strategy,
+            message_id: body.message?.messageId,
+            task_id: (body as any).taskId,
+            context_id: body.contextId,
+            parts_count: Array.isArray(body.message?.parts) ? body.message.parts.length : 0,
+          })
           const task = await handleSendMessage(agentId, agent, body, blocking)
           return addA2AVersionHeader(json(taskResponse(task)))
         } catch (error: any) {
