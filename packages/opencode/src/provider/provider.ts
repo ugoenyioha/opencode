@@ -1312,6 +1312,21 @@ export namespace Provider {
     if (cfg.model) return parseModel(cfg.model)
 
     const providers = await list()
+
+    // If the config explicitly declares a provider with specific models,
+    // use the first exact model from that config rather than fuzzy-matching
+    // to a variant that may not exist in the API.
+    if (cfg.provider) {
+      for (const [pid, pcfg] of Object.entries(cfg.provider)) {
+        const provider = providers[pid]
+        if (!provider) continue
+        const configured = Object.keys((pcfg as any)?.models ?? {})
+        for (const mid of configured) {
+          if (provider.models[mid]) return { providerID: pid, modelID: mid }
+        }
+      }
+    }
+
     const recent = (await Filesystem.readJson<{ recent?: { providerID: string; modelID: string }[] }>(
       path.join(Global.Path.state, "model.json"),
     )
