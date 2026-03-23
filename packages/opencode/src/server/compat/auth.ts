@@ -266,7 +266,9 @@ async function verifyRS256JWT(
           return values.length ? values : undefined
         })()
   if (!claimChecksWithExpected(parsed.payload, issuer, audience)) return false
-  return { sub: parsed.payload.sub }
+  // Return the full JWT payload so authz plugins (e.g., Cedar) can evaluate
+  // rich claims like authorization_details, act, act_depth, step_up_verified.
+  return parsed.payload as Record<string, unknown>
 }
 
 type OIDCDiscovery = {
