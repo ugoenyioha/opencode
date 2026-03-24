@@ -11,6 +11,7 @@ import { Trust } from "../../src/trust"
 import { Global } from "../../src/global"
 
 import { Flag } from "../../src/flag/flag"
+import { Env } from "../../src/env"
 
 // Strip null bytes from paths (defensive fix for CI environment issues)
 function sanitizePath(p: string): string {
@@ -142,4 +143,30 @@ export async function tmpdir<T>(options?: TmpDirOptions<T>) {
     extra: extra as T,
   }
   return result
+}
+
+/**
+ * Inject a real Anthropic OAuth token from the local auth.json file
+ * so tests can use a Max subscription for real LLM calls.
+ *
+ * Returns a cleanup function that restores the original env.
+ * Skips silently if no auth.json or no valid token is found.
+ */
+export async function useRealAnthropicToken(): Promise<() => void> {
+  // Read from the REAL user auth.json, not the test sandbox
+  const authPath = path.join(os.homedir(), ".local", "share", "opencode", "auth.json")
+  try {
+    const raw = await fs.readFile(authPath, "utf8")
+    const data = JSON.parse(raw)
+    const token = data?.anthropic?.access
+    if (!token || typeof token !== "string") return () => {}
+    const prev = Env.get("ANTHROPIC_API_KEY")
+    Env.set("ANTHROPIC_API_KEY", token)
+    return () => {
+      if (prev) Env.set("ANTHROPIC_API_KEY", prev)
+      else Env.set("ANTHROPIC_API_KEY", "")
+    }
+  } catch {
+    return () => {}
+  }
 }
