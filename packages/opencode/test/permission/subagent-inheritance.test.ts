@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test"
-import { PermissionNext } from "../../src/permission/next"
+import { Permission as PermissionNext } from "../../src/permission"
 
 describe("subagent permission inheritance (#12566)", () => {
   test("child session inherits parent agent allow-all permission", () => {
