@@ -119,8 +119,8 @@ describe("Team.cancelMember", () => {
         })
 
         // Simulate the member being busy
-        SessionStatus.set(member.id, { type: "busy" })
-        expect(SessionStatus.get(member.id).type).toBe("busy")
+        await SessionStatus.set(member.id, { type: "busy" })
+        expect((await SessionStatus.get(member.id)).type).toBe("busy")
 
         const result = await Team.cancelMember("cancel-test-4", "busy-worker")
         expect(result).toBe(true)
@@ -210,8 +210,8 @@ describe("Team.cancelAllMembers", () => {
         await Team.setMemberStatus("cancel-all-2", "worker-c", "shutdown")
 
         // Simulate busy sessions
-        SessionStatus.set(m1.id, { type: "busy" })
-        SessionStatus.set(m2.id, { type: "busy" })
+        await SessionStatus.set(m1.id, { type: "busy" })
+        await SessionStatus.set(m2.id, { type: "busy" })
 
         const result = await Team.cancelAllMembers("cancel-all-2")
         expect(result).toBe(2)
@@ -254,7 +254,7 @@ describe("Team.cancelAllMembers", () => {
         })
         await Team.setMemberStatus("cancel-all-3", "interrupted-one", "ready")
 
-        SessionStatus.set(m1.id, { type: "busy" })
+        await SessionStatus.set(m1.id, { type: "busy" })
 
         const result = await Team.cancelAllMembers("cancel-all-3")
         expect(result).toBe(1) // Only the active one
@@ -295,8 +295,8 @@ describe("Abort propagation: lead abort cancels teammates", () => {
           status: "busy",
         })
 
-        SessionStatus.set(m1.id, { type: "busy" })
-        SessionStatus.set(m2.id, { type: "busy" })
+        await SessionStatus.set(m1.id, { type: "busy" })
+        await SessionStatus.set(m2.id, { type: "busy" })
 
         // Simulate what the session.abort route does:
         // 1. Cancel lead session (SessionPrompt.cancel)
@@ -357,8 +357,8 @@ describe("Abort propagation: lead abort cancels teammates", () => {
           status: "busy",
         })
 
-        SessionStatus.set(m1.id, { type: "busy" })
-        SessionStatus.set(m2.id, { type: "busy" })
+        await SessionStatus.set(m1.id, { type: "busy" })
+        await SessionStatus.set(m2.id, { type: "busy" })
 
         // When a member session is aborted, findBySession returns "member" role
         const match = await Team.findBySession(m1.id)
@@ -403,14 +403,14 @@ describe("Cancel vs finish notification", () => {
           status: "busy",
         })
 
-        SessionStatus.set(m1.id, { type: "busy" })
+        await SessionStatus.set(m1.id, { type: "busy" })
 
         // Cancel one member
         const ok = await Team.cancelMember("cancel-notify-1", "will-cancel")
         expect(ok).toBe(true)
 
         // cancelAllMembers also marks sessions
-        SessionStatus.set(m2.id, { type: "busy" })
+        await SessionStatus.set(m2.id, { type: "busy" })
         const count = await Team.cancelAllMembers("cancel-notify-1")
         // m1 is no longer active (was cancelled above), only m2 gets cancelled
         // But m1 status wasn't updated to non-active in Team storage by cancelMember

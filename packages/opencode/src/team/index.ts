@@ -1142,7 +1142,7 @@ export namespace Team {
     if (!current) return true
     if (TERMINAL_EXECUTION_STATES.has(current.execution_status ?? "idle")) return true
 
-    const runtime = SessionStatus.get(member.sessionID)
+    const runtime = await SessionStatus.get(member.sessionID)
     if (runtime.type !== "idle") return false
 
     await transitionExecutionStatus(teamName, memberName, "cancelled", { force: true })

@@ -329,9 +329,11 @@ export namespace JsonMigration {
           if (!todo?.content || !todo?.status || !todo?.priority) continue
           values.push({
             session_id: sessionID,
+            id: todo.id ?? `todo-${position}`,
             content: todo.content,
             status: todo.status,
             priority: todo.priority,
+            depends_on: todo.depends_on ?? [],
             position,
             time_created: now,
             time_updated: now,

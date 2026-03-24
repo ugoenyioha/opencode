@@ -172,8 +172,8 @@ describe("autoWake: send to busy recipient", () => {
         })
 
         // Simulate a busy session (prompt loop already running)
-        SessionStatus.set(member.id, { type: "busy" })
-        expect(SessionStatus.get(member.id).type).toBe("busy")
+        await SessionStatus.set(member.id, { type: "busy" })
+        expect((await SessionStatus.get(member.id)).type).toBe("busy")
 
         // send() should succeed — autoWake skips because status !== "idle"
         await TeamMessaging.send({
@@ -191,10 +191,10 @@ describe("autoWake: send to busy recipient", () => {
         expect(received).toBeDefined()
 
         // Status should still be busy (autoWake did nothing)
-        expect(SessionStatus.get(member.id).type).toBe("busy")
+        expect((await SessionStatus.get(member.id)).type).toBe("busy")
 
         // Reset status for cleanup
-        SessionStatus.set(member.id, { type: "idle" })
+        await SessionStatus.set(member.id, { type: "idle" })
         await Team.setMemberStatus("wake-busy", "worker", "shutdown")
         await Team.cleanup("wake-busy")
       },
@@ -221,8 +221,8 @@ describe("autoWake: send to busy recipient", () => {
         })
 
         // Set retry state — autoWake should skip (type !== "idle")
-        SessionStatus.set(member.id, { type: "retry", attempt: 1, message: "rate limited", next: Date.now() + 5000 })
-        expect(SessionStatus.get(member.id).type).toBe("retry")
+        await SessionStatus.set(member.id, { type: "retry", attempt: 1, message: "rate limited", next: Date.now() + 5000 })
+        expect((await SessionStatus.get(member.id)).type).toBe("retry")
 
         await TeamMessaging.send({
           teamName: "wake-retry",
@@ -237,9 +237,9 @@ describe("autoWake: send to busy recipient", () => {
         expect(received).toBeDefined()
 
         // Status unchanged
-        expect(SessionStatus.get(member.id).type).toBe("retry")
+        expect((await SessionStatus.get(member.id)).type).toBe("retry")
 
-        SessionStatus.set(member.id, { type: "idle" })
+        await SessionStatus.set(member.id, { type: "idle" })
         await Team.setMemberStatus("wake-retry", "worker", "shutdown")
         await Team.cleanup("wake-retry")
       },
@@ -274,7 +274,7 @@ describe("autoWake: broadcast", () => {
         await Team.addMember("bcast-wake", { name: "busy-c", sessionID: busy1.id, agent: "general", status: "busy" })
 
         // idle-a and idle-b are idle (default), busy-c is busy
-        SessionStatus.set(busy1.id, { type: "busy" })
+        await SessionStatus.set(busy1.id, { type: "busy" })
 
         // Broadcast from lead to all members
         await TeamMessaging.broadcast({
@@ -295,10 +295,10 @@ describe("autoWake: broadcast", () => {
         }
 
         // busy-c should still be busy
-        expect(SessionStatus.get(busy1.id).type).toBe("busy")
+        expect((await SessionStatus.get(busy1.id)).type).toBe("busy")
 
         // Cleanup
-        SessionStatus.set(busy1.id, { type: "idle" })
+        await SessionStatus.set(busy1.id, { type: "idle" })
         for (const name of ["idle-a", "idle-b", "busy-c"]) {
           await Team.setMemberStatus("bcast-wake", name, "shutdown")
         }
@@ -577,7 +577,7 @@ describe("autoWake: error resilience", () => {
           status: "busy",
         })
 
-        SessionStatus.set(s2.id, { type: "busy" })
+        await SessionStatus.set(s2.id, { type: "busy" })
 
         // Must NOT throw despite idle member triggering a failing loop()
         await TeamMessaging.broadcast({
@@ -595,7 +595,7 @@ describe("autoWake: error resilience", () => {
           expect(received).toBeDefined()
         }
 
-        SessionStatus.set(s2.id, { type: "idle" })
+        await SessionStatus.set(s2.id, { type: "idle" })
         for (const name of ["idle-one", "busy-one"]) {
           await Team.setMemberStatus("resilient-bcast", name, "shutdown")
         }

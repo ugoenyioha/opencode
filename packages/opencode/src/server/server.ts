@@ -197,13 +197,13 @@ export namespace Server {
               },
             })
           } catch (error) {
+            // Instance.provide may fail for various reasons (no git, untrusted workspace,
+            // no config, etc.). Fall through to default auth rules rather than hard-blocking.
             const message = error instanceof Error ? error.message : String(error)
-            if (message.includes("No context found for instance")) {
-              routeRules = []
-            } else {
-              log.error("failed to load route auth rules", { error })
-              return c.json({ error: "Unauthorized" }, 401)
+            if (!message.includes("No context found for instance")) {
+              log.warn("failed to load route auth rules, using defaults", { error: message })
             }
+            routeRules = []
           }
           // Extract client IP for auth decision (G9 security fix)
           let clientIP = c.req.raw.headers.get(INTERNAL_CLIENT_IP_HEADER) ?? ""

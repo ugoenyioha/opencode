@@ -258,7 +258,7 @@ export namespace TeamMessaging {
    */
   async function autoWake(sessionID: string, from: string, text: string) {
     try {
-      const status = SessionStatus.get(sessionID)
+      const status = await SessionStatus.get(sessionID)
       if (status.type !== "idle") return
       const info = await Team.findBySession(sessionID)
       // Lead auto-wake policy:
