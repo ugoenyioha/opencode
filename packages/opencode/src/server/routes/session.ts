@@ -1,5 +1,6 @@
 import { Hono } from "hono"
 import { stream } from "hono/streaming"
+import { HTTPException } from "hono/http-exception"
 import { describeRoute, validator, resolver } from "hono-openapi"
 import z from "zod"
 import { Session } from "../../session"
@@ -236,6 +237,16 @@ export const SessionRoutes = lazy(() =>
       ),
       async (c) => {
         const sessionID = c.req.valid("param").sessionID
+        try {
+          SessionPrompt.assertNotBusy(sessionID)
+        } catch (err) {
+          if (err instanceof Session.BusyError) {
+            throw new HTTPException(409, {
+              message: `Session ${sessionID} is busy. Wait for the active response to finish before deleting it.`,
+            })
+          }
+          throw err
+        }
         await Session.remove(sessionID)
         return c.json(true)
       },

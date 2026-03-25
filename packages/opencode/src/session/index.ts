@@ -756,15 +756,24 @@ export namespace Session {
     const time_created = msg.time.created
     const { id, sessionID, ...data } = msg
     Database.use((db) => {
-      db.insert(MessageTable)
-        .values({
-          id,
-          session_id: sessionID,
-          time_created,
-          data,
-        })
-        .onConflictDoUpdate({ target: MessageTable.id, set: { data } })
-        .run()
+      try {
+        db.insert(MessageTable)
+          .values({
+            id,
+            session_id: sessionID,
+            time_created,
+            data,
+          })
+          .onConflictDoUpdate({ target: MessageTable.id, set: { data } })
+          .run()
+      } catch (err) {
+        const text = err instanceof Error ? err.message : String(err)
+        if (!text.includes("FOREIGN KEY constraint failed")) throw err
+        const row = db.select({ id: SessionTable.id }).from(SessionTable).where(eq(SessionTable.id, sessionID)).get()
+        if (row) throw err
+        log.warn("skip message update after session deletion", { sessionID, messageID: id })
+        return
+      }
       Database.effect(() =>
         Bus.publish(MessageV2.Event.Updated, {
           info: msg,
@@ -825,16 +834,25 @@ export namespace Session {
     const { id, messageID, sessionID, ...data } = part
     const time = Date.now()
     Database.use((db) => {
-      db.insert(PartTable)
-        .values({
-          id,
-          message_id: messageID,
-          session_id: sessionID,
-          time_created: time,
-          data,
-        })
-        .onConflictDoUpdate({ target: PartTable.id, set: { data } })
-        .run()
+      try {
+        db.insert(PartTable)
+          .values({
+            id,
+            message_id: messageID,
+            session_id: sessionID,
+            time_created: time,
+            data,
+          })
+          .onConflictDoUpdate({ target: PartTable.id, set: { data } })
+          .run()
+      } catch (err) {
+        const text = err instanceof Error ? err.message : String(err)
+        if (!text.includes("FOREIGN KEY constraint failed")) throw err
+        const row = db.select({ id: MessageTable.id }).from(MessageTable).where(eq(MessageTable.id, messageID)).get()
+        if (row) throw err
+        log.warn("skip part update after message deletion", { sessionID, messageID, partID: id })
+        return
+      }
       Database.effect(() =>
         Bus.publish(MessageV2.Event.PartUpdated, {
           part: structuredClone(part),
