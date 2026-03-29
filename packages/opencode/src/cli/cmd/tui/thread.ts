@@ -136,6 +136,7 @@ export const TuiThreadCommand = cmd({
       }
 
       const client = Rpc.client<typeof rpc>(worker)
+      await client.call("setDirectory", { directory: cwd })
       const error = (e: unknown) => {
         Log.Default.error(e)
       }

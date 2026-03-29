@@ -15,6 +15,7 @@ export namespace Auth {
       accountId: z.string().optional(),
       enterpriseUrl: z.string().optional(),
     })
+    .passthrough()
     .meta({ ref: "OAuth" })
 
   export const Api = z

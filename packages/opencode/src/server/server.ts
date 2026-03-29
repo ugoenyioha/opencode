@@ -900,6 +900,18 @@ export namespace Server {
     })
   }
 
+  /**
+   * Fetch wrapper for in-process callers.
+   *
+   * Marks requests as loopback so internal SDK clients can hit the
+   * in-process app without going through a network listener.
+   */
+  export async function internalFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+    const request = new Request(input, init)
+    request.headers.set(INTERNAL_CLIENT_IP_HEADER, "127.0.0.1")
+    return App().fetch(request)
+  }
+
   export async function listen(opts: {
     port: number
     hostname: string

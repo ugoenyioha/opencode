@@ -730,8 +730,6 @@ export namespace SessionPrompt {
 
       // Build system prompt, adding structured output instruction if needed
       const system = [...(await SystemPrompt.environment(model)), ...(await InstructionPrompt.system())]
-      const mcpInstructions = await deferredInstructions(msgs)
-      if (mcpInstructions) system.push(mcpInstructions)
       const format = lastUser.format ?? { type: "text" }
       if (format.type === "json_schema") {
         system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)

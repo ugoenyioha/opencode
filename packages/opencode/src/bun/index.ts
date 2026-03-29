@@ -43,7 +43,7 @@ export namespace BunProc {
   }
 
   export function which() {
-    return process.execPath
+    return Bun.which("bun") || process.execPath
   }
 
   export const InstallFailedError = NamedError.create(

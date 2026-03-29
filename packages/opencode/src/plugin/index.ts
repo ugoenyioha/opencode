@@ -63,9 +63,11 @@ export namespace Plugin {
       if (init) hooks.push({ source: "internal", hook: init })
     }
 
+    const enforceTrust = process.env.OPENCODE_HARDENED_MODE === "true" || config.hardened === true
     const trust = Trust.status(Instance.project.id)
-    let plugins = trust.approved ? (config.plugin ?? []) : []
-    if (!trust.approved && (config.plugin ?? []).length) {
+    const allowPlugins = !enforceTrust || trust.approved
+    let plugins = allowPlugins ? (config.plugin ?? []) : []
+    if (!allowPlugins && (config.plugin ?? []).length) {
       log.warn("workspace untrusted; skipping external plugins", { directory: Instance.directory })
     }
     if (plugins.length) await Config.waitForDependencies()

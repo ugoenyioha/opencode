@@ -6,8 +6,9 @@ import { InstanceBootstrap } from "@/project/bootstrap"
 import { Rpc } from "@/util/rpc"
 import { upgrade } from "@/cli/upgrade"
 import { Config } from "@/config/config"
+import { Bus } from "@/bus"
 import { GlobalBus } from "@/bus/global"
-import { createOpencodeClient, type Event } from "@opencode-ai/sdk/v2"
+import type { Event } from "@opencode-ai/sdk/v2"
 import type { BunWebSocketData } from "hono/bun"
 import { Flag } from "@/flag/flag"
 import { Database } from "@/storage/db"
@@ -51,46 +52,49 @@ const startEventStream = (directory: string) => {
   eventStream.abort = abort
   const signal = abort.signal
 
-  const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const request = new Request(input, init)
-    const auth = getAuthorizationHeader()
-    if (auth) request.headers.set("Authorization", auth)
-    return Server.App().fetch(request)
-  }) as typeof globalThis.fetch
-
-  const sdk = createOpencodeClient({
-    baseUrl: "http://opencode.internal",
-    directory,
-    fetch: fetchFn,
-    signal,
-  })
-
   ;(async () => {
     while (!signal.aborted) {
-      const events = await Promise.resolve(
-        sdk.event.subscribe(
-          {},
-          {
-            signal,
-          },
-        ),
-      ).catch(() => undefined)
+      const shouldReconnect = await Instance.provide({
+        directory,
+        init: InstanceBootstrap,
+        fn: () =>
+          new Promise<boolean>((resolve) => {
+            Rpc.emit("event", {
+              type: "server.connected",
+              properties: {},
+            } satisfies Event)
 
-      if (!events) {
-        await sleep(250)
-        continue
-      }
+            let settled = false
+            const settle = (value: boolean) => {
+              if (settled) return
+              settled = true
+              signal.removeEventListener("abort", onAbort)
+              unsub()
+              resolve(value)
+            }
 
-      try {
-        for await (const event of events.stream) {
-          Rpc.emit("event", event as Event)
-          if ((event as Event).type === "server.instance.disposed") break
-        }
-      } catch (error) {
-        if (signal.aborted) break
-        Log.Default.warn("event stream iteration failed, reconnecting", {
+            const unsub = Bus.subscribeAll((event) => {
+              Rpc.emit("event", event as Event)
+              if (event.type === Bus.InstanceDisposed.type) {
+                settle(true)
+              }
+            })
+
+            const onAbort = () => {
+              settle(false)
+            }
+
+            signal.addEventListener("abort", onAbort, { once: true })
+          }),
+      }).catch((error) => {
+        Log.Default.error("event stream subscribe error", {
           error: error instanceof Error ? error.message : error,
         })
+        return false
+      })
+
+      if (!shouldReconnect || signal.aborted) {
+        break
       }
 
       if (!signal.aborted) {
@@ -107,6 +111,9 @@ const startEventStream = (directory: string) => {
 startEventStream(process.cwd())
 
 export const rpc = {
+  setDirectory(input: { directory: string }) {
+    startEventStream(input.directory)
+  },
   async fetch(input: { url: string; method: string; headers: Record<string, string>; body?: string }) {
     const headers = { ...input.headers }
     const auth = getAuthorizationHeader()
@@ -118,7 +125,7 @@ export const rpc = {
       headers,
       body: input.body,
     })
-    const response = await Server.App().fetch(request)
+    const response = await Server.internalFetch(request)
     const body = await response.text()
     return {
       status: response.status,

@@ -1,7 +1,7 @@
 import { render, useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/solid"
 import { Clipboard } from "@tui/util/clipboard"
 import { Selection } from "@tui/util/selection"
-import { MouseButton, TextAttributes } from "@opentui/core"
+import { createCliRenderer, MouseButton, TextAttributes } from "@opentui/core"
 import { RouteProvider, useRoute } from "@tui/context/route"
 import { Switch, Match, createEffect, untrack, ErrorBoundary, createSignal, onMount, batch, Show, on } from "solid-js"
 import { win32DisableProcessedInput, win32FlushInputBuffer, win32InstallCtrlCGuard } from "./win32"
@@ -133,7 +133,24 @@ export function tui(input: {
       resolve()
     }
 
-    render(
+    const renderer = await createCliRenderer({
+      targetFps: 60,
+      gatherStats: false,
+      exitOnCtrlC: false,
+      useKittyKeyboard: { events: process.platform === "win32" },
+      autoFocus: false,
+      openConsoleOnError: false,
+      consoleOptions: {
+        keyBindings: [{ name: "y", ctrl: true, action: "copy-selection" }],
+        onCopySelection: (text) => {
+          Clipboard.copy(text).catch((error) => {
+            console.error(`Failed to copy console selection to clipboard: ${error}`)
+          })
+        },
+      },
+    })
+
+    await render(
       () => {
         return (
           <ErrorBoundary
@@ -183,22 +200,7 @@ export function tui(input: {
           </ErrorBoundary>
         )
       },
-      {
-        targetFps: 60,
-        gatherStats: false,
-        exitOnCtrlC: false,
-        useKittyKeyboard: {},
-        autoFocus: false,
-        openConsoleOnError: false,
-        consoleOptions: {
-          keyBindings: [{ name: "y", ctrl: true, action: "copy-selection" }],
-          onCopySelection: (text) => {
-            Clipboard.copy(text).catch((error) => {
-              console.error(`Failed to copy console selection to clipboard: ${error}`)
-            })
-          },
-        },
-      },
+      renderer,
     )
   })
 }

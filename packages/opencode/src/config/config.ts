@@ -181,11 +181,14 @@ export namespace Config {
     const trustFiles = await trustInputs()
     const trustData = await Trust.hash(trustFiles)
     const trustedContents = trustData.contents
-    const trust = await Trust.ensure(Instance.project.id, trustData.hash, { directory: Instance.directory })
-    if (!trust.approved) {
-      console.error("\x1b[33m" + "⚠️  Untrusted or modified workspace configuration detected." + "\x1b[0m")
-      console.error("Please review the workspace and run 'opencode trust' to proceed.")
-      process.exit(1)
+    const enforceTrust = process.env.OPENCODE_HARDENED_MODE === "true" || result.hardened === true
+    if (enforceTrust) {
+      const trust = await Trust.ensure(Instance.project.id, trustData.hash, { directory: Instance.directory })
+      if (!trust.approved) {
+        console.error("\x1b[33m" + "⚠️  Untrusted or modified workspace configuration detected." + "\x1b[0m")
+        console.error("Please review the workspace and run 'opencode trust' to proceed.")
+        process.exit(1)
+      }
     }
 
     // Project config overrides global and remote config.
