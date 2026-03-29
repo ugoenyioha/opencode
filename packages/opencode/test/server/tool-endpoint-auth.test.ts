@@ -60,7 +60,6 @@ async function withEnv(vars: Record<string, string>, fn: () => Promise<void>) {
   Config.global.reset()
   Database.close()
   await Instance.disposeAll()
-  ;(Server.App as any).reset?.()
   for (const [key, value] of Object.entries(vars)) {
     previous.set(key, process.env[key])
     process.env[key] = value
@@ -82,7 +81,6 @@ async function withEnv(vars: Record<string, string>, fn: () => Promise<void>) {
     Config.global.reset()
     Database.close()
     await Instance.disposeAll()
-    ;(Server.App as any).reset?.()
   }
 }
 

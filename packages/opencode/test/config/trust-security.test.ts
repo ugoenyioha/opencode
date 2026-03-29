@@ -6,10 +6,18 @@ import { Config } from "../../src/config/config"
 import { Instance } from "../../src/project/instance"
 import { tmpdir } from "../fixture/fixture"
 import { Filesystem } from "../../src/util/filesystem"
-import { Env } from "../../src/env"
+
+class ExitIntercept extends Error {
+  code: number
+  constructor(code: number) {
+    super(`process.exit(${code})`)
+    this.code = code
+  }
+}
 
 test("rejects untrusted workspace before dependency install", async () => {
   const prev = process.env.OPENCODE_HARDENED_MODE
+  const originalExit = process.exit
   await using tmp = await tmpdir({
     trust: false,
     init: async (dir) => {
@@ -28,22 +36,21 @@ test("rejects untrusted workspace before dependency install", async () => {
 
   try {
     process.env.OPENCODE_HARDENED_MODE = "true"
-    Env.set("OPENCODE_HARDENED_MODE", "true")
+    ;(process as any).exit = ((code?: number) => {
+      throw new ExitIntercept(code ?? 0)
+    }) as typeof process.exit
     await Instance.provide({
       directory: path.join(tmp.path, "enforce-trust"),
       fn: async () => {
-        await expect(Config.get()).rejects.toThrow(
-          "Untrusted or modified workspace configuration detected. Please review the workspace and run 'opencode trust' to proceed.",
-        )
+        await expect(Config.get()).rejects.toThrow("process.exit(1)")
       },
     })
   } finally {
+    ;(process as any).exit = originalExit
     if (prev === undefined) {
       delete process.env.OPENCODE_HARDENED_MODE
-      Env.remove("OPENCODE_HARDENED_MODE")
     } else {
       process.env.OPENCODE_HARDENED_MODE = prev
-      Env.set("OPENCODE_HARDENED_MODE", prev)
     }
   }
 

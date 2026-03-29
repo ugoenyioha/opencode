@@ -930,6 +930,11 @@ async function handleSendMessage(
       const timeout = req.configuration?.timeout || 300000 // 5 min default
       const start = Date.now()
       while (!isTerminalState(task.status.state)) {
+        await finalizeTaskFromSession(task, agentId, session.id)
+        if (isTerminalState(task.status.state)) {
+          unsubscribe()
+          break
+        }
         if (Date.now() - start > timeout) {
           transitionTask(task, "TASK_STATE_FAILED", "Request timed out")
           out("a2a.task.failed", {
