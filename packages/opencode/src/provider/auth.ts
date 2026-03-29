@@ -55,12 +55,13 @@ export namespace ProviderAuth {
     z.object({
       providerID: z.string(),
       method: z.number(),
+      inputs: z.record(z.string(), z.string()).optional(),
     }),
     async (input): Promise<Authorization | undefined> => {
       const auth = await state().then((s) => s.methods[input.providerID])
       const method = auth.methods[input.method]
       if (method.type === "oauth") {
-        const result = await method.authorize()
+        const result = await method.authorize(input.inputs)
         await state().then((s) => (s.pending[input.providerID] = result))
         return {
           url: result.url,
@@ -144,4 +145,10 @@ export namespace ProviderAuth {
   )
 
   export const OauthCallbackFailed = NamedError.create("ProviderAuthOauthCallbackFailed", z.object({}))
+  export const ValidationFailed = NamedError.create(
+    "ProviderAuthValidationFailed",
+    z.object({
+      message: z.string(),
+    }),
+  )
 }
