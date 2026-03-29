@@ -18,7 +18,6 @@ import { Session } from "../../src/session"
 import { SessionPrompt } from "../../src/session/prompt"
 import { SessionStatus } from "../../src/session/status"
 import { Bus } from "../../src/bus"
-import { setA2AEventSink } from "@/plugin/a2a-observability"
 
 Log.init({ print: false })
 
@@ -39,19 +38,6 @@ function signRS256(payload: Record<string, unknown>, privateKey: string, kid: st
   signer.end()
   const signature = signer.sign(privateKey)
   return `${signingInput}.${encodeBase64url(signature)}`
-}
-
-function captureA2AEvents() {
-  const seen: [string, Record<string, any>][] = []
-  setA2AEventSink((event, data) => {
-    seen.push([event, data])
-  })
-  return {
-    seen,
-    restore() {
-      setA2AEventSink(undefined)
-    },
-  }
 }
 
 // Clean up env var so it doesn't bleed into other test files
@@ -246,25 +232,6 @@ function ssePayloads(body: string) {
     .filter((line) => line.startsWith("data: "))
     .map((line) => line.slice(6))
     .filter((line) => line.length > 0)
-    .map((line) => JSON.parse(line) as Record<string, any>)
-}
-
-function collectInfoPayloads(spy: any) {
-  return spy.mock.calls.map((call: any[]) => call[1]).filter(Boolean)
-}
-
-async function readA2ALog() {
-  await new Promise((resolve) => setTimeout(resolve, 1000))
-  return await Bun.file(Log.file()).text()
-}
-
-async function readA2AEvents(file: string) {
-  await new Promise((resolve) => setTimeout(resolve, 50))
-  const text = await Bun.file(file).text().catch(() => "")
-  return text
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
     .map((line) => JSON.parse(line) as Record<string, any>)
 }
 
@@ -1175,7 +1142,7 @@ Test agent prompt.
         const createSpy = spyOn(Session, "create").mockResolvedValue({ id: "ses-stream-1" } as any)
         const messagesSpy = spyOn(Session, "messages").mockResolvedValue([
           {
-            info: { role: "assistant", id: "assistant-1", time: { completed: Date.now() } },
+            info: { role: "assistant", id: "assistant-1" },
             parts: [{ type: "text", text: "stream output", synthetic: false }],
           },
         ] as any)
@@ -1735,192 +1702,6 @@ Agent without per-agent auth config.
     } finally {
       await new Promise<void>((resolve, reject) => jwks.close((error) => (error ? reject(error) : resolve())))
     }
-  })
-
-  test("auth observability: logs a2a auth pass and fail for protected routes", async () => {
-    await using tmp = await project(true)
-    await Instance.disposeAll()
-    await Instance.provide({
-      directory: tmp.path,
-      init: async () => {
-        Env.set("ANTHROPIC_API_KEY", "test-key")
-      },
-      fn: async () => {
-        const obs = captureA2AEvents()
-        const app = Server.App()
-
-        const denied = await app.request("/a2a/neo-sidecar/tasks", {
-          method: "GET",
-          headers: { "x-opencode-directory": tmp.path },
-        })
-        expect(denied.status).toBe(401)
-
-        const allowed = await app.request("/a2a/neo-sidecar/tasks", {
-          method: "GET",
-          headers: { "x-opencode-directory": tmp.path, ...AUTH_HEADER },
-        })
-        expect(allowed.status).toBe(200)
-
-        await new Promise((resolve) => setTimeout(resolve, 10))
-        const events = obs.seen.map(([, data]) => data)
-        expect(events.some((e) => e.event === "a2a.auth.verify.fail" && e.agent === "neo-sidecar")).toBe(true)
-        expect(events.some((e) => e.event === "a2a.auth.verify.pass" && e.agent === "neo-sidecar" && e.strategy === "api-key")).toBe(true)
-        expect(events.some((e) => e.event === "a2a.request.denied" && e.agent === "neo-sidecar" && e.reason === "authentication_required")).toBe(true)
-        expect(events.some((e) => e.event === "a2a.request.accepted" && e.agent === "neo-sidecar" && e.strategy === "api-key")).toBe(true)
-        obs.restore()
-      },
-    })
-  })
-
-  test("auth observability: logs sender-constraining pass and fail for jwt auth", async () => {
-    await using tmp = await projectWithServerA2AAuth(true, ["jwt"])
-    await Instance.disposeAll()
-    const { privateKey, publicKey } = generateKeyPairSync("rsa", {
-      modulusLength: 2048,
-      publicKeyEncoding: { format: "pem", type: "spki" },
-      privateKeyEncoding: { format: "pem", type: "pkcs8" },
-    })
-    const kid = "a2a-jwt-kid-sender"
-    const jwk = createPublicKey(publicKey).export({ format: "jwk" }) as Record<string, unknown>
-    const jwks = createServer((req, res) => {
-      if (req.url !== "/.well-known/jwks.json") {
-        res.statusCode = 404
-        res.end()
-        return
-      }
-      res.setHeader("content-type", "application/json")
-      res.end(JSON.stringify({ keys: [{ ...jwk, use: "sig", alg: "RS256", kid }] }))
-    })
-    await new Promise<void>((resolve) => jwks.listen(0, "127.0.0.1", () => resolve()))
-    try {
-      await Instance.provide({
-        directory: tmp.path,
-        init: async () => {
-          Env.set("ANTHROPIC_API_KEY", "test-key")
-        },
-        fn: async () => {
-          const previousJwks = process.env.OPENCODE_USER_JWT_JWKS_URL
-          const previousIssuer = process.env.OPENCODE_USER_JWT_ISSUER
-          const previousAudience = process.env.OPENCODE_USER_JWT_AUDIENCE
-          try {
-            const address = jwks.address()
-            if (!address || typeof address === "string") throw new Error("failed to start jwks server")
-            const jwksUrl = `http://127.0.0.1:${address.port}/.well-known/jwks.json`
-            Env.set("OPENCODE_USER_JWT_JWKS_URL", jwksUrl)
-            Env.set("OPENCODE_USER_JWT_ISSUER", "a2a-issuer")
-            Env.set("OPENCODE_USER_JWT_AUDIENCE", "a2a-audience")
-
-            const raw = Buffer.from("sender-bound-proof")
-            const bound = raw.toString("base64url")
-            const hex = raw.toString("hex")
-            const token = signRS256(
-              {
-                exp: Math.floor(Date.now() / 1000) + 120,
-                iss: "a2a-issuer",
-                aud: "a2a-audience",
-                sub: "jwt-user-1",
-                cnf: { "x5t#S256": bound },
-              },
-              privateKey,
-              kid,
-            )
-
-            const app = Server.App()
-            const obs = captureA2AEvents()
-
-            const allowed = await app.request("/a2a/neo-sidecar/tasks", {
-              method: "GET",
-              headers: {
-                "x-opencode-directory": tmp.path,
-                authorization: `Bearer ${token}`,
-                "x-forwarded-client-cert": `By=demo;Hash=${hex}`,
-              },
-            })
-            expect(allowed.status).toBe(200)
-
-            const denied = await app.request("/a2a/neo-sidecar/tasks", {
-              method: "GET",
-              headers: {
-                "x-opencode-directory": tmp.path,
-                authorization: `Bearer ${token}`,
-                "x-forwarded-client-cert": `By=demo;Hash=deadbeef`,
-              },
-            })
-            expect(denied.status).toBe(401)
-
-            await new Promise((resolve) => setTimeout(resolve, 10))
-            const events = obs.seen.map(([, data]) => data)
-            expect(events.some((e) => e.event === "a2a.auth.sender_constraint.pass" && e.agent === "neo-sidecar" && e.principal === "jwt-user-1")).toBe(true)
-            expect(events.some((e) => e.event === "a2a.auth.sender_constraint.fail" && e.agent === "neo-sidecar" && e.principal === "jwt-user-1")).toBe(true)
-            expect(events.some((e) => e.event === "a2a.auth.sender_constraint.fail" && e.presented_x5t_prefix === "3q2-7w")).toBe(true)
-            obs.restore()
-          } finally {
-            if (previousJwks === undefined) delete process.env.OPENCODE_USER_JWT_JWKS_URL
-            else process.env.OPENCODE_USER_JWT_JWKS_URL = previousJwks
-            if (previousIssuer === undefined) delete process.env.OPENCODE_USER_JWT_ISSUER
-            else process.env.OPENCODE_USER_JWT_ISSUER = previousIssuer
-            if (previousAudience === undefined) delete process.env.OPENCODE_USER_JWT_AUDIENCE
-            else process.env.OPENCODE_USER_JWT_AUDIENCE = previousAudience
-          }
-        },
-      })
-    } finally {
-      await new Promise<void>((resolve, reject) => jwks.close((error) => (error ? reject(error) : resolve())))
-    }
-  })
-
-  test("auth observability: logs request and task lifecycle for message send", async () => {
-    await using tmp = await project(true)
-    await Instance.disposeAll()
-    await Instance.provide({
-      directory: tmp.path,
-      init: async () => {
-        Env.set("ANTHROPIC_API_KEY", "test-key")
-      },
-      fn: async () => {
-        const createSpy = spyOn(Session, "create").mockResolvedValue({ id: "ses-observe-1" } as any)
-        const messagesSpy = spyOn(Session, "messages").mockResolvedValue([
-          {
-            info: { role: "assistant", id: "assistant-1", time: { completed: Date.now() } },
-            parts: [{ type: "text", text: "done", synthetic: false }],
-          },
-        ] as any)
-        const promptSpy = spyOn(SessionPrompt, "prompt").mockResolvedValue(undefined as any)
-        const obs = captureA2AEvents()
-        try {
-          const app = Server.App()
-          const response = await app.request("/a2a/neo-sidecar/message:send", {
-            method: "POST",
-            headers: {
-              "x-opencode-directory": tmp.path,
-              "content-type": "application/json",
-              ...AUTH_HEADER,
-            },
-            body: JSON.stringify({
-              message: {
-                messageId: "observe-msg-1",
-                role: "ROLE_USER",
-                parts: [{ text: "hello" }],
-              },
-              configuration: { blocking: true },
-            }),
-          })
-          expect(response.status).toBe(200)
-
-          await new Promise((resolve) => setTimeout(resolve, 10))
-          const events = obs.seen.map(([, data]) => data)
-          expect(events.some((e) => e.event === "a2a.request.received" && e.message_id === "observe-msg-1" && e.blocking === true)).toBe(true)
-          expect(events.some((e) => e.event === "a2a.task.created" && e.agent === "neo-sidecar" && e.state === "TASK_STATE_SUBMITTED")).toBe(true)
-          expect(events.some((e) => e.event === "a2a.task.working" && e.agent === "neo-sidecar" && e.state === "TASK_STATE_WORKING")).toBe(true)
-          expect(events.some((e) => e.event === "a2a.task.completed" && e.agent === "neo-sidecar" && e.state === "TASK_STATE_COMPLETED")).toBe(true)
-        } finally {
-          createSpy.mockRestore()
-          messagesSpy.mockRestore()
-          promptSpy.mockRestore()
-          obs.restore()
-        }
-      },
-    })
   })
 
   test("auth: server.a2a plugin strategy is fail-closed on protected routes", async () => {

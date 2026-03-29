@@ -192,13 +192,13 @@ export function openAIChatSessionStream(input: Input) {
             controller.enqueue(encoder.encode("data: [DONE]\n\n"))
             close()
           })
-          .catch((err) => {
+          .catch(() => {
             if (done) return
             controller.enqueue(
               encoder.encode(
                 `data: ${JSON.stringify({
                   error: {
-                    message: err instanceof Error ? err.message : String(err),
+                    message: "Internal server error",
                     type: "api_error",
                     code: "internal_error",
                   },
@@ -479,14 +479,14 @@ export function openAIResponsesSessionStream(input: Input) {
             controller.enqueue(encoder.encode("data: [DONE]\n\n"))
             close()
           })
-          .catch((err) => {
+          .catch(() => {
             if (done) return
             controller.enqueue(
               encoder.encode(
                 `data: ${JSON.stringify({
                   type: "error",
                   error: {
-                    message: err instanceof Error ? err.message : String(err),
+                    message: "Internal server error",
                     code: "internal_error",
                   },
                 })}\n\n`,
@@ -690,7 +690,7 @@ export function anthropicMessageSessionStream(input: Input) {
             )
             close()
           })
-          .catch((err) => {
+          .catch(() => {
             if (done) return
             controller.enqueue(
               encoder.encode(
@@ -698,7 +698,7 @@ export function anthropicMessageSessionStream(input: Input) {
                   type: "error",
                   error: {
                     type: "api_error",
-                    message: err instanceof Error ? err.message : String(err),
+                    message: "Internal server error",
                   },
                 })}\n\n`,
               ),

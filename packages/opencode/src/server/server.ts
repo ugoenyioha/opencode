@@ -896,22 +896,6 @@ export namespace Server {
           getApiKey: () => Flag.OPENCODE_TOOL_ENDPOINT_API_KEY,
           hasExternalHttpHook: () => Plugin.hasExternal("http.request"),
         })
-
-        const base = config.server?.a2a?.baseUrl
-        if (config.server?.allowExternalRoutes === true && config.server?.a2a?.enabled && base) {
-          const host = (() => {
-            try {
-              return new URL(base).hostname.toLowerCase()
-            } catch {
-              throw new Error(`server.a2a.baseUrl must be a valid URL when A2A is enabled: ${base}`)
-            }
-          })()
-          if (["localhost", "127.0.0.1", "::1", "opencode.internal"].includes(host)) {
-            throw new Error(
-              `server.a2a.baseUrl must not use a loopback/private hostname when server.allowExternalRoutes=true: ${base}`,
-            )
-          }
-        }
       },
     })
   }

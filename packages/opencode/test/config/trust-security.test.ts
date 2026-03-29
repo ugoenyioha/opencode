@@ -4,7 +4,7 @@ import path from "path"
 import fs from "fs/promises"
 import { Config } from "../../src/config/config"
 import { Instance } from "../../src/project/instance"
-import { tmpdir } from "../fixture/fixture"
+import { tmpdir, trustWorkspace } from "../fixture/fixture"
 import { Filesystem } from "../../src/util/filesystem"
 
 test("rejects untrusted workspace before dependency install", async () => {
