@@ -64,7 +64,8 @@ export namespace Agent {
     const cfg = await Config.get()
 
     const skillDirs = await Skill.dirs()
-    const whitelistedDirs = [Truncate.GLOB, ...skillDirs.map((dir) => path.join(dir, "*"))]
+    const skillGlobs = skillDirs.flatMap((dir) => [path.join(path.dirname(dir), "*"), path.join(dir, "*")])
+    const whitelistedDirs = [Truncate.GLOB, ...new Set(skillGlobs)]
     const defaults = PermissionNext.fromConfig({
       "*": "allow",
       doom_loop: "ask",

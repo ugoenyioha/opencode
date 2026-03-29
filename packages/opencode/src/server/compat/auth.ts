@@ -94,6 +94,7 @@ type JWTPayload = {
 export type VerifiedToken = {
   /** The `sub` claim from the token, if present. */
   sub?: string
+  cnf?: unknown
 }
 
 type JWTVerifyOptions = {
@@ -491,7 +492,7 @@ async function verifyOIDCJWTForIssuer(
   if (!signatureOk) return false
 
   if (!claimChecksWithExpected(parsed.payload, expectedIssuer, expectedAudience, options)) return false
-  return { sub: parsed.payload.sub }
+  return { sub: parsed.payload.sub, cnf: parsed.payload.cnf }
 }
 
 async function verifyOIDCJWT(token: string, context: AuthObserveContext): Promise<VerifiedToken | false> {
