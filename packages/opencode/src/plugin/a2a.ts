@@ -17,6 +17,7 @@ import { validA2AApiKey, type AuthnResult } from "../server/auth-policy"
 import { emitAuthDecision } from "../server/auth-observability"
 import { mapA2AAuthzStatus } from "../server/authz-status"
 import { A2ATaskTable } from "./a2a.sql"
+import { A2AObs } from "./a2a-observability"
 // Auth is enforced per-agent in agentHandler() — agent config replaces server-level auth.
 
 const log = Log.create({ service: "a2a" })
