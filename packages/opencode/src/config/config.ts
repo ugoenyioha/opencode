@@ -971,6 +971,7 @@ export namespace Config {
           spiffe: z
             .object({
               trustDomain: z.string().optional().describe("SPIFFE trust domain for this agent"),
+              workloadId: z.string().optional().describe("Resolved SPIFFE workload ID for this agent"),
               audience: z.string().optional().describe("Override OPENCODE_SPIFFE_AUDIENCE for this agent"),
               allowedIds: z.array(z.string()).optional().describe("Allowed SPIFFE ID patterns (glob) for this agent"),
             })
