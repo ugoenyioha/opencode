@@ -1269,6 +1269,14 @@ export namespace Config {
         .positive()
         .optional()
         .describe("Provider-specific max output token cap for compatibility routes"),
+      allowedTools: z
+        .array(z.string())
+        .optional()
+        .describe("Allowlist of tool names exposed through compatibility routes"),
+      forceSingleToolRequired: z
+        .boolean()
+        .optional()
+        .describe("When exactly one allowed tool is requested with auto choice, force tool_choice=required"),
     })
     .strict()
 

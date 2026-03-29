@@ -3,6 +3,7 @@ import { Session } from "@/session"
 import { SessionPrompt } from "@/session/prompt"
 import { MessageV2 } from "@/session/message-v2"
 import { Provider } from "@/provider/provider"
+import { Config } from "@/config/config"
 
 const EXECUTION_TIMEOUT_MS = 120_000
 
@@ -15,6 +16,12 @@ export class CompatTimeoutError extends Error {
 
 function promptText(req: CompatRequest) {
   return req.input.map((item) => `${item.role.toUpperCase()}: ${contentText(item.content)}`).join("\n\n")
+}
+
+async function allowedTools(names: string[] | undefined) {
+  if (!names?.length) return undefined
+  const allowed = (await Config.get()).server?.toolEndpoint?.allowedTools ?? []
+  return names.filter((name) => allowed.includes(name))
 }
 
 function blockText(block: Record<string, unknown>) {
@@ -116,10 +123,14 @@ export async function startCompat(req: CompatRequest) {
   const model = Provider.parseModel(req.resolvedModel)
   await Provider.getModel(model.providerID, model.modelID)
   const session = await Session.create({})
+  const tools = await allowedTools(req.tools)
   const pending = SessionPrompt.prompt({
     sessionID: session.id,
     agent: "build",
     model,
+    metadata: req.metadata,
+    tools,
+    toolChoice: req.toolChoice,
     parts: [
       {
         type: "text",

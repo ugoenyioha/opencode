@@ -26,6 +26,8 @@ export type CompatRequest = {
     content: string | Array<Record<string, unknown>>
   }>
   metadata?: Record<string, string>
+  tools?: string[]
+  toolChoice?: "auto" | "required" | "none"
 }
 
 export type CompatResponse = {
