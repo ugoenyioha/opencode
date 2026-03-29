@@ -1,10 +1,10 @@
-import { describe, expect, spyOn, test } from "bun:test"
+import { beforeEach, describe, expect, spyOn, test } from "bun:test"
 import path from "path"
 import fs from "fs/promises"
 import { tmpdir } from "../fixture/fixture"
 import { Instance } from "../../src/project/instance"
 import { Server } from "../../src/server/server"
-import { resetCaches } from "../../src/server/compat/auth"
+import { resetCaches as resetAuthCaches } from "../../src/server/compat/auth"
 import { Env } from "../../src/env"
 import { Log } from "../../src/util/log"
 
@@ -95,7 +95,6 @@ Agent body.
 
 async function withEnv(vars: Record<string, string>, fn: () => Promise<void>) {
   const previous = new Map<string, string | undefined>()
-  resetCaches()
   for (const [key, value] of Object.entries(vars)) {
     previous.set(key, process.env[key])
     Env.set(key, value)
@@ -107,7 +106,6 @@ async function withEnv(vars: Record<string, string>, fn: () => Promise<void>) {
       if (value === undefined) delete process.env[key]
       else process.env[key] = value
     }
-    resetCaches()
   }
 }
 
@@ -116,6 +114,31 @@ function collectPayloads(calls: any[][]) {
 }
 
 describe("auth observability", () => {
+  const envCleanup = [
+    "OPENCODE_BEARER_FALLBACK_TO_INTROSPECTION",
+    "OPENCODE_OAUTH_INTROSPECTION_URL",
+    "OPENCODE_OAUTH_CLIENT_ID",
+    "OPENCODE_OAUTH_CLIENT_SECRET",
+    "OPENCODE_OAUTH_ISSUER",
+    "OPENCODE_OAUTH_AUDIENCE",
+    "OPENCODE_OAUTH_REQUIRED_SCOPE",
+    "OPENCODE_OAUTH_INTROSPECTION_AUTH_METHOD",
+    "OPENCODE_OAUTH_INTROSPECTION_TOKEN_URL",
+    "OPENCODE_OAUTH_INTROSPECTION_TIMEOUT_MS",
+    "OPENCODE_OAUTH_INTROSPECTION_STALE_WHILE_ERROR_MS",
+    "OPENCODE_OAUTH_INTROSPECTION_STALE_MAX_ABS_AGE_MS",
+    "OPENCODE_OIDC_ISSUERS_JSON",
+    "OPENCODE_USER_JWT_JWKS_URL",
+    "OPENCODE_USER_JWT_ISSUER",
+    "OPENCODE_USER_JWT_AUDIENCE",
+  ]
+
+  beforeEach(async () => {
+    for (const key of envCleanup) delete process.env[key]
+    await Instance.disposeAll()
+    resetAuthCaches()
+  })
+
   test("openai uses defer boundary + compat decision with coarse surface", async () => {
     await using tmp = await project({
       server: {

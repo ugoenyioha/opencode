@@ -216,7 +216,12 @@ async function loadJWKS(url: string, context: AuthObserveContext) {
   if (cached && cached.expiresAt > now) return cached.keys
 
   try {
-    const response = await fetch(url, { signal: AbortSignal.timeout(JWKS_FETCH_TIMEOUT_MS) })
+    const caPath = process.env.OPENCODE_USER_JWT_CA_CERT_PATH?.trim() || process.env.NODE_EXTRA_CA_CERTS?.trim() || undefined
+    const tls = caPath ? { ca: await Bun.file(caPath).text() } : undefined
+    const response = await fetch(url, {
+      signal: AbortSignal.timeout(JWKS_FETCH_TIMEOUT_MS),
+      ...(tls ? { tls } : {}),
+    })
     if (!response.ok) {
       jwksCache.set(url, { expiresAt: now + JWKS_ERROR_TTL_MS, keys: [] })
       return []
@@ -238,15 +243,24 @@ async function verifyRS256Signature(parsed: ParsedJWT, jwksURL: string, context:
 
   const keys = await loadJWKS(jwksURL, context)
   const jwk = keys.find((key) => key.kid === parsed.header.kid && key.kty === "RSA")
-  if (!jwk) return false
+  if (!jwk) {
+    console.error("jwt-signature-mismatch", JSON.stringify({ reason: "kid_not_found", kid: parsed.header.kid, jwksURL }))
+    return false
+  }
 
   try {
     const publicKey = createPublicKey({ key: jwk, format: "jwk" })
     const verifier = createVerify("RSA-SHA256")
     verifier.update(parsed.signingInput)
     verifier.end()
-    return verifier.verify(publicKey, parsed.signature)
-  } catch {
+    const ok = verifier.verify(publicKey, parsed.signature)
+    if (!ok) console.error("jwt-signature-mismatch", JSON.stringify({ reason: "signature_invalid", kid: parsed.header.kid, jwksURL }))
+    return ok
+  } catch (e) {
+    console.error(
+      "jwt-signature-mismatch",
+      JSON.stringify({ reason: "signature_exception", kid: parsed.header.kid, jwksURL, error: String(e) }),
+    )
     return false
   }
 }
@@ -267,7 +281,23 @@ async function verifyRS256JWT(
           const values = parseList(Env.get("OPENCODE_USER_JWT_AUDIENCE"))
           return values.length ? values : undefined
         })()
-  if (!claimChecksWithExpected(parsed.payload, issuer, audience)) return false
+  if (!claimChecksWithExpected(parsed.payload, issuer, audience)) {
+    console.error(
+      "jwt-claim-mismatch",
+      JSON.stringify({
+        iss: parsed.payload.iss,
+        aud: parsed.payload.aud,
+        sub: parsed.payload.sub,
+        client_id: (parsed.payload as Record<string, unknown>).client_id,
+        azp: (parsed.payload as Record<string, unknown>).azp,
+        expectedIssuer: issuer,
+        expectedAudience: audience,
+        exp: parsed.payload.exp,
+        nbf: parsed.payload.nbf,
+      }),
+    )
+    return false
+  }
   // Return the full JWT payload so authz plugins (e.g., Cedar) can evaluate
   // rich claims like authorization_details, act, act_depth, step_up_verified.
   return parsed.payload as Record<string, unknown>
