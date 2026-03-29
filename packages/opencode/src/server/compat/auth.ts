@@ -178,7 +178,7 @@ function claimChecksWithExpected(
   options?: { normalizeIssuerMatch?: boolean },
 ) {
   const now = Math.floor(Date.now() / 1000)
-  const skew = Number(Env.get("OPENCODE_COMPAT_JWT_CLOCK_SKEW_SECONDS")) || JWT_CLOCK_SKEW_SECONDS
+  const skew = Number(Env.get("OPENCODE_USER_JWT_CLOCK_SKEW_SECONDS")) || JWT_CLOCK_SKEW_SECONDS
   const exp = payload.exp
   if (typeof exp === "number" && now >= exp + skew) return false
   const nbf = payload.nbf
@@ -259,12 +259,12 @@ async function verifyRS256JWT(
 ): Promise<VerifiedToken | false> {
   const signatureOk = await verifyRS256Signature(parsed, jwksURL, context)
   if (!signatureOk) return false
-  const issuer = options?.issuer ?? Env.get("OPENCODE_COMPAT_JWT_ISSUER")
+  const issuer = options?.issuer ?? Env.get("OPENCODE_USER_JWT_ISSUER")
   const audience =
     options?.audience === null
       ? undefined
       : options?.audience ?? (() => {
-          const values = parseList(Env.get("OPENCODE_COMPAT_JWT_AUDIENCE"))
+          const values = parseList(Env.get("OPENCODE_USER_JWT_AUDIENCE"))
           return values.length ? values : undefined
         })()
   if (!claimChecksWithExpected(parsed.payload, issuer, audience)) return false
@@ -468,7 +468,7 @@ async function loadOIDCDiscovery(issuer: string, context: AuthObserveContext) {
 }
 
 function acceptedOIDCAlgs() {
-  const allowedAlgs = parseList(Env.get("OPENCODE_COMPAT_OIDC_ALGS"))
+  const allowedAlgs = parseList(Env.get("OPENCODE_OIDC_ALGS"))
   return allowedAlgs.length ? allowedAlgs : ["RS256"]
 }
 
@@ -497,17 +497,17 @@ async function verifyOIDCJWTForIssuer(
 }
 
 async function verifyOIDCJWT(token: string, context: AuthObserveContext): Promise<VerifiedToken | false> {
-  const issuer = Env.get("OPENCODE_COMPAT_OIDC_ISSUER")
+  const issuer = Env.get("OPENCODE_OIDC_ISSUER")
   if (!issuer) return false
 
   const parsed = parseJWT(token)
   if (!parsed) return false
-  const audience = Env.get("OPENCODE_COMPAT_OIDC_AUDIENCE")
+  const audience = Env.get("OPENCODE_OIDC_AUDIENCE")
   return verifyOIDCJWTForIssuer(parsed, issuer, audience, context)
 }
 
 async function verifyOIDCMultiIssuerJWT(token: string, context: AuthObserveContext): Promise<OIDCMultiVerifyResult> {
-  const parsedConfig = parseOIDCMultiIssuersJSON(Env.get("OPENCODE_COMPAT_OIDC_ISSUERS_JSON"))
+  const parsedConfig = parseOIDCMultiIssuersJSON(Env.get("OPENCODE_OIDC_ISSUERS_JSON"))
   if (parsedConfig.mode !== "valid") {
     return { ok: false, issuerMatched: false }
   }
@@ -541,21 +541,21 @@ const introspectionAuthTokenCache = new Map<string, { expiresAt: number; token: 
 
 function introspectionConfigKey() {
   return [
-    Env.get("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL") ?? "",
-    Env.get("OPENCODE_COMPAT_OAUTH_CLIENT_ID") ?? "",
-    Env.get("OPENCODE_COMPAT_OAUTH_REQUIRED_SCOPE") ?? "",
-    Env.get("OPENCODE_COMPAT_OAUTH_ISSUER") ?? "",
-    Env.get("OPENCODE_COMPAT_OAUTH_AUDIENCE") ?? "",
-    Env.get("OPENCODE_COMPAT_OAUTH_INTROSPECTION_AUTH_METHOD") ?? "",
+    Env.get("OPENCODE_OAUTH_INTROSPECTION_URL") ?? "",
+    Env.get("OPENCODE_OAUTH_CLIENT_ID") ?? "",
+    Env.get("OPENCODE_OAUTH_REQUIRED_SCOPE") ?? "",
+    Env.get("OPENCODE_OAUTH_ISSUER") ?? "",
+    Env.get("OPENCODE_OAUTH_AUDIENCE") ?? "",
+    Env.get("OPENCODE_OAUTH_INTROSPECTION_AUTH_METHOD") ?? "",
   ].join("|")
 }
 
 function introspectionAuthTokenCacheKey() {
   return [
-    Env.get("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL") ?? "",
-    Env.get("OPENCODE_COMPAT_OAUTH_CLIENT_ID") ?? "",
-    Env.get("OPENCODE_COMPAT_OAUTH_INTROSPECTION_TOKEN_URL") ?? "",
-    Env.get("OPENCODE_COMPAT_OAUTH_INTROSPECTION_BEARER_SCOPE") ?? "",
+    Env.get("OPENCODE_OAUTH_INTROSPECTION_URL") ?? "",
+    Env.get("OPENCODE_OAUTH_CLIENT_ID") ?? "",
+    Env.get("OPENCODE_OAUTH_INTROSPECTION_TOKEN_URL") ?? "",
+    Env.get("OPENCODE_OAUTH_INTROSPECTION_BEARER_SCOPE") ?? "",
   ].join("|")
 }
 
@@ -572,7 +572,7 @@ function parseCompatBoolean(input: string | undefined, fallback: boolean) {
 }
 
 function introspectionStaleWhileErrorMs() {
-  const raw = Env.get("OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_WHILE_ERROR_MS")
+  const raw = Env.get("OPENCODE_OAUTH_INTROSPECTION_STALE_WHILE_ERROR_MS")
   if (raw === undefined) return 0
   const parsed = Number(raw)
   if (!Number.isInteger(parsed) || parsed < 0) return 0
@@ -580,11 +580,11 @@ function introspectionStaleWhileErrorMs() {
 }
 
 function introspectionStaleRequireExp() {
-  return parseCompatBoolean(Env.get("OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_REQUIRE_EXP"), true)
+  return parseCompatBoolean(Env.get("OPENCODE_OAUTH_INTROSPECTION_STALE_REQUIRE_EXP"), true)
 }
 
 function introspectionStaleMaxAbsAgeMs() {
-  const raw = Env.get("OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_MAX_ABS_AGE_MS")
+  const raw = Env.get("OPENCODE_OAUTH_INTROSPECTION_STALE_MAX_ABS_AGE_MS")
   if (raw === undefined) return 30_000
   const parsed = Number(raw)
   if (!Number.isInteger(parsed) || parsed < 0) return 30_000
@@ -592,7 +592,7 @@ function introspectionStaleMaxAbsAgeMs() {
 }
 
 function clockSkewMs() {
-  const skewSeconds = Number(Env.get("OPENCODE_COMPAT_JWT_CLOCK_SKEW_SECONDS")) || JWT_CLOCK_SKEW_SECONDS
+  const skewSeconds = Number(Env.get("OPENCODE_USER_JWT_CLOCK_SKEW_SECONDS")) || JWT_CLOCK_SKEW_SECONDS
   return Math.max(0, skewSeconds) * 1000
 }
 
@@ -618,14 +618,14 @@ function canUseStaleIntrospectionAllow(params: {
 
 function introspectionEnabled() {
   return (
-    !!Env.get("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL") &&
-    !!Env.get("OPENCODE_COMPAT_OAUTH_CLIENT_ID") &&
-    !!Env.get("OPENCODE_COMPAT_OAUTH_CLIENT_SECRET")
+    !!Env.get("OPENCODE_OAUTH_INTROSPECTION_URL") &&
+    !!Env.get("OPENCODE_OAUTH_CLIENT_ID") &&
+    !!Env.get("OPENCODE_OAUTH_CLIENT_SECRET")
   )
 }
 
 function resolveIntrospectionTokenURL(endpointURL: URL) {
-  const explicit = Env.get("OPENCODE_COMPAT_OAUTH_INTROSPECTION_TOKEN_URL")
+  const explicit = Env.get("OPENCODE_OAUTH_INTROSPECTION_TOKEN_URL")
   if (explicit) {
     const validated = enforceAuthURLPolicy(explicit)
     if (!validated) return
@@ -657,7 +657,7 @@ async function loadIntrospectionBearerToken(
   const tokenURL = resolveIntrospectionTokenURL(endpointURL)
   if (!tokenURL) return { kind: "explicit_deny" }
 
-  const scope = Env.get("OPENCODE_COMPAT_OAUTH_INTROSPECTION_BEARER_SCOPE") ?? "internal_oauth2_introspect"
+  const scope = Env.get("OPENCODE_OAUTH_INTROSPECTION_BEARER_SCOPE") ?? "internal_oauth2_introspect"
   const tokenBody = new URLSearchParams({
     grant_type: "client_credentials",
     scope,
@@ -699,24 +699,24 @@ function scopeFromIntrospection(value: IntrospectionResponse["scope"]): string[]
 
 function verifyIntrospectionClaims(payload: IntrospectionResponse) {
   const now = Math.floor(Date.now() / 1000)
-  const skew = Number(Env.get("OPENCODE_COMPAT_JWT_CLOCK_SKEW_SECONDS")) || JWT_CLOCK_SKEW_SECONDS
+  const skew = Number(Env.get("OPENCODE_USER_JWT_CLOCK_SKEW_SECONDS")) || JWT_CLOCK_SKEW_SECONDS
   if (typeof payload.exp === "number" && now >= payload.exp + skew) return false
   if (typeof payload.nbf === "number" && now < payload.nbf - skew) return false
 
-  const expectedIssuer = Env.get("OPENCODE_COMPAT_OAUTH_ISSUER")
+  const expectedIssuer = Env.get("OPENCODE_OAUTH_ISSUER")
   if (expectedIssuer) {
     if (typeof payload.iss !== "string") return false
     if (payload.iss !== expectedIssuer) return false
   }
 
-  const expectedAudience = Env.get("OPENCODE_COMPAT_OAUTH_AUDIENCE")
+  const expectedAudience = Env.get("OPENCODE_OAUTH_AUDIENCE")
   if (expectedAudience) {
     const audiences = parseAudience(payload.aud)
     if (!audiences.length) return false
     if (!audiences.includes(expectedAudience)) return false
   }
 
-  const requiredScopes = parseList(Env.get("OPENCODE_COMPAT_OAUTH_REQUIRED_SCOPE"))
+  const requiredScopes = parseList(Env.get("OPENCODE_OAUTH_REQUIRED_SCOPE"))
   if (requiredScopes.length) {
     const tokenScopes = scopeFromIntrospection(payload.scope)
     if (!hasRequiredAnyScope(requiredScopes, tokenScopes)) return false
@@ -737,11 +737,11 @@ async function verifyIntrospectionToken(token: string, context: AuthObserveConte
   // On stale-allow paths, return the cached sub if we have one
   const staleResult = (): VerifiedToken => ({ sub: cached?.sub })
 
-  const endpoint = Env.get("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL")!
-  const clientId = Env.get("OPENCODE_COMPAT_OAUTH_CLIENT_ID")!
-  const clientSecret = Env.get("OPENCODE_COMPAT_OAUTH_CLIENT_SECRET")!
-  const authMethod = Env.get("OPENCODE_COMPAT_OAUTH_INTROSPECTION_AUTH_METHOD") ?? "client_secret_basic"
-  const timeoutMs = Number(Env.get("OPENCODE_COMPAT_OAUTH_INTROSPECTION_TIMEOUT_MS")) || JWKS_FETCH_TIMEOUT_MS
+  const endpoint = Env.get("OPENCODE_OAUTH_INTROSPECTION_URL")!
+  const clientId = Env.get("OPENCODE_OAUTH_CLIENT_ID")!
+  const clientSecret = Env.get("OPENCODE_OAUTH_CLIENT_SECRET")!
+  const authMethod = Env.get("OPENCODE_OAUTH_INTROSPECTION_AUTH_METHOD") ?? "client_secret_basic"
+  const timeoutMs = Number(Env.get("OPENCODE_OAUTH_INTROSPECTION_TIMEOUT_MS")) || JWKS_FETCH_TIMEOUT_MS
   const endpointUrl = enforceAuthURLPolicy(endpoint)
   if (!endpointUrl) {
     introspectionCacheSet(key, { expiresAt: now + JWKS_ERROR_TTL_MS, allowed: false })
@@ -808,7 +808,7 @@ async function verifyJWT(token: string, context: AuthObserveContext, options?: J
   if (!parsed) return false
   if (parsed.header.alg === "none") return false
 
-  const jwksURL = options?.jwksURL || Env.get("OPENCODE_COMPAT_JWT_JWKS_URL")
+  const jwksURL = options?.jwksURL || Env.get("OPENCODE_USER_JWT_JWKS_URL")
 
   if (parsed.header.alg === "RS256") {
     if (!jwksURL) return false
@@ -839,24 +839,24 @@ export async function verifyBearerForStrategy(
 
 function bearerAuthEnabled() {
   return (
-    !!Env.get("OPENCODE_COMPAT_JWT_JWKS_URL") ||
-    !!Env.get("OPENCODE_COMPAT_OIDC_ISSUER") ||
-    Env.get("OPENCODE_COMPAT_OIDC_ISSUERS_JSON") !== undefined ||
+    !!Env.get("OPENCODE_USER_JWT_JWKS_URL") ||
+    !!Env.get("OPENCODE_OIDC_ISSUER") ||
+    Env.get("OPENCODE_OIDC_ISSUERS_JSON") !== undefined ||
     introspectionEnabled()
   )
 }
 
 function allowJwtFallbackToIntrospection(multiOIDCMode: boolean) {
-  const value = Env.get("OPENCODE_COMPAT_BEARER_FALLBACK_TO_INTROSPECTION")
+  const value = Env.get("OPENCODE_BEARER_FALLBACK_TO_INTROSPECTION")
   if (value === undefined) return multiOIDCMode ? false : true
   const normalized = value.trim().toLowerCase()
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on"
 }
 
 async function verifyBearerToken(token: string, context: AuthObserveContext): Promise<boolean> {
-  const multiOIDCConfigured = Env.get("OPENCODE_COMPAT_OIDC_ISSUERS_JSON") !== undefined
-  const oidcEnabled = !!Env.get("OPENCODE_COMPAT_OIDC_ISSUER") || multiOIDCConfigured
-  const jwtEnabled = !!Env.get("OPENCODE_COMPAT_JWT_JWKS_URL")
+  const multiOIDCConfigured = Env.get("OPENCODE_OIDC_ISSUERS_JSON") !== undefined
+  const oidcEnabled = !!Env.get("OPENCODE_OIDC_ISSUER") || multiOIDCConfigured
+  const jwtEnabled = !!Env.get("OPENCODE_USER_JWT_JWKS_URL")
   const introspectionOn = introspectionEnabled()
 
   const likelyJWT = isLikelyJWT(token)
@@ -902,7 +902,7 @@ function authorized(token: string) {
   }
 
   const candidates = [env("OPENCODE_TOOL_ENDPOINT_API_KEY")]
-  if (env("OPENCODE_COMPAT_ALLOW_SERVER_PASSWORD") === "true") {
+  if (env("OPENCODE_ALLOW_SERVER_PASSWORD") === "true") {
     candidates.push(env("OPENCODE_SERVER_PASSWORD"))
   }
   const values = candidates.filter((value): value is string => !!value)
@@ -984,4 +984,12 @@ export function requireAnthropicHeaders(req: Request) {
   if (!token || !authorized(token)) return anthropicError("unauthorized", "Unauthorized")
 
   return token
+}
+
+/** @internal test-only helper to clear module-level auth caches */
+export function resetCaches() {
+  jwksCache.clear()
+  oidcDiscoveryCache.clear()
+  introspectionCache.clear()
+  introspectionAuthTokenCache.clear()
 }

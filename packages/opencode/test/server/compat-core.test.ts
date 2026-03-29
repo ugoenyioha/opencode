@@ -127,18 +127,18 @@ describe("compat core routes", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const prevJwks = process.env.OPENCODE_COMPAT_JWT_JWKS_URL
-        const prevIssuer = process.env.OPENCODE_COMPAT_JWT_ISSUER
-        const prevAudience = process.env.OPENCODE_COMPAT_JWT_AUDIENCE
+        const prevJwks = process.env.OPENCODE_USER_JWT_JWKS_URL
+        const prevIssuer = process.env.OPENCODE_USER_JWT_ISSUER
+        const prevAudience = process.env.OPENCODE_USER_JWT_AUDIENCE
         try {
           Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
-          Env.set("OPENCODE_COMPAT_JWT_JWKS_URL", "https://issuer-a.example/.well-known/jwks.json")
+          Env.set("OPENCODE_USER_JWT_JWKS_URL", "https://issuer-a.example/.well-known/jwks.json")
           const token = signHS256(
             { exp: Math.floor(Date.now() / 1000) + 300, iss: "issuer-a", aud: "aud-a" },
             "super-secret",
           )
-          Env.set("OPENCODE_COMPAT_JWT_ISSUER", "issuer-a")
-          Env.set("OPENCODE_COMPAT_JWT_AUDIENCE", "aud-a")
+          Env.set("OPENCODE_USER_JWT_ISSUER", "issuer-a")
+          Env.set("OPENCODE_USER_JWT_AUDIENCE", "aud-a")
           const app = Server.App()
           const response = await app.request("/v1/models", {
             headers: {
@@ -148,12 +148,12 @@ describe("compat core routes", () => {
           })
           expect(response.status).toBe(401)
         } finally {
-          if (prevJwks === undefined) delete process.env.OPENCODE_COMPAT_JWT_JWKS_URL
-          else process.env.OPENCODE_COMPAT_JWT_JWKS_URL = prevJwks
-          if (prevIssuer === undefined) delete process.env.OPENCODE_COMPAT_JWT_ISSUER
-          else process.env.OPENCODE_COMPAT_JWT_ISSUER = prevIssuer
-          if (prevAudience === undefined) delete process.env.OPENCODE_COMPAT_JWT_AUDIENCE
-          else process.env.OPENCODE_COMPAT_JWT_AUDIENCE = prevAudience
+          if (prevJwks === undefined) delete process.env.OPENCODE_USER_JWT_JWKS_URL
+          else process.env.OPENCODE_USER_JWT_JWKS_URL = prevJwks
+          if (prevIssuer === undefined) delete process.env.OPENCODE_USER_JWT_ISSUER
+          else process.env.OPENCODE_USER_JWT_ISSUER = prevIssuer
+          if (prevAudience === undefined) delete process.env.OPENCODE_USER_JWT_AUDIENCE
+          else process.env.OPENCODE_USER_JWT_AUDIENCE = prevAudience
         }
       },
     })
@@ -195,19 +195,19 @@ describe("compat core routes", () => {
       await Instance.provide({
         directory: tmp.path,
         fn: async () => {
-          const prevJwks = process.env.OPENCODE_COMPAT_JWT_JWKS_URL
-          const prevIssuer = process.env.OPENCODE_COMPAT_JWT_ISSUER
-          const prevAudience = process.env.OPENCODE_COMPAT_JWT_AUDIENCE
+          const prevJwks = process.env.OPENCODE_USER_JWT_JWKS_URL
+          const prevIssuer = process.env.OPENCODE_USER_JWT_ISSUER
+          const prevAudience = process.env.OPENCODE_USER_JWT_AUDIENCE
           try {
             Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
-            Env.set("OPENCODE_COMPAT_JWT_JWKS_URL", jwksUrl)
+            Env.set("OPENCODE_USER_JWT_JWKS_URL", jwksUrl)
             const token = signRS256(
               { exp: Math.floor(Date.now() / 1000) + 300, iss: "issuer-rs", aud: "aud-rs" },
               privateKey,
               kid,
             )
-            Env.set("OPENCODE_COMPAT_JWT_ISSUER", "issuer-rs")
-            Env.set("OPENCODE_COMPAT_JWT_AUDIENCE", "aud-rs")
+            Env.set("OPENCODE_USER_JWT_ISSUER", "issuer-rs")
+            Env.set("OPENCODE_USER_JWT_AUDIENCE", "aud-rs")
             const app = Server.App()
             const response = await app.request("/v1/models", {
               headers: {
@@ -217,12 +217,12 @@ describe("compat core routes", () => {
             })
             expect(response.status).toBe(200)
           } finally {
-            if (prevJwks === undefined) delete process.env.OPENCODE_COMPAT_JWT_JWKS_URL
-            else process.env.OPENCODE_COMPAT_JWT_JWKS_URL = prevJwks
-            if (prevIssuer === undefined) delete process.env.OPENCODE_COMPAT_JWT_ISSUER
-            else process.env.OPENCODE_COMPAT_JWT_ISSUER = prevIssuer
-            if (prevAudience === undefined) delete process.env.OPENCODE_COMPAT_JWT_AUDIENCE
-            else process.env.OPENCODE_COMPAT_JWT_AUDIENCE = prevAudience
+            if (prevJwks === undefined) delete process.env.OPENCODE_USER_JWT_JWKS_URL
+            else process.env.OPENCODE_USER_JWT_JWKS_URL = prevJwks
+            if (prevIssuer === undefined) delete process.env.OPENCODE_USER_JWT_ISSUER
+            else process.env.OPENCODE_USER_JWT_ISSUER = prevIssuer
+            if (prevAudience === undefined) delete process.env.OPENCODE_USER_JWT_AUDIENCE
+            else process.env.OPENCODE_USER_JWT_AUDIENCE = prevAudience
           }
         },
       })
@@ -267,19 +267,19 @@ describe("compat core routes", () => {
       await Instance.provide({
         directory: tmp.path,
         fn: async () => {
-          const prevJwks = process.env.OPENCODE_COMPAT_JWT_JWKS_URL
-          const prevIssuer = process.env.OPENCODE_COMPAT_JWT_ISSUER
-          const prevAudience = process.env.OPENCODE_COMPAT_JWT_AUDIENCE
+          const prevJwks = process.env.OPENCODE_USER_JWT_JWKS_URL
+          const prevIssuer = process.env.OPENCODE_USER_JWT_ISSUER
+          const prevAudience = process.env.OPENCODE_USER_JWT_AUDIENCE
           try {
             Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
-            Env.set("OPENCODE_COMPAT_JWT_JWKS_URL", jwksUrl)
+            Env.set("OPENCODE_USER_JWT_JWKS_URL", jwksUrl)
             const token = signRS256(
               { exp: Math.floor(Date.now() / 1000) + 300, iss: "issuer-rs", aud: "aud-rs-2" },
               privateKey,
               kid,
             )
-            Env.set("OPENCODE_COMPAT_JWT_ISSUER", "issuer-rs")
-            Env.set("OPENCODE_COMPAT_JWT_AUDIENCE", "aud-rs-1, aud-rs-2")
+            Env.set("OPENCODE_USER_JWT_ISSUER", "issuer-rs")
+            Env.set("OPENCODE_USER_JWT_AUDIENCE", "aud-rs-1, aud-rs-2")
             const app = Server.App()
             const response = await app.request("/v1/models", {
               headers: {
@@ -289,12 +289,12 @@ describe("compat core routes", () => {
             })
             expect(response.status).toBe(200)
           } finally {
-            if (prevJwks === undefined) delete process.env.OPENCODE_COMPAT_JWT_JWKS_URL
-            else process.env.OPENCODE_COMPAT_JWT_JWKS_URL = prevJwks
-            if (prevIssuer === undefined) delete process.env.OPENCODE_COMPAT_JWT_ISSUER
-            else process.env.OPENCODE_COMPAT_JWT_ISSUER = prevIssuer
-            if (prevAudience === undefined) delete process.env.OPENCODE_COMPAT_JWT_AUDIENCE
-            else process.env.OPENCODE_COMPAT_JWT_AUDIENCE = prevAudience
+            if (prevJwks === undefined) delete process.env.OPENCODE_USER_JWT_JWKS_URL
+            else process.env.OPENCODE_USER_JWT_JWKS_URL = prevJwks
+            if (prevIssuer === undefined) delete process.env.OPENCODE_USER_JWT_ISSUER
+            else process.env.OPENCODE_USER_JWT_ISSUER = prevIssuer
+            if (prevAudience === undefined) delete process.env.OPENCODE_USER_JWT_AUDIENCE
+            else process.env.OPENCODE_USER_JWT_AUDIENCE = prevAudience
           }
         },
       })
@@ -317,10 +317,10 @@ describe("compat core routes", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const prevJwks = process.env.OPENCODE_COMPAT_JWT_JWKS_URL
+        const prevJwks = process.env.OPENCODE_USER_JWT_JWKS_URL
         try {
           Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
-          Env.set("OPENCODE_COMPAT_JWT_JWKS_URL", "https://issuer.invalid/.well-known/jwks.json")
+          Env.set("OPENCODE_USER_JWT_JWKS_URL", "https://issuer.invalid/.well-known/jwks.json")
           const app = Server.App()
           const response = await app.request("/v1/models", {
             headers: {
@@ -331,8 +331,8 @@ describe("compat core routes", () => {
           })
           expect(response.status).toBe(401)
         } finally {
-          if (prevJwks === undefined) delete process.env.OPENCODE_COMPAT_JWT_JWKS_URL
-          else process.env.OPENCODE_COMPAT_JWT_JWKS_URL = prevJwks
+          if (prevJwks === undefined) delete process.env.OPENCODE_USER_JWT_JWKS_URL
+          else process.env.OPENCODE_USER_JWT_JWKS_URL = prevJwks
         }
       },
     })
@@ -384,8 +384,8 @@ describe("compat core routes", () => {
       await Instance.provide({
         directory: tmp.path,
         fn: async () => {
-          Env.set("OPENCODE_COMPAT_OIDC_ISSUER", issuer)
-          Env.set("OPENCODE_COMPAT_OIDC_AUDIENCE", "aud-oidc")
+          Env.set("OPENCODE_OIDC_ISSUER", issuer)
+          Env.set("OPENCODE_OIDC_AUDIENCE", "aud-oidc")
           Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
           const app = Server.App()
           const response = await app.request("/v1/models", {
@@ -486,7 +486,7 @@ describe("compat core routes", () => {
         directory: tmp.path,
         fn: async () => {
           Env.set(
-            "OPENCODE_COMPAT_OIDC_ISSUERS_JSON",
+            "OPENCODE_OIDC_ISSUERS_JSON",
             JSON.stringify([
               { issuer: `${issuerA}/`, audience: "aud-a" },
               { issuer: issuerB, audience: "aud-b" },
@@ -633,13 +633,13 @@ describe("compat core routes", () => {
       await Instance.provide({
         directory: tmp.path,
         fn: async () => {
-          Env.set("OPENCODE_COMPAT_OIDC_ISSUERS_JSON", JSON.stringify([{ issuer, audience: "aud-a" }]))
-          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL", introspectionUrl)
-          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_ID", "client-id")
-          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_SECRET", "client-secret")
-          Env.set("OPENCODE_COMPAT_OAUTH_ISSUER", "https://fallback-issuer")
-          Env.set("OPENCODE_COMPAT_OAUTH_AUDIENCE", "fallback-aud")
-          Env.set("OPENCODE_COMPAT_OAUTH_REQUIRED_SCOPE", "compat.read")
+          Env.set("OPENCODE_OIDC_ISSUERS_JSON", JSON.stringify([{ issuer, audience: "aud-a" }]))
+          Env.set("OPENCODE_OAUTH_INTROSPECTION_URL", introspectionUrl)
+          Env.set("OPENCODE_OAUTH_CLIENT_ID", "client-id")
+          Env.set("OPENCODE_OAUTH_CLIENT_SECRET", "client-secret")
+          Env.set("OPENCODE_OAUTH_ISSUER", "https://fallback-issuer")
+          Env.set("OPENCODE_OAUTH_AUDIENCE", "fallback-aud")
+          Env.set("OPENCODE_OAUTH_REQUIRED_SCOPE", "compat.read")
           Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
 
           const app = Server.App()
@@ -735,14 +735,14 @@ describe("compat core routes", () => {
       await Instance.provide({
         directory: tmp.path,
         fn: async () => {
-          Env.set("OPENCODE_COMPAT_OIDC_ISSUERS_JSON", JSON.stringify([{ issuer, audience: "aud-a" }]))
-          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL", introspectionUrl)
-          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_ID", "client-id")
-          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_SECRET", "client-secret")
-          Env.set("OPENCODE_COMPAT_OAUTH_ISSUER", "https://fallback-issuer")
-          Env.set("OPENCODE_COMPAT_OAUTH_AUDIENCE", "fallback-aud")
-          Env.set("OPENCODE_COMPAT_OAUTH_REQUIRED_SCOPE", "compat.read")
-          Env.set("OPENCODE_COMPAT_BEARER_FALLBACK_TO_INTROSPECTION", "true")
+          Env.set("OPENCODE_OIDC_ISSUERS_JSON", JSON.stringify([{ issuer, audience: "aud-a" }]))
+          Env.set("OPENCODE_OAUTH_INTROSPECTION_URL", introspectionUrl)
+          Env.set("OPENCODE_OAUTH_CLIENT_ID", "client-id")
+          Env.set("OPENCODE_OAUTH_CLIENT_SECRET", "client-secret")
+          Env.set("OPENCODE_OAUTH_ISSUER", "https://fallback-issuer")
+          Env.set("OPENCODE_OAUTH_AUDIENCE", "fallback-aud")
+          Env.set("OPENCODE_OAUTH_REQUIRED_SCOPE", "compat.read")
+          Env.set("OPENCODE_BEARER_FALLBACK_TO_INTROSPECTION", "true")
           Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
 
           const app = Server.App()
@@ -840,12 +840,12 @@ describe("compat core routes", () => {
       await Instance.provide({
         directory: tmp.path,
         fn: async () => {
-          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL", introspectionUrl)
-          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_ID", "client-id")
-          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_SECRET", "client-secret")
-          Env.set("OPENCODE_COMPAT_OAUTH_ISSUER", "https://issuer.introspection")
-          Env.set("OPENCODE_COMPAT_OAUTH_AUDIENCE", "aud-introspection")
-          Env.set("OPENCODE_COMPAT_OAUTH_REQUIRED_SCOPE", "compat.read compat.admin")
+          Env.set("OPENCODE_OAUTH_INTROSPECTION_URL", introspectionUrl)
+          Env.set("OPENCODE_OAUTH_CLIENT_ID", "client-id")
+          Env.set("OPENCODE_OAUTH_CLIENT_SECRET", "client-secret")
+          Env.set("OPENCODE_OAUTH_ISSUER", "https://issuer.introspection")
+          Env.set("OPENCODE_OAUTH_AUDIENCE", "aud-introspection")
+          Env.set("OPENCODE_OAUTH_REQUIRED_SCOPE", "compat.read compat.admin")
           Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
           const app = Server.App()
           const response = await app.request("/v1/models", {
@@ -897,10 +897,10 @@ describe("compat core routes", () => {
         directory: tmp.path,
         fn: async () => {
           Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
-          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL", introspectionUrl)
-          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_ID", "client-id")
-          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_SECRET", "client-secret")
-          Env.set("OPENCODE_COMPAT_OAUTH_AUDIENCE", "aud-introspection")
+          Env.set("OPENCODE_OAUTH_INTROSPECTION_URL", introspectionUrl)
+          Env.set("OPENCODE_OAUTH_CLIENT_ID", "client-id")
+          Env.set("OPENCODE_OAUTH_CLIENT_SECRET", "client-secret")
+          Env.set("OPENCODE_OAUTH_AUDIENCE", "aud-introspection")
 
           const app = Server.App()
           const response = await app.request("/v1/models", {
@@ -972,14 +972,14 @@ describe("compat core routes", () => {
       await Instance.provide({
         directory: tmp.path,
         fn: async () => {
-          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL", `${base}/introspect`)
-          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_TOKEN_URL", `${base}/oauth2/token`)
-          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_AUTH_METHOD", "bearer_client_credentials")
-          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_ID", "client-id")
-          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_SECRET", "client-secret")
-          Env.set("OPENCODE_COMPAT_OAUTH_ISSUER", "https://issuer.introspection")
-          Env.set("OPENCODE_COMPAT_OAUTH_AUDIENCE", "aud-introspection")
-          Env.set("OPENCODE_COMPAT_OAUTH_REQUIRED_SCOPE", "compat.read")
+          Env.set("OPENCODE_OAUTH_INTROSPECTION_URL", `${base}/introspect`)
+          Env.set("OPENCODE_OAUTH_INTROSPECTION_TOKEN_URL", `${base}/oauth2/token`)
+          Env.set("OPENCODE_OAUTH_INTROSPECTION_AUTH_METHOD", "bearer_client_credentials")
+          Env.set("OPENCODE_OAUTH_CLIENT_ID", "client-id")
+          Env.set("OPENCODE_OAUTH_CLIENT_SECRET", "client-secret")
+          Env.set("OPENCODE_OAUTH_ISSUER", "https://issuer.introspection")
+          Env.set("OPENCODE_OAUTH_AUDIENCE", "aud-introspection")
+          Env.set("OPENCODE_OAUTH_REQUIRED_SCOPE", "compat.read")
           Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
           const app = Server.App()
           const response = await app.request("/v1/models", {
@@ -1062,13 +1062,13 @@ describe("compat core routes", () => {
       await Instance.provide({
         directory: tmp.path,
         fn: async () => {
-          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL", `${base}/introspect`)
-          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_TOKEN_URL", `${base}/oauth2/token`)
-          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_AUTH_METHOD", "bearer_client_credentials")
-          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_ID", "client-id")
-          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_SECRET", "client-secret")
-          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_WHILE_ERROR_MS", "60000")
-          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_MAX_ABS_AGE_MS", "60000")
+          Env.set("OPENCODE_OAUTH_INTROSPECTION_URL", `${base}/introspect`)
+          Env.set("OPENCODE_OAUTH_INTROSPECTION_TOKEN_URL", `${base}/oauth2/token`)
+          Env.set("OPENCODE_OAUTH_INTROSPECTION_AUTH_METHOD", "bearer_client_credentials")
+          Env.set("OPENCODE_OAUTH_CLIENT_ID", "client-id")
+          Env.set("OPENCODE_OAUTH_CLIENT_SECRET", "client-secret")
+          Env.set("OPENCODE_OAUTH_INTROSPECTION_STALE_WHILE_ERROR_MS", "60000")
+          Env.set("OPENCODE_OAUTH_INTROSPECTION_STALE_MAX_ABS_AGE_MS", "60000")
           Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
 
           const app = Server.App()
@@ -1152,15 +1152,15 @@ describe("compat core routes", () => {
       await Instance.provide({
         directory: tmp.path,
         fn: async () => {
-          Env.set("OPENCODE_COMPAT_OIDC_ISSUER", "https://different-issuer")
-          Env.set("OPENCODE_COMPAT_OIDC_AUDIENCE", "different-aud")
-          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL", introspectionUrl)
-          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_ID", "client-id")
-          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_SECRET", "client-secret")
-          Env.set("OPENCODE_COMPAT_OAUTH_ISSUER", "https://fallback-issuer")
-          Env.set("OPENCODE_COMPAT_OAUTH_AUDIENCE", "fallback-aud")
-          Env.set("OPENCODE_COMPAT_OAUTH_REQUIRED_SCOPE", "compat.read")
-          Env.set("OPENCODE_COMPAT_BEARER_FALLBACK_TO_INTROSPECTION", "true")
+          Env.set("OPENCODE_OIDC_ISSUER", "https://different-issuer")
+          Env.set("OPENCODE_OIDC_AUDIENCE", "different-aud")
+          Env.set("OPENCODE_OAUTH_INTROSPECTION_URL", introspectionUrl)
+          Env.set("OPENCODE_OAUTH_CLIENT_ID", "client-id")
+          Env.set("OPENCODE_OAUTH_CLIENT_SECRET", "client-secret")
+          Env.set("OPENCODE_OAUTH_ISSUER", "https://fallback-issuer")
+          Env.set("OPENCODE_OAUTH_AUDIENCE", "fallback-aud")
+          Env.set("OPENCODE_OAUTH_REQUIRED_SCOPE", "compat.read")
+          Env.set("OPENCODE_BEARER_FALLBACK_TO_INTROSPECTION", "true")
           Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
 
           const app = Server.App()
@@ -1214,11 +1214,11 @@ describe("compat core routes", () => {
       await Instance.provide({
         directory: tmp.path,
         fn: async () => {
-          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL", introspectionUrl)
-          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_ID", "client-id")
-          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_SECRET", "client-secret")
-          Env.set("OPENCODE_COMPAT_OAUTH_ISSUER", "https://expected-issuer")
-          Env.set("OPENCODE_COMPAT_OAUTH_AUDIENCE", "expected-aud")
+          Env.set("OPENCODE_OAUTH_INTROSPECTION_URL", introspectionUrl)
+          Env.set("OPENCODE_OAUTH_CLIENT_ID", "client-id")
+          Env.set("OPENCODE_OAUTH_CLIENT_SECRET", "client-secret")
+          Env.set("OPENCODE_OAUTH_ISSUER", "https://expected-issuer")
+          Env.set("OPENCODE_OAUTH_AUDIENCE", "expected-aud")
           Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
 
           const app = Server.App()
@@ -1270,10 +1270,10 @@ describe("compat core routes", () => {
       await Instance.provide({
         directory: tmp.path,
         fn: async () => {
-          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL", introspectionUrl)
-          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_ID", "client-id")
-          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_SECRET", "client-secret")
-          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_TIMEOUT_MS", "50")
+          Env.set("OPENCODE_OAUTH_INTROSPECTION_URL", introspectionUrl)
+          Env.set("OPENCODE_OAUTH_CLIENT_ID", "client-id")
+          Env.set("OPENCODE_OAUTH_CLIENT_SECRET", "client-secret")
+          Env.set("OPENCODE_OAUTH_INTROSPECTION_TIMEOUT_MS", "50")
           Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
 
           const app = Server.App()
@@ -1345,9 +1345,9 @@ describe("compat core routes", () => {
       await Instance.provide({
         directory: tmp.path,
         fn: async () => {
-          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL", introspectionUrl)
-          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_ID", "client-id")
-          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_SECRET", "client-secret")
+          Env.set("OPENCODE_OAUTH_INTROSPECTION_URL", introspectionUrl)
+          Env.set("OPENCODE_OAUTH_CLIENT_ID", "client-id")
+          Env.set("OPENCODE_OAUTH_CLIENT_SECRET", "client-secret")
           Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
 
           const app = Server.App()
@@ -1423,11 +1423,11 @@ describe("compat core routes", () => {
       await Instance.provide({
         directory: tmp.path,
         fn: async () => {
-          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL", introspectionUrl)
-          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_ID", "client-id")
-          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_SECRET", "client-secret")
-          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_WHILE_ERROR_MS", "400")
-          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_MAX_ABS_AGE_MS", "60000")
+          Env.set("OPENCODE_OAUTH_INTROSPECTION_URL", introspectionUrl)
+          Env.set("OPENCODE_OAUTH_CLIENT_ID", "client-id")
+          Env.set("OPENCODE_OAUTH_CLIENT_SECRET", "client-secret")
+          Env.set("OPENCODE_OAUTH_INTROSPECTION_STALE_WHILE_ERROR_MS", "400")
+          Env.set("OPENCODE_OAUTH_INTROSPECTION_STALE_MAX_ABS_AGE_MS", "60000")
           Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
 
           const app = Server.App()
@@ -1523,12 +1523,12 @@ describe("compat core routes", () => {
       await Instance.provide({
         directory: tmp.path,
         fn: async () => {
-          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL", introspectionUrl)
-          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_ID", "client-id")
-          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_SECRET", "client-secret")
-          Env.set("OPENCODE_COMPAT_OAUTH_ISSUER", "https://issuer-allow")
-          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_WHILE_ERROR_MS", "60000")
-          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_MAX_ABS_AGE_MS", "60000")
+          Env.set("OPENCODE_OAUTH_INTROSPECTION_URL", introspectionUrl)
+          Env.set("OPENCODE_OAUTH_CLIENT_ID", "client-id")
+          Env.set("OPENCODE_OAUTH_CLIENT_SECRET", "client-secret")
+          Env.set("OPENCODE_OAUTH_ISSUER", "https://issuer-allow")
+          Env.set("OPENCODE_OAUTH_INTROSPECTION_STALE_WHILE_ERROR_MS", "60000")
+          Env.set("OPENCODE_OAUTH_INTROSPECTION_STALE_MAX_ABS_AGE_MS", "60000")
           Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
 
           const app = Server.App()
@@ -1613,12 +1613,12 @@ describe("compat core routes", () => {
       await Instance.provide({
         directory: tmp.path,
         fn: async () => {
-          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL", introspectionUrl)
-          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_ID", "client-id")
-          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_SECRET", "client-secret")
-          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_WHILE_ERROR_MS", "60000")
-          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_REQUIRE_EXP", "true")
-          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_MAX_ABS_AGE_MS", "60000")
+          Env.set("OPENCODE_OAUTH_INTROSPECTION_URL", introspectionUrl)
+          Env.set("OPENCODE_OAUTH_CLIENT_ID", "client-id")
+          Env.set("OPENCODE_OAUTH_CLIENT_SECRET", "client-secret")
+          Env.set("OPENCODE_OAUTH_INTROSPECTION_STALE_WHILE_ERROR_MS", "60000")
+          Env.set("OPENCODE_OAUTH_INTROSPECTION_STALE_REQUIRE_EXP", "true")
+          Env.set("OPENCODE_OAUTH_INTROSPECTION_STALE_MAX_ABS_AGE_MS", "60000")
           Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
 
           const app = Server.App()
@@ -1689,12 +1689,12 @@ describe("compat core routes", () => {
       await Instance.provide({
         directory: tmp.path,
         fn: async () => {
-          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL", introspectionUrl)
-          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_ID", "client-id")
-          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_SECRET", "client-secret")
-          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_WHILE_ERROR_MS", "60000")
-          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_MAX_ABS_AGE_MS", "60000")
-          Env.set("OPENCODE_COMPAT_JWT_CLOCK_SKEW_SECONDS", "30")
+          Env.set("OPENCODE_OAUTH_INTROSPECTION_URL", introspectionUrl)
+          Env.set("OPENCODE_OAUTH_CLIENT_ID", "client-id")
+          Env.set("OPENCODE_OAUTH_CLIENT_SECRET", "client-secret")
+          Env.set("OPENCODE_OAUTH_INTROSPECTION_STALE_WHILE_ERROR_MS", "60000")
+          Env.set("OPENCODE_OAUTH_INTROSPECTION_STALE_MAX_ABS_AGE_MS", "60000")
+          Env.set("OPENCODE_USER_JWT_CLOCK_SKEW_SECONDS", "30")
           Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
 
           const app = Server.App()
@@ -1765,9 +1765,9 @@ describe("compat core routes", () => {
       await Instance.provide({
         directory: tmp.path,
         fn: async () => {
-          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL", introspectionUrl)
-          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_ID", "client-id")
-          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_SECRET", "client-secret")
+          Env.set("OPENCODE_OAUTH_INTROSPECTION_URL", introspectionUrl)
+          Env.set("OPENCODE_OAUTH_CLIENT_ID", "client-id")
+          Env.set("OPENCODE_OAUTH_CLIENT_SECRET", "client-secret")
           Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
 
           const app = Server.App()
@@ -1833,15 +1833,15 @@ describe("compat core routes", () => {
       await Instance.provide({
         directory: tmp.path,
         fn: async () => {
-          Env.set("OPENCODE_COMPAT_OIDC_ISSUER", "https://issuer-never-resolves.invalid")
-          Env.set("OPENCODE_COMPAT_OIDC_AUDIENCE", "aud-disabled")
-          Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL", introspectionUrl)
-          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_ID", "client-id")
-          Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_SECRET", "client-secret")
-          Env.set("OPENCODE_COMPAT_OAUTH_ISSUER", "https://fallback-disabled-issuer")
-          Env.set("OPENCODE_COMPAT_OAUTH_AUDIENCE", "fallback-disabled-aud")
-          Env.set("OPENCODE_COMPAT_OAUTH_REQUIRED_SCOPE", "compat.read")
-          Env.set("OPENCODE_COMPAT_BEARER_FALLBACK_TO_INTROSPECTION", "false")
+          Env.set("OPENCODE_OIDC_ISSUER", "https://issuer-never-resolves.invalid")
+          Env.set("OPENCODE_OIDC_AUDIENCE", "aud-disabled")
+          Env.set("OPENCODE_OAUTH_INTROSPECTION_URL", introspectionUrl)
+          Env.set("OPENCODE_OAUTH_CLIENT_ID", "client-id")
+          Env.set("OPENCODE_OAUTH_CLIENT_SECRET", "client-secret")
+          Env.set("OPENCODE_OAUTH_ISSUER", "https://fallback-disabled-issuer")
+          Env.set("OPENCODE_OAUTH_AUDIENCE", "fallback-disabled-aud")
+          Env.set("OPENCODE_OAUTH_REQUIRED_SCOPE", "compat.read")
+          Env.set("OPENCODE_BEARER_FALLBACK_TO_INTROSPECTION", "false")
           Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
 
           const app = Server.App()
@@ -1874,8 +1874,8 @@ describe("compat core routes", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        Env.set("OPENCODE_COMPAT_OIDC_ISSUER", "http://127.0.0.1:9")
-        Env.set("OPENCODE_COMPAT_OIDC_AUDIENCE", "aud")
+        Env.set("OPENCODE_OIDC_ISSUER", "http://127.0.0.1:9")
+        Env.set("OPENCODE_OIDC_AUDIENCE", "aud")
         Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
 
         const app = Server.App()
@@ -1934,8 +1934,8 @@ describe("compat core routes", () => {
       await Instance.provide({
         directory: tmp.path,
         fn: async () => {
-          Env.set("OPENCODE_COMPAT_OIDC_ISSUER", issuer)
-          Env.set("OPENCODE_COMPAT_OIDC_AUDIENCE", "aud")
+          Env.set("OPENCODE_OIDC_ISSUER", issuer)
+          Env.set("OPENCODE_OIDC_AUDIENCE", "aud")
           Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
 
           const app = Server.App()
@@ -1967,9 +1967,9 @@ describe("compat core routes", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        Env.set("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL", "http://example.com/introspect")
-        Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_ID", "client-id")
-        Env.set("OPENCODE_COMPAT_OAUTH_CLIENT_SECRET", "client-secret")
+        Env.set("OPENCODE_OAUTH_INTROSPECTION_URL", "http://example.com/introspect")
+        Env.set("OPENCODE_OAUTH_CLIENT_ID", "client-id")
+        Env.set("OPENCODE_OAUTH_CLIENT_SECRET", "client-secret")
         Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
 
         const app = Server.App()
@@ -1998,7 +1998,7 @@ describe("compat core routes", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        Env.set("OPENCODE_COMPAT_JWT_JWKS_URL", "http://example.com/.well-known/jwks.json")
+        Env.set("OPENCODE_USER_JWT_JWKS_URL", "http://example.com/.well-known/jwks.json")
         Env.set("OPENCODE_TOOL_ENDPOINT_API_KEY", "test-token")
 
         const app = Server.App()

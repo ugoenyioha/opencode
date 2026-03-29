@@ -1639,16 +1639,16 @@ Agent without per-agent auth config.
           Env.set("ANTHROPIC_API_KEY", "test-key")
         },
         fn: async () => {
-          const previousJwks = process.env.OPENCODE_COMPAT_JWT_JWKS_URL
-          const previousIssuer = process.env.OPENCODE_COMPAT_JWT_ISSUER
-          const previousAudience = process.env.OPENCODE_COMPAT_JWT_AUDIENCE
+          const previousJwks = process.env.OPENCODE_USER_JWT_JWKS_URL
+          const previousIssuer = process.env.OPENCODE_USER_JWT_ISSUER
+          const previousAudience = process.env.OPENCODE_USER_JWT_AUDIENCE
           try {
             const address = jwks.address()
             if (!address || typeof address === "string") throw new Error("failed to start jwks server")
             const jwksUrl = `http://127.0.0.1:${address.port}/.well-known/jwks.json`
-            Env.set("OPENCODE_COMPAT_JWT_JWKS_URL", jwksUrl)
-            Env.set("OPENCODE_COMPAT_JWT_ISSUER", "a2a-issuer")
-            Env.set("OPENCODE_COMPAT_JWT_AUDIENCE", "a2a-audience")
+            Env.set("OPENCODE_USER_JWT_JWKS_URL", jwksUrl)
+            Env.set("OPENCODE_USER_JWT_ISSUER", "a2a-issuer")
+            Env.set("OPENCODE_USER_JWT_AUDIENCE", "a2a-audience")
 
             const app = Server.App()
             const goodToken = signRS256(
@@ -1690,12 +1690,12 @@ Agent without per-agent auth config.
             })
             expect(noSubDenied.status).toBe(401)
           } finally {
-            if (previousJwks === undefined) delete process.env.OPENCODE_COMPAT_JWT_JWKS_URL
-            else process.env.OPENCODE_COMPAT_JWT_JWKS_URL = previousJwks
-            if (previousIssuer === undefined) delete process.env.OPENCODE_COMPAT_JWT_ISSUER
-            else process.env.OPENCODE_COMPAT_JWT_ISSUER = previousIssuer
-            if (previousAudience === undefined) delete process.env.OPENCODE_COMPAT_JWT_AUDIENCE
-            else process.env.OPENCODE_COMPAT_JWT_AUDIENCE = previousAudience
+            if (previousJwks === undefined) delete process.env.OPENCODE_USER_JWT_JWKS_URL
+            else process.env.OPENCODE_USER_JWT_JWKS_URL = previousJwks
+            if (previousIssuer === undefined) delete process.env.OPENCODE_USER_JWT_ISSUER
+            else process.env.OPENCODE_USER_JWT_ISSUER = previousIssuer
+            if (previousAudience === undefined) delete process.env.OPENCODE_USER_JWT_AUDIENCE
+            else process.env.OPENCODE_USER_JWT_AUDIENCE = previousAudience
           }
         },
       })

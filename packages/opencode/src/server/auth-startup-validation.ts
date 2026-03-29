@@ -174,55 +174,55 @@ function validateAuthURL(strategy: StartupStrategy, key: string, raw: string) {
 }
 
 function validateClockSkewBounds(getEnv: ValidatorContext["getEnv"]) {
-  const raw = getEnv("OPENCODE_COMPAT_JWT_CLOCK_SKEW_SECONDS")
+  const raw = getEnv("OPENCODE_USER_JWT_CLOCK_SKEW_SECONDS")
   if (!raw) return
   const parsed = Number(raw)
   if (!Number.isInteger(parsed) || parsed < 0 || parsed > 300) {
     fail({
       code: "AUTH_CONFIG_BOUNDS",
       strategy: "global",
-      key: "env.OPENCODE_COMPAT_JWT_CLOCK_SKEW_SECONDS",
+      key: "env.OPENCODE_USER_JWT_CLOCK_SKEW_SECONDS",
       reason: "must_be_integer_between_0_and_300",
     })
   }
 }
 
 function validateIntrospectionTimeoutBounds(getEnv: ValidatorContext["getEnv"]) {
-  const raw = getEnv("OPENCODE_COMPAT_OAUTH_INTROSPECTION_TIMEOUT_MS")
+  const raw = getEnv("OPENCODE_OAUTH_INTROSPECTION_TIMEOUT_MS")
   if (!raw) return
   const parsed = Number(raw)
   if (!Number.isInteger(parsed) || parsed < 1 || parsed > 120000) {
     fail({
       code: "AUTH_CONFIG_BOUNDS",
       strategy: "oauth2",
-      key: "env.OPENCODE_COMPAT_OAUTH_INTROSPECTION_TIMEOUT_MS",
+      key: "env.OPENCODE_OAUTH_INTROSPECTION_TIMEOUT_MS",
       reason: "must_be_integer_between_1_and_120000",
     })
   }
 }
 
 function validateIntrospectionStaleBounds(getEnv: ValidatorContext["getEnv"]) {
-  const staleWhileErrorRaw = getEnv("OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_WHILE_ERROR_MS")
+  const staleWhileErrorRaw = getEnv("OPENCODE_OAUTH_INTROSPECTION_STALE_WHILE_ERROR_MS")
   if (staleWhileErrorRaw !== undefined) {
     const parsed = Number(staleWhileErrorRaw)
     if (!Number.isInteger(parsed) || parsed < 0 || parsed > 60000) {
       fail({
         code: "AUTH_CONFIG_BOUNDS",
         strategy: "oauth2",
-        key: "env.OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_WHILE_ERROR_MS",
+        key: "env.OPENCODE_OAUTH_INTROSPECTION_STALE_WHILE_ERROR_MS",
         reason: "must_be_integer_between_0_and_60000",
       })
     }
   }
 
-  const staleMaxAbsAgeRaw = getEnv("OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_MAX_ABS_AGE_MS")
+  const staleMaxAbsAgeRaw = getEnv("OPENCODE_OAUTH_INTROSPECTION_STALE_MAX_ABS_AGE_MS")
   if (staleMaxAbsAgeRaw !== undefined) {
     const parsed = Number(staleMaxAbsAgeRaw)
     if (!Number.isInteger(parsed) || parsed < 0 || parsed > 60000) {
       fail({
         code: "AUTH_CONFIG_BOUNDS",
         strategy: "oauth2",
-        key: "env.OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_MAX_ABS_AGE_MS",
+        key: "env.OPENCODE_OAUTH_INTROSPECTION_STALE_MAX_ABS_AGE_MS",
         reason: "must_be_integer_between_0_and_60000",
       })
     }
@@ -230,7 +230,7 @@ function validateIntrospectionStaleBounds(getEnv: ValidatorContext["getEnv"]) {
 }
 
 function validateIntrospectionStaleRequireExpLiteral(getEnv: ValidatorContext["getEnv"]) {
-  const raw = getEnv("OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_REQUIRE_EXP")
+  const raw = getEnv("OPENCODE_OAUTH_INTROSPECTION_STALE_REQUIRE_EXP")
   if (raw === undefined) return
   const normalized = raw.trim().toLowerCase()
   if (normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on") return
@@ -238,19 +238,19 @@ function validateIntrospectionStaleRequireExpLiteral(getEnv: ValidatorContext["g
   fail({
     code: "AUTH_CONFIG_BOUNDS",
     strategy: "oauth2",
-    key: "env.OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_REQUIRE_EXP",
+    key: "env.OPENCODE_OAUTH_INTROSPECTION_STALE_REQUIRE_EXP",
     reason: "must_be_boolean_literal",
   })
 }
 
 function validateJWTConfig(getEnv: ValidatorContext["getEnv"]) {
-  const jwks = getEnv("OPENCODE_COMPAT_JWT_JWKS_URL")
-  const hs256 = getEnv("OPENCODE_COMPAT_JWT_HS256_SECRET")
+  const jwks = getEnv("OPENCODE_USER_JWT_JWKS_URL")
+  const hs256 = getEnv("OPENCODE_USER_JWT_HS256_SECRET")
   if (hs256) {
     fail({
       code: "AUTH_CONFIG_UNSUPPORTED_REF",
       strategy: "jwt",
-      key: "env.OPENCODE_COMPAT_JWT_HS256_SECRET",
+      key: "env.OPENCODE_USER_JWT_HS256_SECRET",
       reason: "hs256_deprecated_use_jwks",
     })
   }
@@ -258,24 +258,24 @@ function validateJWTConfig(getEnv: ValidatorContext["getEnv"]) {
     fail({
       code: "AUTH_CONFIG_MISSING",
       strategy: "jwt",
-      key: "env.OPENCODE_COMPAT_JWT_JWKS_URL",
+      key: "env.OPENCODE_USER_JWT_JWKS_URL",
       reason: "required",
     })
   }
   if (jwks) {
-    validateAuthURL("jwt", "env.OPENCODE_COMPAT_JWT_JWKS_URL", jwks)
+    validateAuthURL("jwt", "env.OPENCODE_USER_JWT_JWKS_URL", jwks)
   }
 }
 
 function validateOIDCConfig(getEnv: ValidatorContext["getEnv"]) {
-  const issuer = getEnv("OPENCODE_COMPAT_OIDC_ISSUER")
-  const issuersJSON = getEnv("OPENCODE_COMPAT_OIDC_ISSUERS_JSON")
+  const issuer = getEnv("OPENCODE_OIDC_ISSUER")
+  const issuersJSON = getEnv("OPENCODE_OIDC_ISSUERS_JSON")
 
   if (issuer && issuersJSON) {
     fail({
       code: "AUTH_CONFIG_CONFLICT",
       strategy: "oidc",
-      key: "env.OPENCODE_COMPAT_OIDC_ISSUER|env.OPENCODE_COMPAT_OIDC_ISSUERS_JSON",
+      key: "env.OPENCODE_OIDC_ISSUER|env.OPENCODE_OIDC_ISSUERS_JSON",
       reason: "mutually_exclusive_issuer_sources",
     })
   }
@@ -288,7 +288,7 @@ function validateOIDCConfig(getEnv: ValidatorContext["getEnv"]) {
       fail({
         code: "AUTH_CONFIG_UNSUPPORTED_REF",
         strategy: "oidc",
-        key: "env.OPENCODE_COMPAT_OIDC_ISSUERS_JSON",
+        key: "env.OPENCODE_OIDC_ISSUERS_JSON",
         reason: "invalid_json",
       })
     }
@@ -297,7 +297,7 @@ function validateOIDCConfig(getEnv: ValidatorContext["getEnv"]) {
       fail({
         code: "AUTH_CONFIG_UNSUPPORTED_REF",
         strategy: "oidc",
-        key: "env.OPENCODE_COMPAT_OIDC_ISSUERS_JSON",
+        key: "env.OPENCODE_OIDC_ISSUERS_JSON",
         reason: "must_be_non_empty_array",
       })
     }
@@ -308,7 +308,7 @@ function validateOIDCConfig(getEnv: ValidatorContext["getEnv"]) {
         fail({
           code: "AUTH_CONFIG_UNSUPPORTED_REF",
           strategy: "oidc",
-          key: "env.OPENCODE_COMPAT_OIDC_ISSUERS_JSON",
+          key: "env.OPENCODE_OIDC_ISSUERS_JSON",
           reason: "entry_must_be_object",
         })
       }
@@ -319,7 +319,7 @@ function validateOIDCConfig(getEnv: ValidatorContext["getEnv"]) {
           fail({
             code: "AUTH_CONFIG_UNSUPPORTED_REF",
             strategy: "oidc",
-            key: "env.OPENCODE_COMPAT_OIDC_ISSUERS_JSON",
+            key: "env.OPENCODE_OIDC_ISSUERS_JSON",
             reason: "unknown_entry_keys",
           })
         }
@@ -329,17 +329,17 @@ function validateOIDCConfig(getEnv: ValidatorContext["getEnv"]) {
         fail({
           code: "AUTH_CONFIG_UNSUPPORTED_REF",
           strategy: "oidc",
-          key: "env.OPENCODE_COMPAT_OIDC_ISSUERS_JSON",
+          key: "env.OPENCODE_OIDC_ISSUERS_JSON",
           reason: "issuer_required",
         })
       }
       const normalized = normalizeIssuer(record.issuer.trim())
-      validateAuthURL("oidc", "env.OPENCODE_COMPAT_OIDC_ISSUERS_JSON", normalized)
+      validateAuthURL("oidc", "env.OPENCODE_OIDC_ISSUERS_JSON", normalized)
       if (seen.has(normalized)) {
         fail({
           code: "AUTH_CONFIG_CONFLICT",
           strategy: "oidc",
-          key: "env.OPENCODE_COMPAT_OIDC_ISSUERS_JSON",
+          key: "env.OPENCODE_OIDC_ISSUERS_JSON",
           reason: "duplicate_normalized_issuers",
         })
       }
@@ -354,19 +354,19 @@ function validateOIDCConfig(getEnv: ValidatorContext["getEnv"]) {
           fail({
             code: "AUTH_CONFIG_UNSUPPORTED_REF",
             strategy: "oidc",
-            key: "env.OPENCODE_COMPAT_OIDC_ISSUERS_JSON",
+            key: "env.OPENCODE_OIDC_ISSUERS_JSON",
             reason: "invalid_audience_shape",
           })
         }
       }
     }
 
-    const allowedAlgs = parseList(getEnv("OPENCODE_COMPAT_OIDC_ALGS"))
+    const allowedAlgs = parseList(getEnv("OPENCODE_OIDC_ALGS"))
     if (allowedAlgs.some((alg) => alg.toLowerCase() === "none")) {
       fail({
         code: "AUTH_CONFIG_UNSUPPORTED_REF",
         strategy: "oidc",
-        key: "env.OPENCODE_COMPAT_OIDC_ALGS",
+        key: "env.OPENCODE_OIDC_ALGS",
         reason: "alg_none_disallowed",
       })
     }
@@ -374,7 +374,7 @@ function validateOIDCConfig(getEnv: ValidatorContext["getEnv"]) {
       fail({
         code: "AUTH_CONFIG_UNSUPPORTED_REF",
         strategy: "oidc",
-        key: "env.OPENCODE_COMPAT_OIDC_ALGS",
+        key: "env.OPENCODE_OIDC_ALGS",
         reason: "only_rs256_supported",
       })
     }
@@ -385,18 +385,18 @@ function validateOIDCConfig(getEnv: ValidatorContext["getEnv"]) {
     fail({
       code: "AUTH_CONFIG_MISSING",
       strategy: "oidc",
-      key: "env.OPENCODE_COMPAT_OIDC_ISSUER",
+      key: "env.OPENCODE_OIDC_ISSUER",
       reason: "required",
     })
   }
-  validateAuthURL("oidc", "env.OPENCODE_COMPAT_OIDC_ISSUER", issuer)
+  validateAuthURL("oidc", "env.OPENCODE_OIDC_ISSUER", issuer)
 
-  const allowedAlgs = parseList(getEnv("OPENCODE_COMPAT_OIDC_ALGS"))
+  const allowedAlgs = parseList(getEnv("OPENCODE_OIDC_ALGS"))
   if (allowedAlgs.some((alg) => alg.toLowerCase() === "none")) {
     fail({
       code: "AUTH_CONFIG_UNSUPPORTED_REF",
       strategy: "oidc",
-      key: "env.OPENCODE_COMPAT_OIDC_ALGS",
+      key: "env.OPENCODE_OIDC_ALGS",
       reason: "alg_none_disallowed",
     })
   }
@@ -404,22 +404,22 @@ function validateOIDCConfig(getEnv: ValidatorContext["getEnv"]) {
     fail({
       code: "AUTH_CONFIG_UNSUPPORTED_REF",
       strategy: "oidc",
-      key: "env.OPENCODE_COMPAT_OIDC_ALGS",
+      key: "env.OPENCODE_OIDC_ALGS",
       reason: "only_rs256_supported",
     })
   }
 }
 
 function validateOAuth2Config(getEnv: ValidatorContext["getEnv"]) {
-  const introspectionURL = getEnv("OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL")
-  const clientID = getEnv("OPENCODE_COMPAT_OAUTH_CLIENT_ID")
-  const clientSecret = getEnv("OPENCODE_COMPAT_OAUTH_CLIENT_SECRET")
+  const introspectionURL = getEnv("OPENCODE_OAUTH_INTROSPECTION_URL")
+  const clientID = getEnv("OPENCODE_OAUTH_CLIENT_ID")
+  const clientSecret = getEnv("OPENCODE_OAUTH_CLIENT_SECRET")
 
   if (!introspectionURL) {
     fail({
       code: "AUTH_CONFIG_MISSING",
       strategy: "oauth2",
-      key: "env.OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL",
+      key: "env.OPENCODE_OAUTH_INTROSPECTION_URL",
       reason: "required",
     })
   }
@@ -427,7 +427,7 @@ function validateOAuth2Config(getEnv: ValidatorContext["getEnv"]) {
     fail({
       code: "AUTH_CONFIG_MISSING",
       strategy: "oauth2",
-      key: "env.OPENCODE_COMPAT_OAUTH_CLIENT_ID",
+      key: "env.OPENCODE_OAUTH_CLIENT_ID",
       reason: "required",
     })
   }
@@ -435,29 +435,29 @@ function validateOAuth2Config(getEnv: ValidatorContext["getEnv"]) {
     fail({
       code: "AUTH_CONFIG_MISSING",
       strategy: "oauth2",
-      key: "env.OPENCODE_COMPAT_OAUTH_CLIENT_SECRET",
+      key: "env.OPENCODE_OAUTH_CLIENT_SECRET",
       reason: "required",
     })
   }
 
-  validateAuthURL("oauth2", "env.OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL", introspectionURL)
+  validateAuthURL("oauth2", "env.OPENCODE_OAUTH_INTROSPECTION_URL", introspectionURL)
   validateIntrospectionTimeoutBounds(getEnv)
   validateIntrospectionStaleBounds(getEnv)
   validateIntrospectionStaleRequireExpLiteral(getEnv)
 
-  const authMethod = getEnv("OPENCODE_COMPAT_OAUTH_INTROSPECTION_AUTH_METHOD") ?? "client_secret_basic"
+  const authMethod = getEnv("OPENCODE_OAUTH_INTROSPECTION_AUTH_METHOD") ?? "client_secret_basic"
   if (!SUPPORTED_INTROSPECTION_AUTH_METHODS.has(authMethod)) {
     fail({
       code: "AUTH_CONFIG_UNSUPPORTED_REF",
       strategy: "oauth2",
-      key: "env.OPENCODE_COMPAT_OAUTH_INTROSPECTION_AUTH_METHOD",
+      key: "env.OPENCODE_OAUTH_INTROSPECTION_AUTH_METHOD",
       reason: "unsupported_auth_method",
     })
   }
 
-  const explicitTokenURL = getEnv("OPENCODE_COMPAT_OAUTH_INTROSPECTION_TOKEN_URL")
+  const explicitTokenURL = getEnv("OPENCODE_OAUTH_INTROSPECTION_TOKEN_URL")
   if (explicitTokenURL) {
-    validateAuthURL("oauth2", "env.OPENCODE_COMPAT_OAUTH_INTROSPECTION_TOKEN_URL", explicitTokenURL)
+    validateAuthURL("oauth2", "env.OPENCODE_OAUTH_INTROSPECTION_TOKEN_URL", explicitTokenURL)
   }
 }
 

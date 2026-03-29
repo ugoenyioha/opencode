@@ -137,9 +137,9 @@ describe("tool endpoint auth policy", () => {
         fn: async () => {
           await withEnv(
             {
-              OPENCODE_COMPAT_JWT_JWKS_URL: jwksUrl,
-              OPENCODE_COMPAT_JWT_ISSUER: "issuer-jwt-array",
-              OPENCODE_COMPAT_JWT_AUDIENCE: "aud-jwt-array",
+              OPENCODE_USER_JWT_JWKS_URL: jwksUrl,
+              OPENCODE_USER_JWT_ISSUER: "issuer-jwt-array",
+              OPENCODE_USER_JWT_AUDIENCE: "aud-jwt-array",
             },
             async () => {
               const app = Server.App()
@@ -218,9 +218,9 @@ describe("tool endpoint auth policy", () => {
         fn: async () => {
           await withEnv(
             {
-              OPENCODE_COMPAT_JWT_JWKS_URL: jwksUrl,
-              OPENCODE_COMPAT_JWT_ISSUER: "issuer-jwt",
-              OPENCODE_COMPAT_JWT_AUDIENCE: "aud-jwt",
+              OPENCODE_USER_JWT_JWKS_URL: jwksUrl,
+              OPENCODE_USER_JWT_ISSUER: "issuer-jwt",
+              OPENCODE_USER_JWT_AUDIENCE: "aud-jwt",
               OPENCODE_TOOL_ENDPOINT_API_KEY: "still-not-used",
             },
             async () => {
@@ -293,8 +293,8 @@ describe("tool endpoint auth policy", () => {
         fn: async () => {
           await withEnv(
             {
-              OPENCODE_COMPAT_OIDC_ISSUER: issuer,
-              OPENCODE_COMPAT_OIDC_AUDIENCE: "aud-oidc-tool",
+              OPENCODE_OIDC_ISSUER: issuer,
+              OPENCODE_OIDC_AUDIENCE: "aud-oidc-tool",
             },
             async () => {
               const app = Server.App()
@@ -372,12 +372,12 @@ describe("tool endpoint auth policy", () => {
         fn: async () => {
           await withEnv(
             {
-              OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL: introspectionURL,
-              OPENCODE_COMPAT_OAUTH_CLIENT_ID: "tool-client",
-              OPENCODE_COMPAT_OAUTH_CLIENT_SECRET: "tool-secret",
-              OPENCODE_COMPAT_OAUTH_ISSUER: "https://issuer.oauth2.tool",
-              OPENCODE_COMPAT_OAUTH_AUDIENCE: "aud-oauth2-tool",
-              OPENCODE_COMPAT_OAUTH_REQUIRED_SCOPE: "tool.invoke",
+              OPENCODE_OAUTH_INTROSPECTION_URL: introspectionURL,
+              OPENCODE_OAUTH_CLIENT_ID: "tool-client",
+              OPENCODE_OAUTH_CLIENT_SECRET: "tool-secret",
+              OPENCODE_OAUTH_ISSUER: "https://issuer.oauth2.tool",
+              OPENCODE_OAUTH_AUDIENCE: "aud-oauth2-tool",
+              OPENCODE_OAUTH_REQUIRED_SCOPE: "tool.invoke",
             },
             async () => {
               const app = Server.App()
@@ -449,9 +449,9 @@ describe("tool endpoint auth policy", () => {
         fn: async () => {
           await withEnv(
             {
-              OPENCODE_COMPAT_JWT_JWKS_URL: jwksUrl,
-              OPENCODE_COMPAT_JWT_ISSUER: "issuer-allowlist",
-              OPENCODE_COMPAT_JWT_AUDIENCE: "aud-allowlist",
+              OPENCODE_USER_JWT_JWKS_URL: jwksUrl,
+              OPENCODE_USER_JWT_ISSUER: "issuer-allowlist",
+              OPENCODE_USER_JWT_AUDIENCE: "aud-allowlist",
             },
             async () => {
               const app = Server.App()

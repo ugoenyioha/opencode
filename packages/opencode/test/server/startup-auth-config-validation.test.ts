@@ -80,11 +80,11 @@ describe("startup auth config validation", () => {
     await expectStartupError({
       auth: "jwt",
       env: {
-        OPENCODE_COMPAT_JWT_HS256_SECRET: "super-secret-value",
+        OPENCODE_USER_JWT_HS256_SECRET: "super-secret-value",
       },
       code: "AUTH_CONFIG_UNSUPPORTED_REF",
       message:
-        "AUTH_CONFIG_UNSUPPORTED_REF strategy=jwt key=env.OPENCODE_COMPAT_JWT_HS256_SECRET reason=hs256_deprecated_use_jwks",
+        "AUTH_CONFIG_UNSUPPORTED_REF strategy=jwt key=env.OPENCODE_USER_JWT_HS256_SECRET reason=hs256_deprecated_use_jwks",
     })
   })
 
@@ -92,11 +92,11 @@ describe("startup auth config validation", () => {
     await expectStartupError({
       auth: "oidc",
       env: {
-        OPENCODE_COMPAT_OIDC_ISSUER: "http://example.internal/auth",
+        OPENCODE_OIDC_ISSUER: "http://example.internal/auth",
       },
       code: "AUTH_CONFIG_INVALID_URL",
       message:
-        "AUTH_CONFIG_INVALID_URL strategy=oidc key=env.OPENCODE_COMPAT_OIDC_ISSUER reason=requires_https_or_exact_loopback_http url_class=scheme=http host_class=non_loopback path_class=custom",
+        "AUTH_CONFIG_INVALID_URL strategy=oidc key=env.OPENCODE_OIDC_ISSUER reason=requires_https_or_exact_loopback_http url_class=scheme=http host_class=non_loopback path_class=custom",
     })
   })
 
@@ -104,10 +104,10 @@ describe("startup auth config validation", () => {
     await expectStartupError({
       auth: "oidc",
       env: {
-        OPENCODE_COMPAT_OIDC_ISSUERS_JSON: "{bad-json",
+        OPENCODE_OIDC_ISSUERS_JSON: "{bad-json",
       },
       code: "AUTH_CONFIG_UNSUPPORTED_REF",
-      message: "AUTH_CONFIG_UNSUPPORTED_REF strategy=oidc key=env.OPENCODE_COMPAT_OIDC_ISSUERS_JSON reason=invalid_json",
+      message: "AUTH_CONFIG_UNSUPPORTED_REF strategy=oidc key=env.OPENCODE_OIDC_ISSUERS_JSON reason=invalid_json",
     })
   })
 
@@ -115,11 +115,11 @@ describe("startup auth config validation", () => {
     await expectStartupError({
       auth: "oidc",
       env: {
-        OPENCODE_COMPAT_OIDC_ISSUERS_JSON: JSON.stringify(["https://issuer.example"]),
+        OPENCODE_OIDC_ISSUERS_JSON: JSON.stringify(["https://issuer.example"]),
       },
       code: "AUTH_CONFIG_UNSUPPORTED_REF",
       message:
-        "AUTH_CONFIG_UNSUPPORTED_REF strategy=oidc key=env.OPENCODE_COMPAT_OIDC_ISSUERS_JSON reason=entry_must_be_object",
+        "AUTH_CONFIG_UNSUPPORTED_REF strategy=oidc key=env.OPENCODE_OIDC_ISSUERS_JSON reason=entry_must_be_object",
     })
   })
 
@@ -127,11 +127,11 @@ describe("startup auth config validation", () => {
     await expectStartupError({
       auth: "oidc",
       env: {
-        OPENCODE_COMPAT_OIDC_ISSUERS_JSON: JSON.stringify([{ issuer: "https://issuer.example", extra: "nope" }]),
+        OPENCODE_OIDC_ISSUERS_JSON: JSON.stringify([{ issuer: "https://issuer.example", extra: "nope" }]),
       },
       code: "AUTH_CONFIG_UNSUPPORTED_REF",
       message:
-        "AUTH_CONFIG_UNSUPPORTED_REF strategy=oidc key=env.OPENCODE_COMPAT_OIDC_ISSUERS_JSON reason=unknown_entry_keys",
+        "AUTH_CONFIG_UNSUPPORTED_REF strategy=oidc key=env.OPENCODE_OIDC_ISSUERS_JSON reason=unknown_entry_keys",
     })
   })
 
@@ -139,14 +139,14 @@ describe("startup auth config validation", () => {
     await expectStartupError({
       auth: "oidc",
       env: {
-        OPENCODE_COMPAT_OIDC_ISSUERS_JSON: JSON.stringify([
+        OPENCODE_OIDC_ISSUERS_JSON: JSON.stringify([
           { issuer: "https://issuer.example/" },
           { issuer: "https://issuer.example" },
         ]),
       },
       code: "AUTH_CONFIG_CONFLICT",
       message:
-        "AUTH_CONFIG_CONFLICT strategy=oidc key=env.OPENCODE_COMPAT_OIDC_ISSUERS_JSON reason=duplicate_normalized_issuers",
+        "AUTH_CONFIG_CONFLICT strategy=oidc key=env.OPENCODE_OIDC_ISSUERS_JSON reason=duplicate_normalized_issuers",
     })
   })
 
@@ -154,12 +154,12 @@ describe("startup auth config validation", () => {
     await expectStartupError({
       auth: "oidc",
       env: {
-        OPENCODE_COMPAT_OIDC_ISSUER: "https://issuer.example",
-        OPENCODE_COMPAT_OIDC_ISSUERS_JSON: JSON.stringify([{ issuer: "https://issuer-2.example" }]),
+        OPENCODE_OIDC_ISSUER: "https://issuer.example",
+        OPENCODE_OIDC_ISSUERS_JSON: JSON.stringify([{ issuer: "https://issuer-2.example" }]),
       },
       code: "AUTH_CONFIG_CONFLICT",
       message:
-        "AUTH_CONFIG_CONFLICT strategy=oidc key=env.OPENCODE_COMPAT_OIDC_ISSUER|env.OPENCODE_COMPAT_OIDC_ISSUERS_JSON reason=mutually_exclusive_issuer_sources",
+        "AUTH_CONFIG_CONFLICT strategy=oidc key=env.OPENCODE_OIDC_ISSUER|env.OPENCODE_OIDC_ISSUERS_JSON reason=mutually_exclusive_issuer_sources",
     })
   })
 
@@ -167,11 +167,11 @@ describe("startup auth config validation", () => {
     await expectStartupError({
       auth: "oidc",
       env: {
-        OPENCODE_COMPAT_OIDC_ISSUERS_JSON: JSON.stringify([{ issuer: "http://example.internal/auth" }]),
+        OPENCODE_OIDC_ISSUERS_JSON: JSON.stringify([{ issuer: "http://example.internal/auth" }]),
       },
       code: "AUTH_CONFIG_INVALID_URL",
       message:
-        "AUTH_CONFIG_INVALID_URL strategy=oidc key=env.OPENCODE_COMPAT_OIDC_ISSUERS_JSON reason=requires_https_or_exact_loopback_http url_class=scheme=http host_class=non_loopback path_class=custom",
+        "AUTH_CONFIG_INVALID_URL strategy=oidc key=env.OPENCODE_OIDC_ISSUERS_JSON reason=requires_https_or_exact_loopback_http url_class=scheme=http host_class=non_loopback path_class=custom",
     })
   })
 
@@ -179,14 +179,14 @@ describe("startup auth config validation", () => {
     await expectStartupError({
       auth: "oauth2",
       env: {
-        OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL: "https://auth.example.com/introspect",
-        OPENCODE_COMPAT_OAUTH_CLIENT_ID: "client-id",
-        OPENCODE_COMPAT_OAUTH_CLIENT_SECRET: "client-secret",
-        OPENCODE_COMPAT_OAUTH_INTROSPECTION_TIMEOUT_MS: "0",
+        OPENCODE_OAUTH_INTROSPECTION_URL: "https://auth.example.com/introspect",
+        OPENCODE_OAUTH_CLIENT_ID: "client-id",
+        OPENCODE_OAUTH_CLIENT_SECRET: "client-secret",
+        OPENCODE_OAUTH_INTROSPECTION_TIMEOUT_MS: "0",
       },
       code: "AUTH_CONFIG_BOUNDS",
       message:
-        "AUTH_CONFIG_BOUNDS strategy=oauth2 key=env.OPENCODE_COMPAT_OAUTH_INTROSPECTION_TIMEOUT_MS reason=must_be_integer_between_1_and_120000",
+        "AUTH_CONFIG_BOUNDS strategy=oauth2 key=env.OPENCODE_OAUTH_INTROSPECTION_TIMEOUT_MS reason=must_be_integer_between_1_and_120000",
     })
   })
 
@@ -194,14 +194,14 @@ describe("startup auth config validation", () => {
     await expectStartupError({
       auth: "oauth2",
       env: {
-        OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL: "https://auth.example.com/introspect",
-        OPENCODE_COMPAT_OAUTH_CLIENT_ID: "client-id",
-        OPENCODE_COMPAT_OAUTH_CLIENT_SECRET: "client-secret",
-        OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_WHILE_ERROR_MS: "60001",
+        OPENCODE_OAUTH_INTROSPECTION_URL: "https://auth.example.com/introspect",
+        OPENCODE_OAUTH_CLIENT_ID: "client-id",
+        OPENCODE_OAUTH_CLIENT_SECRET: "client-secret",
+        OPENCODE_OAUTH_INTROSPECTION_STALE_WHILE_ERROR_MS: "60001",
       },
       code: "AUTH_CONFIG_BOUNDS",
       message:
-        "AUTH_CONFIG_BOUNDS strategy=oauth2 key=env.OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_WHILE_ERROR_MS reason=must_be_integer_between_0_and_60000",
+        "AUTH_CONFIG_BOUNDS strategy=oauth2 key=env.OPENCODE_OAUTH_INTROSPECTION_STALE_WHILE_ERROR_MS reason=must_be_integer_between_0_and_60000",
     })
   })
 
@@ -209,14 +209,14 @@ describe("startup auth config validation", () => {
     await expectStartupError({
       auth: "oauth2",
       env: {
-        OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL: "https://auth.example.com/introspect",
-        OPENCODE_COMPAT_OAUTH_CLIENT_ID: "client-id",
-        OPENCODE_COMPAT_OAUTH_CLIENT_SECRET: "client-secret",
-        OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_MAX_ABS_AGE_MS: "-1",
+        OPENCODE_OAUTH_INTROSPECTION_URL: "https://auth.example.com/introspect",
+        OPENCODE_OAUTH_CLIENT_ID: "client-id",
+        OPENCODE_OAUTH_CLIENT_SECRET: "client-secret",
+        OPENCODE_OAUTH_INTROSPECTION_STALE_MAX_ABS_AGE_MS: "-1",
       },
       code: "AUTH_CONFIG_BOUNDS",
       message:
-        "AUTH_CONFIG_BOUNDS strategy=oauth2 key=env.OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_MAX_ABS_AGE_MS reason=must_be_integer_between_0_and_60000",
+        "AUTH_CONFIG_BOUNDS strategy=oauth2 key=env.OPENCODE_OAUTH_INTROSPECTION_STALE_MAX_ABS_AGE_MS reason=must_be_integer_between_0_and_60000",
     })
   })
 
@@ -224,14 +224,14 @@ describe("startup auth config validation", () => {
     await expectStartupError({
       auth: "oauth2",
       env: {
-        OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL: "https://auth.example.com/introspect",
-        OPENCODE_COMPAT_OAUTH_CLIENT_ID: "client-id",
-        OPENCODE_COMPAT_OAUTH_CLIENT_SECRET: "client-secret",
-        OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_REQUIRE_EXP: "sometimes",
+        OPENCODE_OAUTH_INTROSPECTION_URL: "https://auth.example.com/introspect",
+        OPENCODE_OAUTH_CLIENT_ID: "client-id",
+        OPENCODE_OAUTH_CLIENT_SECRET: "client-secret",
+        OPENCODE_OAUTH_INTROSPECTION_STALE_REQUIRE_EXP: "sometimes",
       },
       code: "AUTH_CONFIG_BOUNDS",
       message:
-        "AUTH_CONFIG_BOUNDS strategy=oauth2 key=env.OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_REQUIRE_EXP reason=must_be_boolean_literal",
+        "AUTH_CONFIG_BOUNDS strategy=oauth2 key=env.OPENCODE_OAUTH_INTROSPECTION_STALE_REQUIRE_EXP reason=must_be_boolean_literal",
     })
   })
 
@@ -259,7 +259,7 @@ describe("startup auth config validation", () => {
     await expectStartupError({
       auth: ["jwt", "api-key"],
       code: "AUTH_CONFIG_MISSING",
-      message: "AUTH_CONFIG_MISSING strategy=jwt key=env.OPENCODE_COMPAT_JWT_JWKS_URL reason=required",
+      message: "AUTH_CONFIG_MISSING strategy=jwt key=env.OPENCODE_USER_JWT_JWKS_URL reason=required",
     })
   })
 
@@ -270,9 +270,9 @@ describe("startup auth config validation", () => {
       config: config("oauth2"),
       getEnv: (key) => {
         const env: Record<string, string> = {
-          OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL: endpoint,
-          OPENCODE_COMPAT_OAUTH_CLIENT_ID: "client-id",
-          OPENCODE_COMPAT_OAUTH_CLIENT_SECRET: secret,
+          OPENCODE_OAUTH_INTROSPECTION_URL: endpoint,
+          OPENCODE_OAUTH_CLIENT_ID: "client-id",
+          OPENCODE_OAUTH_CLIENT_SECRET: secret,
         }
         return env[key]
       },
@@ -300,7 +300,7 @@ describe("startup auth config validation", () => {
       config: config("oidc"),
       getEnv: (key) => {
         const env: Record<string, string> = {
-          OPENCODE_COMPAT_OIDC_ISSUERS_JSON: json,
+          OPENCODE_OIDC_ISSUERS_JSON: json,
         }
         return env[key]
       },
@@ -325,7 +325,7 @@ describe("startup auth config validation", () => {
     await expect(
       validateStartupAuthConfig({
         config: config("jwt"),
-        getEnv: (key) => ({ OPENCODE_COMPAT_JWT_JWKS_URL: "https://issuer.example/.well-known/jwks.json" })[key],
+        getEnv: (key) => ({ OPENCODE_USER_JWT_JWKS_URL: "https://issuer.example/.well-known/jwks.json" })[key],
         getApiKey: () => undefined,
         hasExternalHttpHook: async () => false,
       }),
@@ -334,7 +334,7 @@ describe("startup auth config validation", () => {
     await expect(
       validateStartupAuthConfig({
         config: config("oidc"),
-        getEnv: (key) => ({ OPENCODE_COMPAT_OIDC_ISSUER: "https://issuer.example" })[key],
+        getEnv: (key) => ({ OPENCODE_OIDC_ISSUER: "https://issuer.example" })[key],
         getApiKey: () => undefined,
         hasExternalHttpHook: async () => false,
       }),
@@ -345,7 +345,7 @@ describe("startup auth config validation", () => {
         config: config("oidc"),
         getEnv: (key) =>
           ({
-            OPENCODE_COMPAT_OIDC_ISSUERS_JSON: JSON.stringify([
+            OPENCODE_OIDC_ISSUERS_JSON: JSON.stringify([
               { issuer: "https://issuer-a.example", audience: "aud-a" },
               { issuer: "https://issuer-b.example", audience: ["aud-b", "aud-b-2"] },
             ]),
@@ -360,10 +360,10 @@ describe("startup auth config validation", () => {
         config: config("oauth2"),
         getEnv: (key) =>
           ({
-            OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL: "http://localhost/introspect",
-            OPENCODE_COMPAT_OAUTH_CLIENT_ID: "client-id",
-            OPENCODE_COMPAT_OAUTH_CLIENT_SECRET: "client-secret",
-            OPENCODE_COMPAT_OAUTH_INTROSPECTION_AUTH_METHOD: "client_secret_post",
+            OPENCODE_OAUTH_INTROSPECTION_URL: "http://localhost/introspect",
+            OPENCODE_OAUTH_CLIENT_ID: "client-id",
+            OPENCODE_OAUTH_CLIENT_SECRET: "client-secret",
+            OPENCODE_OAUTH_INTROSPECTION_AUTH_METHOD: "client_secret_post",
           })[key],
         getApiKey: () => undefined,
         hasExternalHttpHook: async () => false,
@@ -373,7 +373,7 @@ describe("startup auth config validation", () => {
     await expect(
       validateStartupAuthConfig({
         config: config(["api-key", "jwt"]),
-        getEnv: (key) => ({ OPENCODE_COMPAT_JWT_JWKS_URL: "https://issuer.example/.well-known/jwks.json" })[key],
+        getEnv: (key) => ({ OPENCODE_USER_JWT_JWKS_URL: "https://issuer.example/.well-known/jwks.json" })[key],
         getApiKey: () => "api-key-present",
         hasExternalHttpHook: async () => false,
       }),

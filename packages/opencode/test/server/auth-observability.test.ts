@@ -4,6 +4,7 @@ import fs from "fs/promises"
 import { tmpdir } from "../fixture/fixture"
 import { Instance } from "../../src/project/instance"
 import { Server } from "../../src/server/server"
+import { resetCaches } from "../../src/server/compat/auth"
 import { Env } from "../../src/env"
 import { Log } from "../../src/util/log"
 
@@ -94,6 +95,7 @@ Agent body.
 
 async function withEnv(vars: Record<string, string>, fn: () => Promise<void>) {
   const previous = new Map<string, string | undefined>()
+  resetCaches()
   for (const [key, value] of Object.entries(vars)) {
     previous.set(key, process.env[key])
     Env.set(key, value)
@@ -105,6 +107,7 @@ async function withEnv(vars: Record<string, string>, fn: () => Promise<void>) {
       if (value === undefined) delete process.env[key]
       else process.env[key] = value
     }
+    resetCaches()
   }
 }
 
@@ -285,8 +288,8 @@ describe("auth observability", () => {
         await withEnv(
           {
             OPENCODE_TOOL_ENDPOINT_API_KEY: "fixture-api-key-123",
-            OPENCODE_COMPAT_OIDC_ISSUER: "http://127.0.0.1:9",
-            OPENCODE_COMPAT_OIDC_AUDIENCE: "aud-sanitized",
+            OPENCODE_OIDC_ISSUER: "http://127.0.0.1:9",
+            OPENCODE_OIDC_AUDIENCE: "aud-sanitized",
           },
           async () => {
             const logger = Log.create({ service: "auth" })

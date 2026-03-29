@@ -388,22 +388,22 @@ async function main() {
             OPENCODE_TOOL_ENDPOINT_API_KEY: "perf-api-key",
           }
           if (scenarioMeta.id === "jwt_jwks") {
-            baseEnv.OPENCODE_COMPAT_JWT_JWKS_URL = jwksURL
-            baseEnv.OPENCODE_COMPAT_JWT_ISSUER = "https://issuer.jwt.bench"
-            baseEnv.OPENCODE_COMPAT_JWT_AUDIENCE = "aud-jwt-bench"
+            baseEnv.OPENCODE_USER_JWT_JWKS_URL = jwksURL
+            baseEnv.OPENCODE_USER_JWT_ISSUER = "https://issuer.jwt.bench"
+            baseEnv.OPENCODE_USER_JWT_AUDIENCE = "aud-jwt-bench"
           } else if (scenarioMeta.id === "oidc") {
-            baseEnv.OPENCODE_COMPAT_OIDC_ISSUER = oidcURL
-            baseEnv.OPENCODE_COMPAT_OIDC_AUDIENCE = "aud-oidc-bench"
+            baseEnv.OPENCODE_OIDC_ISSUER = oidcURL
+            baseEnv.OPENCODE_OIDC_AUDIENCE = "aud-oidc-bench"
           } else {
-            baseEnv.OPENCODE_COMPAT_OAUTH_INTROSPECTION_URL = introspectionURL
-            baseEnv.OPENCODE_COMPAT_OAUTH_CLIENT_ID = "perf-client"
-            baseEnv.OPENCODE_COMPAT_OAUTH_CLIENT_SECRET = "perf-secret"
-            baseEnv.OPENCODE_COMPAT_OAUTH_ISSUER = "https://issuer.oauth2.bench"
-            baseEnv.OPENCODE_COMPAT_OAUTH_AUDIENCE = "aud-oauth2-bench"
-            baseEnv.OPENCODE_COMPAT_OAUTH_REQUIRED_SCOPE = "tool.invoke"
+            baseEnv.OPENCODE_OAUTH_INTROSPECTION_URL = introspectionURL
+            baseEnv.OPENCODE_OAUTH_CLIENT_ID = "perf-client"
+            baseEnv.OPENCODE_OAUTH_CLIENT_SECRET = "perf-secret"
+            baseEnv.OPENCODE_OAUTH_ISSUER = "https://issuer.oauth2.bench"
+            baseEnv.OPENCODE_OAUTH_AUDIENCE = "aud-oauth2-bench"
+            baseEnv.OPENCODE_OAUTH_REQUIRED_SCOPE = "tool.invoke"
             if (scenarioMeta.id === "oauth2_stale") {
-              baseEnv.OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_WHILE_ERROR_MS = "30000"
-              baseEnv.OPENCODE_COMPAT_OAUTH_INTROSPECTION_STALE_MAX_ABS_AGE_MS = "30000"
+              baseEnv.OPENCODE_OAUTH_INTROSPECTION_STALE_WHILE_ERROR_MS = "30000"
+              baseEnv.OPENCODE_OAUTH_INTROSPECTION_STALE_MAX_ABS_AGE_MS = "30000"
             }
           }
 
