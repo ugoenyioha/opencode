@@ -59,11 +59,14 @@ export function Dialog(
 function init() {
   const [store, setStore] = createStore({
     stack: [] as {
+      id: number
       element: JSX.Element
       onClose?: () => void
     }[],
     size: "medium" as "medium" | "large",
   })
+
+  let nextID = 1
 
   const renderer = useRenderer()
 
@@ -121,6 +124,7 @@ function init() {
       setStore("size", "medium")
       setStore("stack", [
         {
+          id: nextID++,
           element: input,
           onClose,
         },
@@ -165,7 +169,9 @@ export function DialogProvider(props: ParentProps) {
       >
         <Show when={value.stack.length}>
           <Dialog onClose={() => value.clear()} size={value.size}>
-            {value.stack.at(-1)!.element}
+            <Show when={value.stack.at(-1)} keyed>
+              {(item) => item.element}
+            </Show>
           </Dialog>
         </Show>
       </box>

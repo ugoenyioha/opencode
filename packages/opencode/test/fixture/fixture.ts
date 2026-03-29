@@ -1,14 +1,15 @@
-import { $ } from "bun"
 import * as fs from "fs/promises"
 import os from "os"
 import path from "path"
 import type { Config } from "../../src/config/config"
+import { Config as ConfigModule } from "../../src/config/config"
 import crypto from "crypto"
 import { ConfigPaths } from "../../src/config/paths"
 import { Filesystem } from "../../src/util/filesystem"
 import { Glob } from "../../src/util/glob"
 import { Trust } from "../../src/trust"
 import { Global } from "../../src/global"
+import { Instance } from "../../src/project/instance"
 
 import { Flag } from "../../src/flag/flag"
 import { Env } from "../../src/env"
@@ -36,7 +37,11 @@ function clean(dir: string) {
 
 async function stop(dir: string) {
   if (!(await exists(dir))) return
-  await $`git fsmonitor--daemon stop`.cwd(dir).quiet().nothrow()
+  try {
+    Bun.spawnSync(["git", "fsmonitor--daemon", "stop"], { cwd: dir, stdout: "ignore", stderr: "ignore" })
+  } catch {
+    // Best-effort cleanup only. Temp dirs can disappear before this runs.
+  }
 }
 
 type TmpDirOptions<T> = {
@@ -53,17 +58,19 @@ function localId(dir: string) {
 
 async function projectId(dir: string, git?: boolean) {
   if (!git) return localId(dir)
-  const roots = await $`git rev-list --max-parents=0 --all`
-    .cwd(dir)
-    .text()
-    .then((out) =>
-      out
+  const result = Bun.spawnSync(["git", "rev-list", "--max-parents=0", "--all"], {
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "ignore",
+  })
+  const roots = result.success
+    ? result.stdout
+        .toString()
         .split("\n")
         .map((line) => line.trim())
         .filter(Boolean)
-        .toSorted(),
-    )
-    .catch(() => undefined)
+        .toSorted()
+    : undefined
   if (!roots?.length) return localId(dir)
   return roots[0] || localId(dir)
 }
@@ -112,9 +119,17 @@ export async function tmpdir<T>(options?: TmpDirOptions<T>) {
   const dirpath = sanitizePath(path.join(os.tmpdir(), "opencode-test-" + Math.random().toString(36).slice(2)))
   await fs.mkdir(dirpath, { recursive: true })
   if (options?.git) {
-    await $`git init`.cwd(dirpath).quiet()
-    await $`git config core.fsmonitor false`.cwd(dirpath).quiet()
-    await $`git commit --allow-empty -m "root commit ${dirpath}"`.cwd(dirpath).quiet()
+    Bun.spawnSync(["git", "init"], { cwd: dirpath, stdout: "ignore", stderr: "ignore" })
+    Bun.spawnSync(["git", "config", "core.fsmonitor", "false"], {
+      cwd: dirpath,
+      stdout: "ignore",
+      stderr: "ignore",
+    })
+    Bun.spawnSync(["git", "commit", "--allow-empty", "-m", `root commit ${dirpath}`], {
+      cwd: dirpath,
+      stdout: "ignore",
+      stderr: "ignore",
+    })
   }
   if (options?.config) {
     await Bun.write(
@@ -126,6 +141,10 @@ export async function tmpdir<T>(options?: TmpDirOptions<T>) {
     )
   }
   const realpath = sanitizePath(await fs.realpath(dirpath))
+  const previousTestHome = process.env.OPENCODE_TEST_HOME
+  process.env.OPENCODE_TEST_HOME = realpath
+  await fs.mkdir(path.join(realpath, ".config", "opencode"), { recursive: true })
+  ConfigModule.global.reset()
   if (options?.trust !== false) {
     await trustWorkspace(realpath, options?.git)
   }
@@ -135,8 +154,13 @@ export async function tmpdir<T>(options?: TmpDirOptions<T>) {
       try {
         await options?.dispose?.(realpath)
       } finally {
+        await Instance.disposeAll().catch(() => undefined)
+        ConfigModule.global.reset()
         if (options?.git) await stop(realpath).catch(() => undefined)
         await clean(realpath).catch(() => undefined)
+        if (previousTestHome === undefined) delete process.env.OPENCODE_TEST_HOME
+        else process.env.OPENCODE_TEST_HOME = previousTestHome
+        ConfigModule.global.reset()
       }
     },
     path: realpath,

@@ -162,6 +162,10 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
     const teamRefreshInFlight = new Set<string>()
     const recentSyncedSessions: string[] = []
 
+    // Seed the current directory immediately so UI like /memory can render
+    // sensible project-relative files before the async path bootstrap finishes.
+    setStore("path", "directory", process.cwd())
+
     function markRecentSession(sessionID: string) {
       const idx = recentSyncedSessions.indexOf(sessionID)
       if (idx >= 0) recentSyncedSessions.splice(idx, 1)
@@ -686,11 +690,13 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       const providerListPromise = sdk.client.provider.list({}, { throwOnError: true })
       const agentsPromise = sdk.client.app.agents({}, { throwOnError: true })
       const configPromise = sdk.client.config.get({}, { throwOnError: true })
+      const pathPromise = sdk.client.path.get({}, { throwOnError: true })
       const blockingRequests: Promise<unknown>[] = [
         providersPromise,
         providerListPromise,
         agentsPromise,
         configPromise,
+        pathPromise,
         ...(args.continue ? [sessionListPromise] : []),
       ]
 
@@ -700,6 +706,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           const providerListResponse = providerListPromise.then((x) => x.data!)
           const agentsResponse = agentsPromise.then((x) => x.data ?? [])
           const configResponse = configPromise.then((x) => x.data!)
+          const pathResponse = pathPromise.then((x) => x.data!)
           const sessionListResponse = args.continue ? sessionListPromise : undefined
 
           return Promise.all([
@@ -707,13 +714,15 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             providerListResponse,
             agentsResponse,
             configResponse,
+            pathResponse,
             ...(sessionListResponse ? [sessionListResponse] : []),
           ]).then((responses) => {
             const providers = responses[0]
             const providerList = responses[1]
             const agents = responses[2]
             const config = responses[3]
-            const sessions = responses[4]
+            const pathData = responses[4]
+            const sessions = responses[5]
 
             batch(() => {
               setStore("provider", reconcile(providers.providers))
@@ -721,6 +730,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
               setStore("provider_next", reconcile(providerList))
               setStore("agent", reconcile(agents))
               setStore("config", reconcile(config))
+               setStore("path", reconcile(pathData))
               if (sessions !== undefined) setStore("session", reconcile(sessions))
             })
           })
@@ -740,7 +750,6 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             }),
             sdk.client.provider.auth().then((x) => setStore("provider_auth", reconcile(x.data ?? {}))),
             sdk.client.vcs.get().then((x) => setStore("vcs", reconcile(x.data))),
-            sdk.client.path.get().then((x) => setStore("path", reconcile(x.data!))),
           ]).then(() => {
             setStore("status", "complete")
           })

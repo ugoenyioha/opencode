@@ -8,6 +8,10 @@ import { Flag } from "@/flag/flag"
 import { Global } from "@/global"
 
 export namespace ConfigPaths {
+  export function globalConfigDir() {
+    return process.env.OPENCODE_TEST_HOME ? path.join(process.env.OPENCODE_TEST_HOME, ".config", "opencode") : Global.Path.config
+  }
+
   export async function projectFiles(name: string, directory: string, worktree: string) {
     const files: string[] = []
     for (const file of [`${name}.jsonc`, `${name}.json`]) {
@@ -21,7 +25,7 @@ export namespace ConfigPaths {
 
   export async function directories(directory: string, worktree: string) {
     return [
-      Global.Path.config,
+      globalConfigDir(),
       ...(!Flag.OPENCODE_DISABLE_PROJECT_CONFIG
         ? await Array.fromAsync(
             Filesystem.up({

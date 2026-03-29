@@ -1711,12 +1711,12 @@ export namespace Config {
   export const global = lazy(async () => {
     let result: Info = pipe(
       {},
-      mergeDeep(await loadFile(path.join(Global.Path.config, "config.json"))),
-      mergeDeep(await loadFile(path.join(Global.Path.config, "opencode.json"))),
-      mergeDeep(await loadFile(path.join(Global.Path.config, "opencode.jsonc"))),
+      mergeDeep(await loadFile(path.join(ConfigPaths.globalConfigDir(), "config.json"))),
+      mergeDeep(await loadFile(path.join(ConfigPaths.globalConfigDir(), "opencode.json"))),
+      mergeDeep(await loadFile(path.join(ConfigPaths.globalConfigDir(), "opencode.jsonc"))),
     )
 
-    const legacy = path.join(Global.Path.config, "config")
+    const legacy = path.join(ConfigPaths.globalConfigDir(), "config")
     if (existsSync(legacy)) {
       await import(pathToFileURL(legacy).href, {
         with: {
@@ -1728,7 +1728,7 @@ export namespace Config {
           if (provider && model) result.model = `${provider}/${model}`
           result["$schema"] = "https://opencode.ai/config.json"
           result = mergeDeep(result, rest)
-          await Filesystem.writeJson(path.join(Global.Path.config, "config.json"), result)
+          await Filesystem.writeJson(path.join(ConfigPaths.globalConfigDir(), "config.json"), result)
           await fs.unlink(legacy)
         })
         .catch(() => {})

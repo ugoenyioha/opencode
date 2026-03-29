@@ -1063,6 +1063,36 @@ export namespace Team {
       )
     }
 
+    const { SessionPrompt } = await import("../session/prompt")
+
+    // If any teammate loop is still unwinding, cancel it explicitly and wait
+    // for execution to reach a terminal state before removing worktrees.
+    for (const member of team.members) {
+      if (TERMINAL_EXECUTION_STATES.has(member.execution_status ?? "idle")) continue
+      log.info("cleanup cancelling still-running teammate", {
+        teamName,
+        memberName: member.name,
+        sessionID: member.sessionID,
+        execution_status: member.execution_status,
+      })
+      SessionPrompt.cancel(member.sessionID)
+      await transitionExecutionStatus(teamName, member.name, "cancelling", { force: true })
+    }
+
+    // A member can reach shutdown status slightly before its prompt loop has
+    // fully unwound. Removing its worktree too early can race any late shell/
+    // prompt cleanup that still uses the teammate cwd.
+    for (let attempt = 0; attempt < 25; attempt++) {
+      const refreshed = await get(teamName)
+      if (!refreshed) throw new Error(`Team "${teamName}" not found`)
+      if (refreshed.members.every((m) => TERMINAL_EXECUTION_STATES.has(m.execution_status ?? "idle"))) {
+        team = refreshed
+        break
+      }
+      await Bun.sleep(120)
+      team = refreshed
+    }
+
     const { Inbox } = await import("./inbox")
     await Inbox.removeAll(
       teamName,

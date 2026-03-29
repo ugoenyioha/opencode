@@ -139,9 +139,18 @@ export function CommandProvider(props: ParentProps) {
 
 function DialogCommand(props: { options: CommandOption[]; suggestedOptions: CommandOption[] }) {
   let ref: DialogSelectRef<string>
+  const dialog = useDialog()
   const list = () => {
     if (ref?.filter) return props.options
-    return [...props.suggestedOptions, ...props.options]
+    return [...props.suggestedOptions, ...props.options].map((option) => ({
+      ...option,
+      onSelect: option.onSelect
+        ? (ctx: DialogContext) => {
+            dialog.clear()
+            setTimeout(() => option.onSelect?.(ctx), 0)
+          }
+        : undefined,
+    }))
   }
   return <DialogSelect ref={(r) => (ref = r)} title="Commands" options={list()} />
 }
