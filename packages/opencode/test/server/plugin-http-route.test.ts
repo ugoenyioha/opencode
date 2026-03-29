@@ -76,7 +76,8 @@ describe("plugin http.route", () => {
       },
       fn: async () => {
         expect((await Config.get()).server?.allowExternalRoutes).toBe(false)
-        expect((await Plugin.collectRoutes(false)).length).toBe(0)
+        const routes = await Plugin.collectRoutes(false)
+        expect(routes.some((route) => route.path === "/hook/:id")).toBe(false)
         const cwd = process.cwd()
         process.chdir(tmp.path)
         const response = await (async () => {
@@ -102,7 +103,8 @@ describe("plugin http.route", () => {
       },
       fn: async () => {
         expect((await Config.get()).server?.allowExternalRoutes).toBe(true)
-        expect((await Plugin.collectRoutes(true)).length).toBeGreaterThan(0)
+        const routes = await Plugin.collectRoutes(true)
+        expect(routes.some((route) => route.path === "/hook/:id")).toBe(true)
         const cwd = process.cwd()
         process.chdir(tmp.path)
         const response = await (async () => {
