@@ -1287,27 +1287,25 @@ export const A2APlugin: Plugin = async () => {
         const spiffeConfig = (agentConfig?.a2a as any)?.spiffe as
           | { trustDomain?: string; audience?: string; allowedIds?: string[] }
           | undefined
-        const audience = spiffeConfig?.audience ?? process.env["OPENCODE_SPIFFE_AUDIENCE"]
-        const allowedIds =
+        const spiffeAudience = spiffeConfig?.audience ?? process.env["OPENCODE_SPIFFE_AUDIENCE"]
+        const spiffeAllowedIds =
           spiffeConfig?.allowedIds ??
           process.env["OPENCODE_SPIFFE_ALLOWED_IDS"]
             ?.split(",")
             .map((s) => s.trim())
             .filter(Boolean)
-        if (audience && (!allowedIds || allowedIds.length === 0)) {
-          log.warn("trusted workload header ignored: no OPENCODE_SPIFFE_ALLOWED_IDS configured", {
+        // Try SPIFFE native socket verification first. If it is unavailable or
+        // fails, fall through to workload JWT verification.
+        if (spiffeAudience && spiffeAllowedIds && spiffeAllowedIds.length > 0) {
+          try {
+            const { verifySPIFFE } = await import("../server/spiffe")
+            const spiffeId = await verifySPIFFE(token, spiffeAudience, spiffeAllowedIds)
+            if (spiffeId) return spiffeId
+          } catch {
+            // SPIFFE socket verification is optional here; fall through.
+          }
+          log.warn("trusted workload header token failed SPIFFE socket verification, trying JWKS", {
             agentId,
-            audience,
-          })
-          return undefined
-        }
-        if (audience && allowedIds && allowedIds.length > 0) {
-          const { verifySPIFFE } = await import("../server/spiffe")
-          const spiffeId = await verifySPIFFE(token, audience, allowedIds)
-          if (spiffeId) return spiffeId
-          log.warn("trusted workload header token failed SPIFFE verification", {
-            agentId,
-            audience,
           })
         }
 
@@ -1327,6 +1325,7 @@ export const A2APlugin: Plugin = async () => {
           ?.split(",")
           .map((s) => s.trim())
           .filter(Boolean)
+        const workloadJwksURL = process.env["OPENCODE_WORKLOAD_JWT_JWKS_URL"]?.trim() || undefined
         const verified = await verifyBearerForStrategy("jwt", token, {
           surface: "a2a",
           route: `a2a.${agentId}` as any,
@@ -1335,6 +1334,7 @@ export const A2APlugin: Plugin = async () => {
           jwt: {
             issuer: workloadIssuer,
             audience: workloadAudience && workloadAudience.length > 0 ? workloadAudience : null,
+            jwksURL: workloadJwksURL,
           },
         })
         if (typeof verified !== "object" || !verified?.sub) {

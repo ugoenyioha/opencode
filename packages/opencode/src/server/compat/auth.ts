@@ -100,6 +100,7 @@ export type VerifiedToken = {
 type JWTVerifyOptions = {
   issuer?: string
   audience?: string | string[] | null
+  jwksURL?: string
 }
 
 type IntrospectionResponse = {
@@ -807,7 +808,7 @@ async function verifyJWT(token: string, context: AuthObserveContext, options?: J
   if (!parsed) return false
   if (parsed.header.alg === "none") return false
 
-  const jwksURL = Env.get("OPENCODE_COMPAT_JWT_JWKS_URL")
+  const jwksURL = options?.jwksURL || Env.get("OPENCODE_COMPAT_JWT_JWKS_URL")
 
   if (parsed.header.alg === "RS256") {
     if (!jwksURL) return false
