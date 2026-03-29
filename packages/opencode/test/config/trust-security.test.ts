@@ -6,8 +6,10 @@ import { Config } from "../../src/config/config"
 import { Instance } from "../../src/project/instance"
 import { tmpdir } from "../fixture/fixture"
 import { Filesystem } from "../../src/util/filesystem"
+import { Env } from "../../src/env"
 
 test("rejects untrusted workspace before dependency install", async () => {
+  const prev = process.env.OPENCODE_HARDENED_MODE
   await using tmp = await tmpdir({
     trust: false,
     init: async (dir) => {
@@ -24,14 +26,26 @@ test("rejects untrusted workspace before dependency install", async () => {
     },
   })
 
-  await Instance.provide({
-    directory: path.join(tmp.path, "enforce-trust"),
-    fn: async () => {
-      await expect(Config.get()).rejects.toThrow(
-        "Untrusted or modified workspace configuration detected. Please review the workspace and run 'opencode trust' to proceed.",
-      )
-    },
-  })
+  try {
+    process.env.OPENCODE_HARDENED_MODE = "true"
+    Env.set("OPENCODE_HARDENED_MODE", "true")
+    await Instance.provide({
+      directory: path.join(tmp.path, "enforce-trust"),
+      fn: async () => {
+        await expect(Config.get()).rejects.toThrow(
+          "Untrusted or modified workspace configuration detected. Please review the workspace and run 'opencode trust' to proceed.",
+        )
+      },
+    })
+  } finally {
+    if (prev === undefined) {
+      delete process.env.OPENCODE_HARDENED_MODE
+      Env.remove("OPENCODE_HARDENED_MODE")
+    } else {
+      process.env.OPENCODE_HARDENED_MODE = prev
+      Env.set("OPENCODE_HARDENED_MODE", prev)
+    }
+  }
 
   const pkg = path.join(tmp.path, "enforce-trust", ".opencode", "package.json")
   expect(await Filesystem.exists(pkg)).toBe(false)

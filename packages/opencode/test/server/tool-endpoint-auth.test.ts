@@ -5,9 +5,12 @@ import { createServer } from "http"
 import { tmpdir } from "../fixture/fixture"
 import { Instance } from "../../src/project/instance"
 import { Server } from "../../src/server/server"
+import { resetCaches } from "../../src/server/compat/auth"
 import { Env } from "../../src/env"
 import { Log } from "../../src/util/log"
 import { evaluateAuthorization } from "../../src/server/auth-policy"
+import { Config } from "../../src/config/config"
+import { Database } from "../../src/storage/db"
 
 Log.init({ print: false })
 
@@ -53,6 +56,11 @@ function signRS256(payload: Record<string, unknown>, privateKey: string, kid: st
 
 async function withEnv(vars: Record<string, string>, fn: () => Promise<void>) {
   const previous = new Map<string, string | undefined>()
+  resetCaches()
+  Config.global.reset()
+  Database.close()
+  await Instance.disposeAll()
+  ;(Server.App as any).reset?.()
   for (const [key, value] of Object.entries(vars)) {
     previous.set(key, process.env[key])
     process.env[key] = value
@@ -70,6 +78,11 @@ async function withEnv(vars: Record<string, string>, fn: () => Promise<void>) {
         Env.set(key, value)
       }
     }
+    resetCaches()
+    Config.global.reset()
+    Database.close()
+    await Instance.disposeAll()
+    ;(Server.App as any).reset?.()
   }
 }
 
