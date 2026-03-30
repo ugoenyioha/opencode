@@ -17,6 +17,8 @@ import { Glob } from "../util/glob"
 import crypto from "crypto"
 import { which } from "../util/which"
 
+const GLOBAL_PROJECT_ID = "global"
+
 export namespace Project {
   const log = Log.create({ service: "project" })
 
@@ -265,7 +267,7 @@ export namespace Project {
     // Runs after upsert so the target project row exists (FK constraint).
     // Runs on every startup because sessions created before git init
     // accumulate under "global" and need migrating whenever they appear.
-    if (data.id !== ProjectID.global) {
+    if (data.id !== GLOBAL_PROJECT_ID) {
       await migrateFromGlobal(data.id, data.worktree)
     }
     GlobalBus.emit("event", {
@@ -302,11 +304,11 @@ export namespace Project {
   }
 
   async function migrateFromGlobal(id: string, worktree: string) {
-    const row = Database.use((db) => db.select().from(ProjectTable).where(eq(ProjectTable.id, "global")).get())
+    const row = Database.use((db) => db.select().from(ProjectTable).where(eq(ProjectTable.id, GLOBAL_PROJECT_ID)).get())
     if (!row) return
 
     const sessions = Database.use((db) =>
-      db.select().from(SessionTable).where(eq(SessionTable.project_id, "global")).all(),
+      db.select().from(SessionTable).where(eq(SessionTable.project_id, GLOBAL_PROJECT_ID)).all(),
     )
     if (sessions.length === 0) return
 
@@ -316,7 +318,7 @@ export namespace Project {
       // Skip sessions that belong to a different directory
       if (row.directory && row.directory !== worktree) return
 
-      log.info("migrating session", { sessionID: row.id, from: "global", to: id })
+      log.info("migrating session", { sessionID: row.id, from: GLOBAL_PROJECT_ID, to: id })
       Database.use((db) => db.update(SessionTable).set({ project_id: id }).where(eq(SessionTable.id, row.id)).run())
     }).catch((error) => {
       log.error("failed to migrate sessions from global to project", { error, projectId: id })
