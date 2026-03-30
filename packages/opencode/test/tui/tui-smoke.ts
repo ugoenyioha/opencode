@@ -96,6 +96,16 @@ const baseEnv: Record<string, string> = {
   OPENCODE_MODELS_PATH: path.join(import.meta.dir, "..", "tool", "fixtures", "models-api.json"),
 }
 
+const { Config } = await import("../../src/config/config")
+const defaultKeybinds = Config.Keybinds.parse({})
+let commandPaletteKey = "k"
+if (defaultKeybinds.command_list.includes("ctrl+p")) commandPaletteKey = "p"
+if (defaultKeybinds.command_list.includes("ctrl+k")) commandPaletteKey = "k"
+
+function openCommandPalette(tui: TuiHarness) {
+  tui.sendCtrl(commandPaletteKey)
+}
+
 const trust = Bun.spawnSync(["bun", "run", entryPoint, "trust"], {
   cwd: testProject,
   env: {
@@ -143,8 +153,8 @@ await test("Command palette opens on Ctrl+K", async () => {
   try {
     await tui.settle(3000) // Wait for full render
 
-    // Ctrl+K opens command palette
-    tui.sendCtrl("k")
+    // Open command palette via current keybind
+    openCommandPalette(tui)
 
     // Wait for command palette content to appear
     // It should contain familiar command names
@@ -181,7 +191,7 @@ await test("/team command appears in command palette", async () => {
     await tui.settle(3000)
 
     // Open command palette
-    tui.sendCtrl("k")
+    openCommandPalette(tui)
     await tui.settle(1500)
 
     // Type "team" to filter
@@ -209,7 +219,7 @@ await test("Escape closes command palette", async () => {
     await tui.settle(2000)
 
     // Open command palette
-    tui.sendCtrl("k")
+    openCommandPalette(tui)
     await tui.settle(1000)
     tui.clearBuffer()
 
@@ -310,7 +320,7 @@ await test("/tasks dialog shows empty state via command palette", async () => {
     await tui.settle(3000)
 
     // Open command palette and select tasks
-    tui.sendCtrl("k")
+    openCommandPalette(tui)
     await tui.settle(1500)
     tui.write("/tasks")
     await tui.settle(500)
@@ -343,7 +353,7 @@ await test("/memory command appears in command palette", async () => {
     await tui.settle(3000)
 
     // Open command palette
-    tui.sendCtrl("k")
+    openCommandPalette(tui)
     await tui.settle(1500)
 
     // Filter for "memory"
@@ -367,7 +377,7 @@ await test("/btw command appears in command palette", async () => {
 
   try {
     await tui.settle(3000)
-    tui.sendCtrl("k")
+    openCommandPalette(tui)
     await tui.settle(1500)
     tui.write("btw")
     await tui.settle(500)
@@ -393,7 +403,7 @@ await test("/memory dialog loads and shows file list (not stuck on loading)", as
     await tui.settle(3000)
 
     // Open command palette and select memory
-    tui.sendCtrl("k")
+    openCommandPalette(tui)
     await tui.settle(1500)
     tui.write("/memory")
     await tui.settle(500)
@@ -447,7 +457,7 @@ await test("/memory dialog lists .opencode/rules files", async () => {
     await tui.settle(3000)
 
     // Open memory dialog
-    tui.sendCtrl("k")
+    openCommandPalette(tui)
     await tui.settle(1500)
     tui.write("/memory")
     await tui.settle(500)

@@ -281,7 +281,9 @@ export namespace TeamMessaging {
         if (member?.status === "shutdown") return
       }
       log.info("auto-waking idle session", { sessionID, from })
-      SessionPrompt.loop({ sessionID })
+      Team.trackLoop(
+        sessionID,
+        SessionPrompt.loop({ sessionID })
         .then(async () => {
           // When an auto-woken loop ends, check if shutdown was requested.
           // Shutdown is authoritative — the teammate gets one loop to wrap up
@@ -299,7 +301,8 @@ export namespace TeamMessaging {
         })
         .catch((err: unknown) => {
           log.warn("auto-wake loop failed", { sessionID, error: err instanceof Error ? err.message : String(err) })
-        })
+        }),
+      )
     } catch (err) {
       log.warn("auto-wake failed", { sessionID, error: err instanceof Error ? (err as Error).message : String(err) })
     }

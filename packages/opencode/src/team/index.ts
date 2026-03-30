@@ -44,6 +44,8 @@ const TERMINAL_EXECUTION_STATES = new Set<ExecutionStatusType>([
   "timed_out",
 ])
 
+const activeLoops = new Map<string, Set<Promise<void>>>()
+
 const MEMBER_TRANSITIONS: Record<MemberStatus, MemberStatus[]> = {
   ready: ["busy", "shutdown_requested", "shutdown", "error"],
   busy: ["ready", "shutdown_requested", "error"],
@@ -871,7 +873,7 @@ export namespace Team {
     // Fire-and-forget the teammate's prompt loop.
     // Wrapped in Promise.resolve().then() to guard against synchronous throws.
     log.info("spawning teammate", { teamName: input.teamName, name: input.name, sessionID: session.id })
-    Promise.resolve()
+    const loopPromise = Promise.resolve()
       .then(async () => {
         await transitionExecutionStatus(input.teamName, input.name, "running")
         return SessionPrompt.loop({ sessionID: session.id })
@@ -911,6 +913,11 @@ export namespace Team {
         await transitionMemberStatus(input.teamName, input.name, "error")
         await notifyLead(input.teamName, input.name, session.id, "errored", err.message)
       })
+      .finally(() => {
+        activeLoops.delete(session.id)
+      })
+
+    trackLoop(session.id, loopPromise)
 
     return { sessionID: session.id, label }
   }
@@ -1079,6 +1086,11 @@ export namespace Team {
       await transitionExecutionStatus(teamName, member.name, "cancelling", { force: true })
     }
 
+    await Promise.allSettled(
+      team.members
+        .flatMap((member) => [...(activeLoops.get(member.sessionID) ?? [])]),
+    )
+
     // A member can reach shutdown status slightly before its prompt loop has
     // fully unwound. Removing its worktree too early can race any late shell/
     // prompt cleanup that still uses the teammate cwd.
@@ -1131,6 +1143,35 @@ export namespace Team {
       leadSessionID: team.leadSessionID,
       delegate: !!team.delegate,
     })
+  }
+
+  export async function drainActiveLoops() {
+    const { SessionPrompt } = await import("../session/prompt")
+    const entries = [...activeLoops.entries()]
+    for (const [sessionID] of entries) {
+      SessionPrompt.cancel(sessionID)
+    }
+    await Promise.allSettled(entries.flatMap(([, promises]) => [...promises]))
+  }
+
+  export function trackLoop(sessionID: string, promise: Promise<unknown>) {
+    const wrapped = Promise.resolve(promise)
+      .catch(() => undefined)
+      .finally(() => {
+        const set = activeLoops.get(sessionID)
+        if (!set) return
+        set.delete(wrapped as Promise<void>)
+        if (set.size === 0) {
+          activeLoops.delete(sessionID)
+        }
+      })
+    let set = activeLoops.get(sessionID)
+    if (!set) {
+      set = new Set<Promise<void>>()
+      activeLoops.set(sessionID, set)
+    }
+    set.add(wrapped as Promise<void>)
+    return wrapped
   }
 
   /**

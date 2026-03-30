@@ -162,9 +162,9 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
     const teamRefreshInFlight = new Set<string>()
     const recentSyncedSessions: string[] = []
 
-    // Seed the current directory immediately so UI like /memory can render
-    // sensible project-relative files before the async path bootstrap finishes.
-    setStore("path", "directory", process.cwd())
+    // Seed the intended project directory immediately so UI like /memory can
+    // render project-relative files before the async path bootstrap finishes.
+    setStore("path", "directory", sdk.directory ?? process.cwd())
 
     function markRecentSession(sessionID: string) {
       const idx = recentSyncedSessions.indexOf(sessionID)

@@ -60,6 +60,9 @@ async function withEnv(vars: Record<string, string>, fn: () => Promise<void>) {
   Config.global.reset()
   Database.close()
   await Instance.disposeAll()
+  previous.set("OPENCODE_DISABLE_SHARE", process.env.OPENCODE_DISABLE_SHARE)
+  process.env.OPENCODE_DISABLE_SHARE = "true"
+  Env.set("OPENCODE_DISABLE_SHARE", "true")
   for (const [key, value] of Object.entries(vars)) {
     previous.set(key, process.env[key])
     process.env[key] = value

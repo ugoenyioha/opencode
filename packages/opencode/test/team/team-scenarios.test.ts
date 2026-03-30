@@ -20,6 +20,7 @@ import { Log } from "../../src/util/log"
 import { Bus } from "../../src/bus"
 import { TeamEvent } from "../../src/team/events"
 import { tmpdir } from "../fixture/fixture"
+import { Config } from "../../src/config/config"
 import {
   TeamCreateTool,
   TeamSpawnTool,
@@ -99,10 +100,12 @@ beforeAll(() => {
   })
 })
 
-beforeEach(() => {
+beforeEach(async () => {
   serverState.requestLog.length = 0
   serverState.responseQueues.clear()
   serverState.defaultResponse = null
+  await Instance.disposeAll().catch(() => undefined)
+  Config.global.reset()
 })
 
 afterAll(() => {

@@ -3,6 +3,7 @@ import os from "os"
 import path from "path"
 import type { Config } from "../../src/config/config"
 import { Config as ConfigModule } from "../../src/config/config"
+import { Team } from "../../src/team"
 import crypto from "crypto"
 import { ConfigPaths } from "../../src/config/paths"
 import { Filesystem } from "../../src/util/filesystem"
@@ -164,6 +165,7 @@ export async function tmpdir<T>(options?: TmpDirOptions<T>) {
       try {
         await options?.dispose?.(realpath)
       } finally {
+        await Team.drainActiveLoops().catch(() => undefined)
         await Instance.disposeAll().catch(() => undefined)
         ConfigModule.global.reset()
         if (options?.git) await stop(realpath).catch(() => undefined)
