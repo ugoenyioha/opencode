@@ -34,6 +34,7 @@ export interface DialogSelectOption<T = any> {
   title: string
   value: T
   description?: string
+  searchText?: string
   footer?: JSX.Element | string
   category?: string
   disabled?: boolean
@@ -45,6 +46,7 @@ export interface DialogSelectOption<T = any> {
 export type DialogSelectRef<T> = {
   filter: string
   filtered: DialogSelectOption<T>[]
+  reset: () => void
 }
 
 export function DialogSelect<T>(props: DialogSelectProps<T>) {
@@ -72,15 +74,19 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
 
   let input: InputRenderable
 
+  const reset = () => {
+    if (!input || input.isDestroyed) return
+    input.value = ""
+    batch(() => {
+      setStore("filter", "")
+      props.onFilter?.("")
+    })
+    input.focus()
+  }
+
   onMount(() => {
     setTimeout(() => {
-      if (!input || input.isDestroyed) return
-      input.value = ""
-      batch(() => {
-        setStore("filter", "")
-        props.onFilter?.("")
-      })
-      input.focus()
+      reset()
     }, 0)
   })
 
@@ -97,8 +103,8 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
     // users typically search by the item name, and not its category.
     const result = fuzzysort
       .go(needle, options, {
-        keys: ["title", "category"],
-        scoreFn: (r) => r[0].score * 2 + r[1].score,
+        keys: ["title", "category", "searchText"],
+        scoreFn: (r) => r[0].score * 3 + r[1].score + r[2].score * 2,
       })
       .map((x) => x.obj)
 
@@ -252,6 +258,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
     get filtered() {
       return filtered()
     },
+    reset,
   }
   props.ref?.(ref)
 

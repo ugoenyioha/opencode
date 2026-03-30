@@ -38,6 +38,9 @@ function init() {
     const all = registrations().flatMap((x) => x())
     return all.map((x) => ({
       ...x,
+      searchText: x.slash
+        ? ["/" + x.slash.name, ...(x.slash.aliases?.map((alias) => "/" + alias) ?? [])].join(" ")
+        : undefined,
       footer: x.keybind ? keybind.print(x.keybind) : undefined,
     }))
   })
@@ -140,17 +143,18 @@ export function CommandProvider(props: ParentProps) {
 function DialogCommand(props: { options: CommandOption[]; suggestedOptions: CommandOption[] }) {
   let ref: DialogSelectRef<string>
   const dialog = useDialog()
+  const wrap = (option: CommandOption): CommandOption => ({
+    ...option,
+    onSelect: option.onSelect
+      ? (ctx: DialogContext) => {
+          dialog.clear()
+          setTimeout(() => option.onSelect?.(ctx), 0)
+        }
+      : undefined,
+  })
   const list = () => {
-    if (ref?.filter) return props.options
-    return [...props.suggestedOptions, ...props.options].map((option) => ({
-      ...option,
-      onSelect: option.onSelect
-        ? (ctx: DialogContext) => {
-            dialog.clear()
-            setTimeout(() => option.onSelect?.(ctx), 0)
-          }
-        : undefined,
-    }))
+    if (ref?.filter) return props.options.map(wrap)
+    return [...props.suggestedOptions, ...props.options].map(wrap)
   }
   return <DialogSelect ref={(r) => (ref = r)} title="Commands" options={list()} />
 }

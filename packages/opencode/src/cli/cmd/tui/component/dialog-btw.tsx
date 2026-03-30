@@ -1,5 +1,6 @@
 import { createEffect, createSignal, onCleanup, Show } from "solid-js"
 import { useDialog } from "@tui/ui/dialog"
+import { useKeyboard } from "@opentui/solid"
 import { useTheme } from "../context/theme"
 import { useSDK } from "../context/sdk"
 import { useLocal } from "../context/local"
@@ -18,6 +19,15 @@ export function DialogBtw(props: { sessionID: string; question: string }) {
   const [text, setText] = createSignal<string>()
   const [err, setErr] = createSignal<string>()
   const [tick, setTick] = createSignal(0)
+
+  useKeyboard((event) => {
+    if (event.defaultPrevented) return
+    if (event.name === "return" || event.name === "space") {
+      event.preventDefault()
+      event.stopPropagation()
+      dialog.clear()
+    }
+  })
 
   createEffect(() => {
     const timer = setInterval(() => setTick((x) => x + 1), 80)

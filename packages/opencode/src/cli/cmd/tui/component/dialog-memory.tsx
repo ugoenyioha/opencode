@@ -1,5 +1,5 @@
 import { useDialog } from "@tui/ui/dialog"
-import { DialogSelect, type DialogSelectOption } from "@tui/ui/dialog-select"
+import { DialogSelect, type DialogSelectOption, type DialogSelectRef } from "@tui/ui/dialog-select"
 import { createMemo, onMount } from "solid-js"
 import { useTheme } from "../context/theme"
 import { useSync } from "../context/sync"
@@ -153,6 +153,7 @@ export function DialogMemory() {
   const sync = useSync()
   const toast = useToast()
   const renderer = useRenderer()
+  let ref: DialogSelectRef<string>
 
   const directory = () => sync.data.path.directory || process.cwd()
   const home = process.env["HOME"] || process.env["USERPROFILE"] || ""
@@ -207,7 +208,8 @@ export function DialogMemory() {
 
   onMount(() => {
     dialog.setSize("large")
+    setTimeout(() => ref?.reset(), 60)
   })
 
-  return <DialogSelect title="Memory Files" options={options()} onSelect={(option) => openInEditor(option.value)} />
+  return <DialogSelect ref={(value) => (ref = value)} title="Memory Files" options={options()} onSelect={(option) => openInEditor(option.value)} />
 }

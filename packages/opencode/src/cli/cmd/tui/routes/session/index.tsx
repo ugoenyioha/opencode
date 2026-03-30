@@ -1419,13 +1419,13 @@ const PART_MAPPING = {
 function ReasoningPart(props: { last: boolean; part: ReasoningPart; message: AssistantMessage }) {
   const { theme, subtleSyntax } = useTheme()
   const ctx = use()
-  const content = createMemo(() => {
+  const rawContent = createMemo(() => {
     // Filter out redacted reasoning chunks from OpenRouter
     // OpenRouter sends encrypted reasoning data that appears as [REDACTED]
-    return props.part.text.replace("[REDACTED]", "").trim()
+    return props.part.text.replace("[REDACTED]", "")
   })
   return (
-    <Show when={content() && ctx.showThinking()}>
+    <Show when={rawContent().trim() && ctx.showThinking()}>
       <box
         id={"text-" + props.part.id}
         paddingLeft={2}
@@ -1435,12 +1435,13 @@ function ReasoningPart(props: { last: boolean; part: ReasoningPart; message: Ass
         customBorderChars={SplitBorder.customBorderChars}
         borderColor={theme.backgroundElement}
       >
+        <text fg={theme.textMuted}>Thinking</text>
         <code
           filetype="markdown"
           drawUnstyledText={false}
           streaming={true}
           syntaxStyle={subtleSyntax()}
-          content={"_Thinking:_ " + content()}
+          content={rawContent()}
           conceal={ctx.conceal()}
           fg={theme.textMuted}
         />

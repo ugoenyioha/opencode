@@ -595,6 +595,15 @@ export function Autocomplete(props: {
             return
           }
           if (name === "return") {
+            if (store.visible === "/") {
+              const selected = options()[store.selected]
+              const current = removeLineRange(props.input().plainText).trim()
+              const target = selected?.display?.trim()
+              if (selected && target && current.startsWith(target)) {
+                hide()
+                return
+              }
+            }
             select()
             e.preventDefault()
             return

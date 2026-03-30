@@ -730,6 +730,35 @@ export function Prompt(props: PromptProps) {
       inputText.startsWith("/") &&
       iife(() => {
         const firstLine = inputText.split("\n")[0]
+        const slash = firstLine.split(" ")[0].slice(1)
+        return slash === "memory" || slash === "tasks" || slash === "team" || slash === "status"
+      })
+    ) {
+      const firstLine = inputText.split("\n")[0]
+      const slash = firstLine.split(" ")[0].slice(1)
+      const mapping: Record<string, string> = {
+        memory: "memory.edit",
+        tasks: "task.list",
+        team: "team.show",
+        status: "opencode.status",
+      }
+      command.trigger(mapping[slash])
+    } else if (
+      inputText.startsWith("/") &&
+      iife(() => {
+        const firstLine = inputText.split("\n")[0]
+        const slash = firstLine.split(" ")[0]
+        return command.slashes().some((item) => item.display === slash || item.aliases?.includes(slash))
+      })
+    ) {
+      const firstLine = inputText.split("\n")[0]
+      const slash = firstLine.split(" ")[0]
+      const match = command.slashes().find((item) => item.display === slash || item.aliases?.includes(slash))
+      match?.onSelect()
+    } else if (
+      inputText.startsWith("/") &&
+      iife(() => {
+        const firstLine = inputText.split("\n")[0]
         const command = firstLine.split(" ")[0].slice(1)
         return sync.data.command.some((x) => x.name === command)
       })
