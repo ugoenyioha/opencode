@@ -115,6 +115,16 @@ User direction:
 
 - This is a priority because it previously worked and is important to recover.
 
+### 7. Upstream account / multi-account workspace auth subsystem
+
+Skipped for this phase on purpose.
+
+Reason:
+
+- This is upstream console/workspace account product work, not runtime-critical provider auth.
+- It would blur the runtime story for AI Forge and introduce CLI/account features that are not part of the current runtime-focused milestone.
+- User explicitly decided to skip it for this phase.
+
 ### 6. `beca1f2e3` post-merge schema/todo/session-status/skill-import fixes
 
 Deferred on purpose.
