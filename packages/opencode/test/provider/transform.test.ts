@@ -2001,6 +2001,25 @@ describe("ProviderTransform.variants", () => {
       const result = ProviderTransform.variants(model)
       expect(Object.keys(result)).toEqual(["low", "medium", "high", "xhigh"])
     })
+
+    test("gpt-5.4 includes xhigh", () => {
+      const model = createMockModel({
+        id: "gpt-5.4",
+        providerID: "github-copilot",
+        api: {
+          id: "gpt-5.4",
+          url: "https://api.githubcopilot.com",
+          npm: "@ai-sdk/github-copilot",
+        },
+      })
+      const result = ProviderTransform.variants(model)
+      expect(Object.keys(result)).toEqual(["low", "medium", "high", "xhigh"])
+      expect(result.xhigh).toEqual({
+        reasoningEffort: "xhigh",
+        reasoningSummary: "auto",
+        include: ["reasoning.encrypted_content"],
+      })
+    })
   })
 
   describe("@ai-sdk/cerebras", () => {
