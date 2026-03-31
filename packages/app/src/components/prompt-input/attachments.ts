@@ -7,35 +7,6 @@ import { getCursorPosition } from "./editor-dom"
 import { attachmentMime } from "./files"
 import { normalizePaste, pasteMode } from "./paste"
 
-export const ACCEPTED_FILE_TYPES = [
-  "image/*",
-  ".png",
-  ".jpg",
-  ".jpeg",
-  ".gif",
-  ".webp",
-  ".pdf",
-  ".txt",
-  ".md",
-  ".json",
-  ".yaml",
-  ".yml",
-  ".csv",
-  ".ts",
-  ".tsx",
-  ".js",
-  ".jsx",
-  ".py",
-  ".go",
-  ".rs",
-  ".java",
-  ".kt",
-  ".swift",
-  ".css",
-  ".html",
-  ".sh",
-]
-
 function dataUrl(file: File, mime: string) {
   return new Promise<string>((resolve) => {
     const reader = new FileReader()

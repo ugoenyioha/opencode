@@ -27,9 +27,10 @@ export default function RemoteControl() {
 
     const relay = Array.isArray(searchParams.relay) ? searchParams.relay[0] : searchParams.relay
     const session = Array.isArray(searchParams.session) ? searchParams.session[0] : searchParams.session
+    const grant = Array.isArray(searchParams.grant) ? searchParams.grant[0] : searchParams.grant
 
-    if (!relay || !session) {
-      setError("Missing relay or session parameters in URL.")
+    if (!relay || !session || !grant) {
+      setError("Missing relay, session, or join grant parameters in URL.")
       return
     }
 
@@ -48,6 +49,7 @@ export default function RemoteControl() {
     const cleanup = server.connectRemote({
       relayUrl: relay,
       sessionId: session,
+      joinGrant: grant,
       encryptionKeyBase64: key,
       onConnect: () => {
         setStatus("Connected! Handshaking with Host...")

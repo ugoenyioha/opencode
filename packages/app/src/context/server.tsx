@@ -1,9 +1,8 @@
 import { createSimpleContext } from "@opencode-ai/ui/context"
 import { type Accessor, batch, createEffect, createMemo, onCleanup, createSignal } from "solid-js"
 import { createStore } from "solid-js/store"
-import { usePlatform } from "@/context/platform"
 import { Persist, persisted } from "@/utils/persist"
-import { checkServerHealth } from "@/utils/server-health"
+import { useCheckServerHealth } from "@/utils/server-health"
 import { importRemoteKey } from "@opencode-ai/sdk/v2/remote"
 
 type StoredProject = { worktree: string; expanded: boolean }
@@ -112,7 +111,7 @@ export namespace ServerConnection {
 export const { use: useServer, provider: ServerProvider } = createSimpleContext({
   name: "Server",
   init: (props: { defaultServer: ServerConnection.Key; servers?: Array<ServerConnection.Any> }) => {
-    const platform = usePlatform()
+    const checkServerHealth = useCheckServerHealth()
 
     const [store, setStore, _, ready] = persisted(
       Persist.global("server", ["server.v3"]),
@@ -222,8 +221,7 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
 
     const isReady = createMemo(() => ready() && !!state.active)
 
-    const fetcher = platform.fetch ?? globalThis.fetch
-    const check = (conn: ServerConnection.Any) => checkServerHealth(conn.http, fetcher).then((x) => x.healthy)
+    const check = (conn: ServerConnection.Any) => checkServerHealth(conn.http).then((x) => x.healthy)
 
     createEffect(() => {
       const current_ = current()
@@ -246,6 +244,7 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
     function connectRemote(opts: {
       relayUrl: string
       sessionId: string
+      joinGrant: string
       encryptionKeyBase64: string
       onConnect?: () => void
       onError?: (err: Error) => void
@@ -262,7 +261,7 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
       fetch(`${relayUrl}/api/session/join`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId: opts.sessionId }),
+        body: JSON.stringify({ sessionId: opts.sessionId, grant: opts.joinGrant }),
       })
         .then((res) => {
           if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to join session`)
