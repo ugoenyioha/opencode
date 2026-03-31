@@ -4,6 +4,7 @@ import { batch, createEffect, createMemo, createRoot, on, onCleanup } from "soli
 import { useParams } from "@solidjs/router"
 import { useSDK } from "./sdk"
 import type { Platform } from "./platform"
+import { defaultTitle, titleNumber } from "./terminal-title"
 import { Persist, persisted, removePersisted } from "@/utils/persist"
 
 export type LocalPTY = {
@@ -19,6 +20,67 @@ export type LocalPTY = {
 
 const WORKSPACE_KEY = "__workspace__"
 const MAX_TERMINAL_SESSIONS = 20
+
+function numberFromTitle(title: string) {
+  return titleNumber(title, MAX_TERMINAL_SESSIONS)
+}
+
+function record(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function text(value: unknown) {
+  return typeof value === "string" ? value : undefined
+}
+
+function num(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined
+}
+
+function pty(value: unknown): LocalPTY | undefined {
+  if (!record(value)) return
+
+  const id = text(value.id)
+  if (!id) return
+
+  const title = text(value.title) ?? ""
+  const number = num(value.titleNumber)
+  const rows = num(value.rows)
+  const cols = num(value.cols)
+  const buffer = text(value.buffer)
+  const scrollY = num(value.scrollY)
+  const cursor = num(value.cursor)
+
+  return {
+    id,
+    title,
+    titleNumber: number && number > 0 ? number : (numberFromTitle(title) ?? 0),
+    ...(rows !== undefined ? { rows } : {}),
+    ...(cols !== undefined ? { cols } : {}),
+    ...(buffer !== undefined ? { buffer } : {}),
+    ...(scrollY !== undefined ? { scrollY } : {}),
+    ...(cursor !== undefined ? { cursor } : {}),
+  }
+}
+
+export function migrateTerminalState(value: unknown) {
+  if (!record(value)) return value
+
+  const seen = new Set<string>()
+  const all = (Array.isArray(value.all) ? value.all : []).flatMap((item) => {
+    const next = pty(item)
+    if (!next || seen.has(next.id)) return []
+    seen.add(next.id)
+    return [next]
+  })
+
+  const active = text(value.active)
+
+  return {
+    active: active && seen.has(active) ? active : all[0]?.id,
+    all,
+  }
+}
 
 export function getWorkspaceTerminalCacheKey(dir: string) {
   return `${dir}:${WORKSPACE_KEY}`
@@ -80,7 +142,10 @@ function createWorkspaceTerminalSession(sdk: ReturnType<typeof useSDK>, dir: str
   }
 
   const [store, setStore, _, ready] = persisted(
-    Persist.workspace(dir, "terminal", legacy),
+    {
+      ...Persist.workspace(dir, "terminal", legacy),
+      migrate: migrateTerminalState,
+    },
     createStore<{
       active?: string
       all: LocalPTY[]
