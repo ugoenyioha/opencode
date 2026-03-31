@@ -101,11 +101,14 @@ const sandboxDataHome = path.join(sandbox, "share")
 const sandboxConfigHome = path.join(sandbox, "config")
 const sandboxCacheHome = path.join(sandbox, "cache")
 const sandboxStateHome = path.join(sandbox, "state")
+const sandboxTestHome = path.join(sandbox, "home")
+const sandboxTestConfigHome = path.join(sandboxTestHome, ".config", "opencode")
 
 await fs.mkdir(path.join(sandboxDataHome, "opencode"), { recursive: true })
 await fs.mkdir(path.join(sandboxConfigHome, "opencode"), { recursive: true })
 await fs.mkdir(path.join(sandboxCacheHome, "opencode"), { recursive: true })
 await fs.mkdir(sandboxStateHome, { recursive: true })
+await fs.mkdir(sandboxTestConfigHome, { recursive: true })
 
 // Copy real auth credentials into sandbox
 await fs.copyFile(authFile, path.join(sandboxDataHome, "opencode", "auth.json"))
@@ -128,10 +131,15 @@ try {
     else if (commandList.includes("ctrl+k")) commandPaletteKey = "k"
   }
   await fs.writeFile(sandboxConfigFile, JSON.stringify(config, null, 2))
+  await fs.writeFile(path.join(sandboxTestConfigHome, "opencode.json"), JSON.stringify(config, null, 2))
 } catch {
   // If no config, write minimal with Gemini default and auto-approve
   await fs.writeFile(
     sandboxConfigFile,
+    JSON.stringify({ model: "google/gemini-2.5-flash", permission: "allow" }, null, 2),
+  )
+  await fs.writeFile(
+    path.join(sandboxTestConfigHome, "opencode.json"),
     JSON.stringify({ model: "google/gemini-2.5-flash", permission: "allow" }, null, 2),
   )
 }
@@ -146,7 +154,7 @@ await fs.writeFile(path.join(sandboxCacheHome, "opencode", "version"), "14")
 // Use real home (for ~/.claude.json metadata) but sandbox XDG dirs
 const baseEnv: Record<string, string> = {
   HOME: os.homedir(), // Real home for ~/.claude.json access
-  OPENCODE_TEST_HOME: path.join(sandbox, "home"),
+  OPENCODE_TEST_HOME: sandboxTestHome,
   OPENCODE_SERVER_PASSWORD: "test-password",
   XDG_DATA_HOME: sandboxDataHome,
   XDG_CACHE_HOME: sandboxCacheHome,
@@ -184,6 +192,7 @@ await test("TUI creates a session with real LLM response", async () => {
     cwd: testProject,
     env: baseEnv,
     spawnTimeout: 20000,
+    useBuiltBinary: true,
   })
 
   try {
@@ -554,6 +563,79 @@ await test("/btw dialog dismisses on Enter and returns to the main session", asy
       text.includes("session ready"),
       `Main session should still be visible after Enter dismiss. Got: ${tui.text.slice(-800)}`,
     )
+  } finally {
+    tui.kill()
+  }
+})
+
+await test("Manage Accounts rm 1 reproduces prompt render stall if present", async () => {
+  const tui = await TuiHarness.spawn({
+    cwd: testProject,
+    env: baseEnv,
+    spawnTimeout: 20000,
+    useBuiltBinary: true,
+  })
+
+  try {
+    await tui.settle(4000)
+
+    // Open provider dialog via the proven command-palette path.
+    openCommandPalette(tui)
+    await tui.settle(1500)
+    tui.write("/connect")
+    await tui.settle(800)
+    tui.write("\r")
+    await tui.waitForText("Connect a provider", 15000)
+    await tui.settle(1000)
+
+    // Choose Anthropic provider.
+    tui.write("anthropic")
+    await tui.settle(500)
+    tui.write("\r")
+    await tui.waitForMatch(/Select auth method|Manage Accounts|Add Claude Pro\/Max Account|Manually enter API Key/i, 15000)
+    await tui.settle(1000)
+
+    // Choose Manage Accounts.
+    tui.write("Manage Accounts")
+    await tui.settle(500)
+    tui.write("\r")
+    await tui.waitForMatch(/Manage Accounts|Enter a number to select as active|Press Enter to cancel/i, 15000)
+    await tui.settle(1000)
+
+    // Remove the only account, matching the real-world repro path.
+    tui.write("rm 1")
+    await tui.settle(500)
+    tui.write("\r")
+    await tui.settle(4000)
+
+    // Reproduce the real bug: after rm 1, typed text should still appear in the
+    // prompt area. If it does not, the render stall is present.
+    tui.write("MANAGE-ACCOUNTS-OK")
+    await tui.settle(1200)
+
+    const afterType = tui.frame
+    assert(afterType.includes("MANAGE-ACCOUNTS-OK"), "REPRO_NOT_FOUND")
+  } finally {
+    tui.kill()
+  }
+})
+
+await test("command palette can open Connect a provider dialog", async () => {
+  const tui = await TuiHarness.spawn({
+    cwd: testProject,
+    env: baseEnv,
+    spawnTimeout: 20000,
+    useBuiltBinary: true,
+  })
+
+  try {
+    await tui.settle(4000)
+    openCommandPalette(tui)
+    await tui.settle(1500)
+    tui.write("/connect")
+    await tui.settle(800)
+    tui.write("\r")
+    await tui.waitForText("Connect a provider", 15000)
   } finally {
     tui.kill()
   }

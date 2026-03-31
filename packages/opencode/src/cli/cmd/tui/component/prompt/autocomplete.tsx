@@ -54,6 +54,7 @@ export type AutocompleteRef = {
 
 export type AutocompleteOption = {
   display: string
+  match?: string
   value?: string
   aliases?: string[]
   disabled?: boolean
@@ -68,6 +69,7 @@ export function Autocomplete(props: {
   sessionID?: string
   setPrompt: (input: (prompt: PromptInfo) => void) => void
   setExtmark: (partIndex: number, extmarkId: number) => void
+  onSlashSubmit?: () => void
   anchor: () => BoxRenderable
   input: () => TextareaRenderable
   ref: (ref: AutocompleteRef) => void
@@ -391,6 +393,7 @@ export function Autocomplete(props: {
       const label = serverCommand.source === "mcp" ? ":mcp" : ""
       results.push({
         display: "/" + serverCommand.name + label,
+        match: "/" + serverCommand.name,
         description: serverCommand.description,
         onSelect: () => {
           const newText = "/" + serverCommand.name + " "
@@ -596,11 +599,16 @@ export function Autocomplete(props: {
           }
           if (name === "return") {
             if (store.visible === "/") {
-              const selected = options()[store.selected]
               const current = removeLineRange(props.input().plainText).trim()
-              const target = selected?.display?.trim()
-              if (selected && target && current.startsWith(target)) {
+              const exact = options().find((item) => {
+                const target = item.match?.trim() ?? item.display?.trim()
+                const aliases = item.aliases?.map((alias) => alias.trim()) ?? []
+                return !!target && (current.startsWith(target) || aliases.some((alias) => current.startsWith(alias)))
+              })
+              if (exact) {
                 hide()
+                setTimeout(() => props.onSlashSubmit?.(), 0)
+                e.preventDefault()
                 return
               }
             }

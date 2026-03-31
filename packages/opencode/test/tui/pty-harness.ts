@@ -36,15 +36,19 @@ export interface TuiHarnessOptions {
   rows?: number
   /** Timeout for spawn in ms (default 30000) */
   spawnTimeout?: number
+  /** Use built binary instead of source-run Bun entrypoint */
+  useBuiltBinary?: boolean
 }
 
 export class TuiHarness {
   private pty: IPty
   private buffer: string = ""
   private disposed = false
+  private rows: number
 
-  private constructor(pty: IPty) {
+  private constructor(pty: IPty, rows: number) {
     this.pty = pty
+    this.rows = rows
     pty.onData((data) => {
       this.buffer += data
     })
@@ -72,10 +76,7 @@ export class TuiHarness {
       ...opts.env,
     }
 
-    const entryPoint = new URL(
-      "../../src/index.ts",
-      import.meta.url,
-    ).pathname
+    const entryPoint = new URL("../../src/index.ts", import.meta.url).pathname
 
     // opencode needs --conditions=browser for SolidJS JSX runtime.
     // The TUI command accepts [project] as a positional arg and
@@ -83,20 +84,25 @@ export class TuiHarness {
     // root so module resolution works, passing cwd as the project path.
     const opencodeRoot = new URL("../../", import.meta.url).pathname
 
-    const pty = spawn("bun", [
-      "run",
-      "--conditions=browser",
-      entryPoint,
-      cwd,
-    ], {
-      name: "xterm-256color",
-      cwd: opencodeRoot,
-      env,
-      cols,
-      rows,
-    })
+    const builtBinary = new URL("../../dist/opencode-darwin-arm64/bin/opencode", import.meta.url).pathname
 
-    const harness = new TuiHarness(pty)
+    const pty = opts.useBuiltBinary
+      ? spawn(builtBinary, [cwd], {
+          name: "xterm-256color",
+          cwd: opencodeRoot,
+          env,
+          cols,
+          rows,
+        })
+      : spawn("bun", ["run", "--conditions=browser", entryPoint, cwd], {
+          name: "xterm-256color",
+          cwd: opencodeRoot,
+          env,
+          cols,
+          rows,
+        })
+
+    const harness = new TuiHarness(pty, rows)
 
     // Wait for TUI to render something (the prompt or home screen)
     try {
@@ -121,6 +127,15 @@ export class TuiHarness {
    */
   get text(): string {
     return stripAnsi(this.buffer)
+  }
+
+  /**
+   * Get an approximation of the currently visible screen frame by taking the
+   * last terminal-height worth of lines from the stripped output.
+   */
+  get frame(): string {
+    const lines = this.text.split("\n")
+    return lines.slice(-this.rows).join("\n")
   }
 
   /**

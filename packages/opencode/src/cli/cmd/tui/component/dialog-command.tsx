@@ -89,6 +89,7 @@ function init() {
         if (!slash) return []
         return {
           display: "/" + slash.name,
+          match: "/" + slash.name,
           description: option.description ?? option.title,
           aliases: slash.aliases?.map((alias) => "/" + alias),
           onSelect: () => result.trigger(option.value),

@@ -45,6 +45,7 @@ export namespace ProviderAuth {
       url: z.string(),
       method: z.union([z.literal("auto"), z.literal("code")]),
       instructions: z.string(),
+      placeholder: z.string().optional(),
     })
     .meta({
       ref: "ProviderAuthAuthorization",
@@ -67,6 +68,7 @@ export namespace ProviderAuth {
           url: result.url,
           method: result.method,
           instructions: result.instructions,
+          placeholder: result.placeholder,
         }
       }
     },
@@ -111,7 +113,9 @@ export namespace ProviderAuth {
           }
           await Auth.set(input.providerID, info)
         }
-        return
+        return {
+          next: result.next ?? "model",
+        }
       }
 
       throw new OauthCallbackFailed({})

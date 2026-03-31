@@ -575,8 +575,9 @@ export function Prompt(props: PromptProps) {
 
   async function submit() {
     if (props.disabled) return
-    if (autocomplete?.visible) return
     if (!store.prompt.input) return
+    const currentTrimmed = store.prompt.input.trim()
+    if (autocomplete?.visible && !currentTrimmed.startsWith("/")) return
     const trimmed = store.prompt.input.trim()
     let inputText = store.prompt.input
     const slash = (() => {
@@ -958,6 +959,7 @@ export function Prompt(props: PromptProps) {
         ref={(r) => (autocomplete = r)}
         anchor={() => anchor}
         input={() => input}
+        onSlashSubmit={() => submit()}
         setPrompt={(cb) => {
           setStore("prompt", produce(cb))
         }}

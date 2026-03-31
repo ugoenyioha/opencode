@@ -193,9 +193,13 @@ function CodeMethod(props: CodeMethodProps) {
   return (
     <DialogPrompt
       title={props.title}
-      placeholder="Authorization code"
+      placeholder={props.authorization.placeholder ?? "Authorization code"}
       onConfirm={async (value) => {
-        const { error } = await sdk.client.provider.oauth.callback({
+        if (!value.trim()) {
+          dialog.clear()
+          return
+        }
+        const { data, error } = await sdk.client.provider.oauth.callback({
           providerID: props.providerID,
           method: props.index,
           code: value,
@@ -203,6 +207,10 @@ function CodeMethod(props: CodeMethodProps) {
         if (!error) {
           await sdk.client.instance.dispose()
           await sync.bootstrap()
+          if (data?.next === "clear") {
+            dialog.clear()
+            return
+          }
           dialog.replace(() => <DialogModel providerID={props.providerID} />)
           return
         }

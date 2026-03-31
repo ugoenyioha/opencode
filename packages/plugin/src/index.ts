@@ -182,13 +182,14 @@ export type AuthHook = {
   )[]
 }
 
-export type AuthOuathResult = { url: string; instructions: string } & (
+export type AuthOuathResult = { url: string; instructions: string; placeholder?: string } & (
   | {
       method: "auto"
       callback(): Promise<
         | ({
             type: "success"
             provider?: string
+            next?: "model" | "clear"
           } & (
             | {
                 refresh: string
@@ -209,6 +210,7 @@ export type AuthOuathResult = { url: string; instructions: string } & (
         | ({
             type: "success"
             provider?: string
+            next?: "model" | "clear"
           } & (
             | {
                 refresh: string
