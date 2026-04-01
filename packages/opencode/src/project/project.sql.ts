@@ -1,8 +1,9 @@
 import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core"
+import type { ProjectID } from "./schema"
 import { Timestamps } from "@/storage/schema.sql"
 
 export const ProjectTable = sqliteTable("project", {
-  id: text().primaryKey(),
+  id: text().$type<ProjectID>().primaryKey(),
   worktree: text().notNull(),
   vcs: text(),
   name: text(),
