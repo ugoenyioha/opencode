@@ -11,6 +11,7 @@ import { Provider } from "@/provider/provider"
 import { Identifier } from "@/id/id"
 import { lazy } from "../../util/lazy"
 import { errors } from "../error"
+import { SessionID } from "@/session/schema"
 
 const Delegate = z.object({ enabled: z.boolean() })
 const TeamMember = TeamMemberSchema.meta({ ref: "TeamMember" })
@@ -27,7 +28,7 @@ const TeamBySession = z
 const TeamModel = z.object({ providerID: z.string(), modelID: z.string() }).meta({ ref: "TeamModel" })
 const TeamSpawnBody = z
   .object({
-    leadSessionID: Identifier.schema("session"),
+    leadSessionID: SessionID.zod,
     name: TeamMember.shape.name,
     agent: z.string(),
     model: TeamModel.optional(),
@@ -38,25 +39,25 @@ const TeamSpawnBody = z
   .meta({ ref: "TeamSpawnRequest" })
 const TeamMessageBody = z
   .object({
-    sessionID: Identifier.schema("session"),
+    sessionID: SessionID.zod,
     to: z.string(),
     text: z.string(),
   })
   .meta({ ref: "TeamMessageRequest" })
 const TeamShutdownBody = z
   .object({
-    leadSessionID: Identifier.schema("session"),
+    leadSessionID: SessionID.zod,
     member: z.string(),
   })
   .meta({ ref: "TeamShutdownRequest" })
 const TeamCleanupBody = z
   .object({
-    leadSessionID: Identifier.schema("session"),
+    leadSessionID: SessionID.zod,
   })
   .meta({ ref: "TeamCleanupRequest" })
 const TeamApprovePlanBody = z
   .object({
-    leadSessionID: Identifier.schema("session"),
+    leadSessionID: SessionID.zod,
     member: z.string(),
     approved: z.boolean(),
     feedback: z.string().optional(),
@@ -64,7 +65,7 @@ const TeamApprovePlanBody = z
   .meta({ ref: "TeamApprovePlanRequest" })
 const TeamMessagesQuery = z
   .object({
-    sessionID: Identifier.schema("session"),
+    sessionID: SessionID.zod,
     unread: z.coerce.boolean().optional(),
   })
   .meta({ ref: "TeamMessagesQuery" })
@@ -78,7 +79,7 @@ const TeamMessageItem = z
   })
   .meta({ ref: "TeamMessageItem" })
 const Ok = z.object({ ok: z.literal(true) }).meta({ ref: "TeamOk" })
-const Spawned = z.object({ sessionID: Identifier.schema("session") }).meta({ ref: "TeamSpawned" })
+const Spawned = z.object({ sessionID: SessionID.zod }).meta({ ref: "TeamSpawned" })
 
 async function lead(sessionID: string, name: string) {
   const info = await Team.findBySession(sessionID)
@@ -177,7 +178,7 @@ export const TeamRoutes = lazy(() =>
           },
         },
       }),
-      validator("param", z.object({ sessionID: Identifier.schema("session") })),
+      validator("param", z.object({ sessionID: SessionID.zod })),
       async (c) => {
         const result = await Team.findBySession(c.req.valid("param").sessionID)
         if (!result) return c.json(null)
@@ -201,7 +202,7 @@ export const TeamRoutes = lazy(() =>
         },
       }),
       validator("param", z.object({ name: z.string() })),
-      validator("json", Delegate.extend({ leadSessionID: Identifier.schema("session").optional() })),
+      validator("json", Delegate.extend({ leadSessionID: SessionID.zod.optional() })),
       async (c) => {
         const { name } = c.req.valid("param")
         const { enabled, leadSessionID } = c.req.valid("json")
@@ -447,7 +448,7 @@ export const TeamRoutes = lazy(() =>
       validator("param", z.object({ name: z.string() })),
       validator(
         "json",
-        z.object({ leadSessionID: Identifier.schema("session").optional(), member: z.string().optional() }),
+        z.object({ leadSessionID: SessionID.zod.optional(), member: z.string().optional() }),
       ),
       async (c) => {
         const { name } = c.req.valid("param")

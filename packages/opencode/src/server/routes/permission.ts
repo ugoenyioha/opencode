@@ -29,7 +29,7 @@ export const PermissionRoutes = lazy(() =>
       validator(
         "param",
         z.object({
-          requestID: Identifier.schema("permission"),
+          requestID: z.string(),
         }),
       ),
       validator("json", z.object({ reply: PermissionNext.Reply, message: z.string().optional() })),

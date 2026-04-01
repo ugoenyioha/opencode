@@ -7,6 +7,7 @@ import PROMPT_INITIALIZE from "./template/initialize.txt"
 import PROMPT_REVIEW from "./template/review.txt"
 import { MCP } from "../mcp"
 import { Skill } from "../skill"
+import { SessionID, MessageID } from "../session/schema"
 
 export namespace Command {
   export const Event = {
@@ -14,9 +15,9 @@ export namespace Command {
       "command.executed",
       z.object({
         name: z.string(),
-        sessionID: Identifier.schema("session"),
+        sessionID: SessionID.zod,
         arguments: z.string(),
-        messageID: Identifier.schema("message"),
+        messageID: MessageID.zod,
       }),
     ),
   }

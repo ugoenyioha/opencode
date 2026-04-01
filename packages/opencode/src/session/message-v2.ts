@@ -15,6 +15,7 @@ import { ProviderError } from "@/provider/error"
 import { iife } from "@/util/iife"
 import { type SystemError } from "bun"
 import type { Provider } from "@/provider/provider"
+import { SessionID, MessageID, PartID } from "./schema"
 
 export namespace MessageV2 {
   export function isMedia(mime: string) {
@@ -701,7 +702,7 @@ export namespace MessageV2 {
           // media (images, PDFs) in tool results
           if (media.length > 0) {
             result.push({
-              id: Identifier.ascending("message"),
+              id: MessageID.ascending(),
               role: "user",
               parts: [
                 {
@@ -731,7 +732,7 @@ export namespace MessageV2 {
     )
   }
 
-  export const stream = fn(Identifier.schema("session"), async function* (sessionID) {
+  export const stream = fn(SessionID.zod, async function* (sessionID) {
     const size = 50
     let offset = 0
     while (true) {
@@ -784,7 +785,7 @@ export namespace MessageV2 {
     }
   })
 
-  export const parts = fn(Identifier.schema("message"), async (message_id) => {
+  export const parts = fn(MessageID.zod, async (message_id) => {
     const rows = Database.use((db) =>
       db.select().from(PartTable).where(eq(PartTable.message_id, message_id)).orderBy(PartTable.id).all(),
     )
@@ -795,8 +796,8 @@ export namespace MessageV2 {
 
   export const get = fn(
     z.object({
-      sessionID: Identifier.schema("session"),
-      messageID: Identifier.schema("message"),
+      sessionID: SessionID.zod,
+      messageID: MessageID.zod,
     }),
     async (input): Promise<WithParts> => {
       const row = Database.use((db) => db.select().from(MessageTable).where(eq(MessageTable.id, input.messageID)).get())

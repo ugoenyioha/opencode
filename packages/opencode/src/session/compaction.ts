@@ -14,6 +14,7 @@ import { Agent } from "@/agent/agent"
 import { Plugin } from "@/plugin"
 import { Config } from "@/config/config"
 import { ProviderTransform } from "@/provider/transform"
+import { SessionID, MessageID, PartID } from "./schema"
 
 export namespace SessionCompaction {
   const log = Log.create({ service: "session.compaction" })
@@ -154,7 +155,7 @@ export namespace SessionCompaction {
       ? await Provider.getModel(agent.model.providerID, agent.model.modelID)
       : await Provider.getModel(userMessage.model.providerID, userMessage.model.modelID)
     const msg = (await Session.updateMessage({
-      id: Identifier.ascending("message"),
+      id: MessageID.ascending(),
       role: "assistant",
       parentID: input.parentID,
       sessionID: input.sessionID,
@@ -284,7 +285,7 @@ When constructing the summary, try to stick to this template:
       if (replay) {
         const original = replay.info as MessageV2.User
         const replayMsg = await Session.updateMessage({
-          id: Identifier.ascending("message"),
+          id: MessageID.ascending(),
           role: "user",
           sessionID: input.sessionID,
           time: { created: Date.now() },
@@ -303,14 +304,14 @@ When constructing the summary, try to stick to this template:
               : part
           await Session.updatePart({
             ...replayPart,
-            id: Identifier.ascending("part"),
+            id: PartID.ascending(),
             messageID: replayMsg.id,
             sessionID: input.sessionID,
           })
         }
       } else {
         const continueMsg = await Session.updateMessage({
-          id: Identifier.ascending("message"),
+          id: MessageID.ascending(),
           role: "user",
           sessionID: input.sessionID,
           time: { created: Date.now() },
@@ -323,7 +324,7 @@ When constructing the summary, try to stick to this template:
             : "") +
           "Continue if you have next steps, or stop and ask for clarification if you are unsure how to proceed."
         await Session.updatePart({
-          id: Identifier.ascending("part"),
+          id: PartID.ascending(),
           messageID: continueMsg.id,
           sessionID: input.sessionID,
           type: "text",
@@ -356,7 +357,7 @@ When constructing the summary, try to stick to this template:
 
   export const create = fn(
     z.object({
-      sessionID: Identifier.schema("session"),
+      sessionID: SessionID.zod,
       agent: z.string(),
       model: z.object({
         providerID: z.string(),
@@ -368,7 +369,7 @@ When constructing the summary, try to stick to this template:
     }),
     async (input) => {
       const msg = await Session.updateMessage({
-        id: Identifier.ascending("message"),
+        id: MessageID.ascending(),
         role: "user",
         model: input.model,
         sessionID: input.sessionID,
@@ -378,7 +379,7 @@ When constructing the summary, try to stick to this template:
         },
       })
       await Session.updatePart({
-        id: Identifier.ascending("part"),
+        id: PartID.ascending(),
         messageID: msg.id,
         sessionID: msg.sessionID,
         type: "compaction",

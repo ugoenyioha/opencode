@@ -4,6 +4,7 @@ import { Identifier } from "@/id/id"
 import { Instance } from "@/project/instance"
 import { Log } from "@/util/log"
 import z from "zod"
+import { SessionID } from "../session/schema"
 
 export namespace Question {
   const log = Log.create({ service: "question" })
@@ -34,7 +35,7 @@ export namespace Question {
   export const Request = z
     .object({
       id: Identifier.schema("question"),
-      sessionID: Identifier.schema("session"),
+      sessionID: SessionID.zod,
       questions: z.array(Info).describe("Questions to ask"),
       tool: z
         .object({

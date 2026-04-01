@@ -1,6 +1,7 @@
 import z from "zod"
 import { Tool } from "./tool"
 import DESCRIPTION from "./batch.txt"
+import { PartID } from "../session/schema"
 
 const DISALLOWED = new Set(["batch"])
 const FILTERED_FROM_SUGGESTIONS = new Set(["invalid", "patch", ...DISALLOWED])
@@ -42,7 +43,7 @@ export const BatchTool = Tool.define("batch", async () => {
 
       const executeCall = async (call: (typeof toolCalls)[0]) => {
         const callStartTime = Date.now()
-        const partID = Identifier.ascending("part")
+        const partID = PartID.ascending()
 
         try {
           if (DISALLOWED.has(call.tool)) {
@@ -79,7 +80,7 @@ export const BatchTool = Tool.define("batch", async () => {
           const result = await tool.execute(validatedParams, { ...ctx, callID: partID })
           const attachments = result.attachments?.map((attachment) => ({
             ...attachment,
-            id: Identifier.ascending("part"),
+            id: PartID.ascending(),
             sessionID: ctx.sessionID,
             messageID: ctx.messageID,
           }))
@@ -134,7 +135,7 @@ export const BatchTool = Tool.define("batch", async () => {
       // Add discarded calls as errors
       const now = Date.now()
       for (const call of discardedCalls) {
-        const partID = Identifier.ascending("part")
+        const partID = PartID.ascending()
         await Session.updatePart({
           id: partID,
           messageID: ctx.messageID,

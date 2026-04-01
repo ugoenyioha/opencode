@@ -10,14 +10,15 @@ import { Storage } from "@/storage/storage"
 import { Bus } from "../bus"
 import { SessionPrompt } from "./prompt"
 import { SessionSummary } from "./summary"
+import { SessionID, MessageID, PartID } from "./schema"
 
 export namespace SessionRevert {
   const log = Log.create({ service: "session.revert" })
 
   export const RevertInput = z.object({
-    sessionID: Identifier.schema("session"),
-    messageID: Identifier.schema("message"),
-    partID: Identifier.schema("part").optional(),
+    sessionID: SessionID.zod,
+    messageID: MessageID.zod,
+    partID: PartID.zod.optional(),
   })
   export type RevertInput = z.infer<typeof RevertInput>
 

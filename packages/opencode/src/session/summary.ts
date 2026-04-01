@@ -8,6 +8,7 @@ import { Snapshot } from "@/snapshot"
 
 import { Storage } from "@/storage/storage"
 import { Bus } from "@/bus"
+import { SessionID, MessageID } from "./schema"
 
 export namespace SessionSummary {
   function unquoteGitPath(input: string) {
@@ -113,8 +114,8 @@ export namespace SessionSummary {
 
   export const diff = fn(
     z.object({
-      sessionID: Identifier.schema("session"),
-      messageID: Identifier.schema("message").optional(),
+      sessionID: SessionID.zod,
+      messageID: MessageID.zod.optional(),
     }),
     async (input) => {
       const diffs = await Storage.read<Snapshot.FileDiff[]>(["session_diff", input.sessionID]).catch(() => [])

@@ -7,6 +7,7 @@ import { SessionPrompt } from "./prompt"
 import { Log } from "@/util/log"
 import { Instance } from "@/project/instance"
 import { SessionLoop } from "./loop"
+import { SessionID } from "./schema"
 
 export namespace SessionCron {
   const log = Log.create({ service: "session.cron" })
@@ -30,7 +31,7 @@ export namespace SessionCron {
   )
 
   export const CreateInput = z.object({
-    sessionID: Identifier.schema("session"),
+    sessionID: SessionID.zod,
     interval_ms: z.number().int().min(SessionLoop.MIN_INTERVAL_MS),
     prompt: z.string().min(1),
   })
@@ -92,7 +93,7 @@ export namespace SessionCron {
   })
 
   export const StopInput = z.object({
-    sessionID: Identifier.schema("session"),
+    sessionID: SessionID.zod,
   })
 
   export const stop = fn(StopInput, async (input) => {

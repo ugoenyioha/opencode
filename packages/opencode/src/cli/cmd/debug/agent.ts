@@ -11,6 +11,7 @@ import { PermissionNext } from "../../../permission/next"
 import { iife } from "../../../util/iife"
 import { bootstrap } from "../../bootstrap"
 import { cmd } from "../cmd"
+import { MessageID, PartID } from "@/session/schema"
 
 export const AgentCommand = cmd({
   command: "agent <name>",
@@ -113,7 +114,7 @@ function parseToolParams(input?: string) {
 
 async function createToolContext(agent: Agent.Info) {
   const session = await Session.create({ title: `Debug tool run (${agent.name})` })
-  const messageID = Identifier.ascending("message")
+  const messageID = MessageID.ascending()
   const model = agent.model ?? (await Provider.defaultModel())
   const now = Date.now()
   const message: MessageV2.Assistant = {
@@ -150,7 +151,7 @@ async function createToolContext(agent: Agent.Info) {
   return {
     sessionID: session.id,
     messageID,
-    callID: Identifier.ascending("part"),
+    callID: PartID.ascending(),
     agent: agent.name,
     abort: new AbortController().signal,
     messages: [],

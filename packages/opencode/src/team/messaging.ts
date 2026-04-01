@@ -6,6 +6,7 @@ import { SessionStatus } from "../session/status"
 import { Identifier } from "../id/id"
 import { Team, TeamEvent } from "./index"
 import { Inbox } from "./inbox"
+import { MessageID, PartID } from "../session/schema"
 
 const log = Log.create({ service: "team.messaging" })
 const MAX_TEXT = 10 * 1024
@@ -328,7 +329,7 @@ export namespace TeamMessaging {
     }
     const userInfo = lastUser.info as { agent: string; model: { providerID: string; modelID: string } }
 
-    const msgId = Identifier.ascending("message")
+    const msgId = MessageID.ascending()
     await Session.updateMessage({
       id: msgId,
       sessionID,
@@ -339,7 +340,7 @@ export namespace TeamMessaging {
     })
 
     await Session.updatePart({
-      id: Identifier.ascending("part"),
+      id: PartID.ascending(),
       messageID: msgId,
       sessionID,
       type: "text",

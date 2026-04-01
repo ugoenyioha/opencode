@@ -29,6 +29,7 @@ import { MessageV2 } from "../../session/message-v2"
 import { SessionPrompt } from "@/session/prompt"
 import { $ } from "bun"
 import { setTimeout as sleep } from "node:timers/promises"
+import { MessageID, PartID } from "@/session/schema"
 
 type GitHubAuthor = {
   login: string
@@ -917,7 +918,7 @@ export const GithubRunCommand = cmd({
 
         const result = await SessionPrompt.prompt({
           sessionID: session.id,
-          messageID: Identifier.ascending("message"),
+          messageID: MessageID.ascending(),
           variant,
           model: {
             providerID,
@@ -926,13 +927,13 @@ export const GithubRunCommand = cmd({
           // agent is omitted - server will use default_agent from config or fall back to "build"
           parts: [
             {
-              id: Identifier.ascending("part"),
+              id: PartID.ascending(),
               type: "text",
               text: message,
             },
             ...files.flatMap((f) => [
               {
-                id: Identifier.ascending("part"),
+                id: PartID.ascending(),
                 type: "file" as const,
                 mime: f.mime,
                 url: `data:${f.mime};base64,${f.content}`,
@@ -973,7 +974,7 @@ export const GithubRunCommand = cmd({
         console.log("Requesting summary from agent...")
         const summaryResult = await SessionPrompt.prompt({
           sessionID: session.id,
-          messageID: Identifier.ascending("message"),
+          messageID: MessageID.ascending(),
           variant,
           model: {
             providerID,
@@ -982,7 +983,7 @@ export const GithubRunCommand = cmd({
           tools: { "*": false }, // Disable all tools to force text response
           parts: [
             {
-              id: Identifier.ascending("part"),
+              id: PartID.ascending(),
               type: "text",
               text: "Summarize the actions (tool calls & reasoning) you did for the user in 1-2 sentences.",
             },

@@ -60,6 +60,7 @@ import { Identifier } from "../id/id"
 globalThis.AI_SDK_LOG_WARNINGS = false
 
 import { RemoteHost } from "@/remote/host"
+import { SessionID } from "@/session/schema"
 
 let activeRemoteHost: RemoteHost | null = null
 
@@ -374,7 +375,7 @@ export namespace Server {
             // For session-scoped routes, resolve directory from the stored session
             const match = c.req.path.match(/(?:\/api\/v\d+)?\/session\/(ses_[^/]+)/)
             if (match) {
-              const parsed = Identifier.schema("session").safeParse(match[1])
+              const parsed = SessionID.zod.safeParse(match[1])
               if (parsed.success) {
                 directory = await Session.findDirectory(parsed.data)
               }

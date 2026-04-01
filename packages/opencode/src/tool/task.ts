@@ -11,6 +11,7 @@ import { defer } from "@/util/defer"
 import { Config } from "../config/config"
 import { PermissionNext } from "@/permission/next"
 import { Worktree } from "../worktree"
+import { SessionID, MessageID } from "../session/schema"
 
 /**
  * Calculate the subagent nesting depth for a session by walking up the parentID chain.
@@ -116,7 +117,7 @@ export const TaskTool = Tool.define("task", async (ctx) => {
           if (found) return found
         }
 
-        const sessionID = Identifier.ascending("session")
+        const sessionID = SessionID.descending()
         let directory: string | undefined
 
         if (agent.isolation === "worktree") {
@@ -209,7 +210,7 @@ export const TaskTool = Tool.define("task", async (ctx) => {
         },
       })
 
-      const messageID = Identifier.ascending("message")
+      const messageID = MessageID.ascending()
 
       function cancel() {
         SessionPrompt.cancel(session.id)

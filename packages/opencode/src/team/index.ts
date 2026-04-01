@@ -8,6 +8,7 @@ import { Identifier } from "../id/id"
 import { TeamTable, TeamTaskTable } from "./team.sql"
 import { SessionTable } from "../session/session.sql"
 import { Config } from "../config/config"
+import { SessionID, MessageID, PartID } from "../session/schema"
 import {
   TeamEvent,
   MemberStatus as MemberStatusSchema,
@@ -749,7 +750,7 @@ export namespace Team {
       rules.push(...WRITE_TOOLS.map((tool) => ({ permission: tool, pattern: "*", action: "deny" as const })))
     }
 
-    const sessionID = Identifier.ascending("session")
+    const sessionID = SessionID.descending()
     let directory = Inst.directory
 
     if (input.agent.isolation === "worktree") {
@@ -850,7 +851,7 @@ export namespace Team {
       input.prompt,
     ].join("\n")
 
-    const msgId = Identifier.ascending("message")
+    const msgId = MessageID.ascending()
     await Session.updateMessage({
       id: msgId,
       sessionID: session.id,
@@ -860,7 +861,7 @@ export namespace Team {
       time: { created: Date.now() },
     })
     await Session.updatePart({
-      id: Identifier.ascending("part"),
+      id: PartID.ascending(),
       messageID: msgId,
       sessionID: session.id,
       type: "text",
@@ -1296,7 +1297,7 @@ export namespace Team {
         const lastUser = msgs.findLast((m) => m.info.role === "user")
         if (lastUser) {
           const info = lastUser.info as { agent: string; model: { providerID: string; modelID: string } }
-          const msgId = Identifier.ascending("message")
+          const msgId = MessageID.ascending()
           await Session.updateMessage({
             id: msgId,
             sessionID: team.leadSessionID,
@@ -1306,7 +1307,7 @@ export namespace Team {
             time: { created: Date.now() },
           })
           await Session.updatePart({
-            id: Identifier.ascending("part"),
+            id: PartID.ascending(),
             messageID: msgId,
             sessionID: team.leadSessionID,
             type: "text",

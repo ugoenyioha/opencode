@@ -13,5 +13,5 @@ export class PermissionID extends Newtype<PermissionID>()("PermissionID", Schema
     return this.makeUnsafe(Identifier.ascending("permission", id))
   }
 
-  static readonly zod = Identifier.schema("permission") as unknown as z.ZodType<PermissionID>
+  static readonly zod = z.string() as unknown as z.ZodType<PermissionID>
 }

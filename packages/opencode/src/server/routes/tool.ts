@@ -9,6 +9,7 @@ import { Hono } from "hono"
 import z from "zod"
 import { Config } from "@/config/config"
 import { Plugin } from "@/plugin"
+import { SessionID, MessageID, PartID } from "@/session/schema"
 
 const SENSITIVE_TOOLS = new Set([
   "bash",
@@ -67,7 +68,7 @@ export const ToolRoutes = lazy(() =>
     validator(
       "json",
       z.object({
-        sessionID: Identifier.schema("session"),
+        sessionID: SessionID.zod,
         args: z.record(z.string(), z.unknown()).optional(),
       }),
     ),
@@ -103,8 +104,8 @@ export const ToolRoutes = lazy(() =>
       const messages = await Session.messages({ sessionID: body.sessionID, limit: 100 })
       const result = await tool.execute((body.args ?? {}) as any, {
         sessionID: body.sessionID,
-        messageID: Identifier.ascending("message"),
-        callID: Identifier.ascending("part"),
+        messageID: MessageID.ascending(),
+        callID: PartID.ascending(),
         abort: c.req.raw.signal,
         extra: {},
         agent: "http",

@@ -10,6 +10,7 @@ import { Log } from "@/util/log"
 import { Wildcard } from "@/util/wildcard"
 import os from "os"
 import z from "zod"
+import { SessionID } from "../session/schema"
 
 export namespace PermissionNext {
   const log = Log.create({ service: "permission" })
@@ -67,8 +68,8 @@ export namespace PermissionNext {
 
   export const Request = z
     .object({
-      id: Identifier.schema("permission"),
-      sessionID: Identifier.schema("session"),
+      id: z.string(),
+      sessionID: SessionID.zod,
       permission: z.string(),
       patterns: z.string().array(),
       metadata: z.record(z.string(), z.any()),
@@ -162,7 +163,7 @@ export namespace PermissionNext {
 
   export const reply = fn(
     z.object({
-      requestID: Identifier.schema("permission"),
+      requestID: z.string(),
       reply: Reply,
       message: z.string().optional(),
     }),
