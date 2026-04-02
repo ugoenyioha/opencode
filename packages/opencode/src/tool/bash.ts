@@ -414,7 +414,6 @@ export const BashTool = Tool.define("bash", async () => {
         : commands.length > 0 && commands[0]
           ? commandArgs(commands[0])
           : []
-      console.log("BASH EXEC ARGS:", execArgs)
       if (execArgs.length === 0) {
         throw new Error("No command to execute")
       }

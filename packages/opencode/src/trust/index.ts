@@ -1,6 +1,7 @@
 import crypto from "crypto"
 import path from "path"
 import { Global } from "../global"
+import type { ProjectID } from "../project/schema"
 import { Filesystem } from "../util/filesystem"
 import { Log } from "../util/log"
 
@@ -18,7 +19,7 @@ export namespace Trust {
     return Filesystem.readJson<TrustRecord>(filepath()).catch(() => ({}))
   }
 
-  export function status(projectId: string) {
+  export function status(projectId: ProjectID) {
     if (process.env.NODE_ENV === "test") {
       // Allow tests to bypass trust by default, unless they specifically opt in by mocking
       if (!process.env.OPENCODE_TEST_ENFORCE_TRUST && !projectId.includes("enforce-trust")) {
@@ -28,7 +29,7 @@ export namespace Trust {
     return cache.get(projectId) ?? { approved: false, hash: "" }
   }
 
-  export async function ensure(projectId: string, hash: string, context?: Record<string, unknown>) {
+  export async function ensure(projectId: ProjectID, hash: string, context?: Record<string, unknown>) {
     if (process.env.NODE_ENV === "test") {
       const dir = context?.directory as string
       // If we are in a test and the directory is a tmpdir AND it doesn't contain "enforce-trust", auto-approve
@@ -50,7 +51,7 @@ export namespace Trust {
     return result
   }
 
-  export async function approve(projectId: string, hash: string): Promise<void> {
+  export async function approve(projectId: ProjectID, hash: string): Promise<void> {
     const data = await read()
     data[projectId] = hash
     await Filesystem.writeJson(filepath(), data)

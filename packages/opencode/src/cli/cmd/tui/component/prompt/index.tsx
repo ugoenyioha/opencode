@@ -9,7 +9,7 @@ import { EmptyBorder } from "@tui/component/border"
 import { useSDK } from "@tui/context/sdk"
 import { useRoute } from "@tui/context/route"
 import { useSync } from "@tui/context/sync"
-import { Identifier } from "@/id/id"
+import { MessageID, PartID } from "@/session/schema"
 import { createStore, produce } from "solid-js/store"
 import { useKeybind } from "@tui/context/keybind"
 import { usePromptHistory, type PromptInfo } from "./history"
@@ -636,7 +636,7 @@ export function Prompt(props: PromptProps) {
           const sessionID = await sdk.client.session.create({}).then((x) => x.data!.id)
           return sessionID
         })()
-    const messageID = Identifier.ascending("message")
+    const messageID = MessageID.ascending()
     // Expand pasted text inline before submitting
     const allExtmarks = input.extmarks.getAllForTypeId(promptPartTypeId)
     const sortedExtmarks = allExtmarks.sort((a: { start: number }, b: { start: number }) => b.start - a.start)
@@ -782,7 +782,7 @@ export function Prompt(props: PromptProps) {
         parts: nonTextParts
           .filter((x) => x.type === "file")
           .map((x) => ({
-            id: Identifier.ascending("part"),
+            id: PartID.ascending(),
             ...x,
           })),
       })
@@ -797,12 +797,12 @@ export function Prompt(props: PromptProps) {
           variant,
           parts: [
             {
-              id: Identifier.ascending("part"),
+              id: PartID.ascending(),
               type: "text",
               text: inputText,
             },
             ...nonTextParts.map((x) => ({
-              id: Identifier.ascending("part"),
+              id: PartID.ascending(),
               ...x,
             })),
           ],

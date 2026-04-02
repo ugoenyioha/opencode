@@ -94,15 +94,6 @@ export namespace SessionProcessor {
                       field: "text",
                       delta: value.text,
                     })
-                    // Emit reasoning chunk to stdout for live UI streaming
-                    if (value.text) {
-                      console.log(JSON.stringify({
-                        event: "llm.reasoning.chunk",
-                        ts: new Date().toISOString(),
-                        agent: streamInput.agent.name,
-                        text: value.text,
-                      }))
-                    }
                   }
                   break
 

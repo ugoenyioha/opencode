@@ -9,7 +9,7 @@ import { MessageV2 } from "@/session/message-v2"
 import { Agent } from "@/agent/agent"
 import { Provider } from "@/provider/provider"
 import { LLM } from "@/session/llm"
-import { Identifier } from "@/id/id"
+import { MessageID } from "@/session/schema"
 
 export function DialogBtw(props: { sessionID: string; question: string }) {
   const dialog = useDialog()
@@ -50,7 +50,7 @@ export function DialogBtw(props: { sessionID: string; question: string }) {
         const agent = await Agent.get(local.agent.current().name)
         if (!agent) throw new Error("Agent not found")
         const user = {
-          id: Identifier.ascending("message"),
+          id: MessageID.ascending(),
           sessionID: props.sessionID,
           role: "user",
           agent: agent.name,

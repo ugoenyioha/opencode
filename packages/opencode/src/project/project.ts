@@ -16,8 +16,9 @@ import { git } from "../util/git"
 import { Glob } from "../util/glob"
 import crypto from "crypto"
 import { which } from "../util/which"
+import { ProjectID, type ProjectID as ProjectIDType } from "./schema"
 
-const GLOBAL_PROJECT_ID = "global"
+const GLOBAL_PROJECT_ID = ProjectID.global
 
 export namespace Project {
   const log = Log.create({ service: "project" })
@@ -36,13 +37,13 @@ export namespace Project {
 
   function readCachedId(dir: string) {
     return Filesystem.readText(path.join(dir, "opencode"))
-      .then((x) => x.trim())
+      .then((x) => ProjectID.make(x.trim()))
       .catch(() => undefined)
   }
 
   export const Info = z
     .object({
-      id: z.string(),
+      id: ProjectID.zod,
       worktree: z.string(),
       vcs: z.literal("git").optional(),
       name: z.string().optional(),
@@ -101,7 +102,8 @@ export namespace Project {
     log.info("fromDirectory", { directory })
 
     const data = await iife(async () => {
-      const getLocalId = (dir: string) => `local_${crypto.createHash("sha256").update(dir).digest("hex").slice(0, 16)}`
+      const getLocalId = (dir: string) =>
+        ProjectID.make(`local_${crypto.createHash("sha256").update(dir).digest("hex").slice(0, 16)}`)
 
       const matches = Filesystem.up({ targets: [".git"], start: directory })
       const dotgit = await matches.next().then((x) => x.value)
@@ -172,7 +174,7 @@ export namespace Project {
             }
           }
 
-          id = roots[0]
+          id = roots[0] ? ProjectID.make(roots[0]) : undefined
           if (id) {
             await Filesystem.write(path.join(dotgit, "opencode"), id).catch(() => undefined)
           }
@@ -314,7 +316,7 @@ export namespace Project {
     return
   }
 
-  async function migrateFromGlobal(id: string, worktree: string) {
+  async function migrateFromGlobal(id: ProjectIDType, worktree: string) {
     const row = Database.use((db) => db.select().from(ProjectTable).where(eq(ProjectTable.id, GLOBAL_PROJECT_ID)).get())
     if (!row) return
 
@@ -336,7 +338,7 @@ export namespace Project {
     })
   }
 
-  export function setInitialized(id: string) {
+  export function setInitialized(id: ProjectIDType) {
     Database.use((db) =>
       db
         .update(ProjectTable)
@@ -358,7 +360,7 @@ export namespace Project {
     )
   }
 
-  export function get(id: string): Info | undefined {
+  export function get(id: ProjectIDType): Info | undefined {
     const row = Database.use((db) => db.select().from(ProjectTable).where(eq(ProjectTable.id, id)).get())
     if (!row) return undefined
     return fromRow(row)
@@ -381,7 +383,7 @@ export namespace Project {
 
   export const update = fn(
     z.object({
-      projectID: z.string(),
+      projectID: ProjectID.zod,
       name: z.string().optional(),
       icon: Info.shape.icon.optional(),
       commands: Info.shape.commands.optional(),
@@ -413,7 +415,7 @@ export namespace Project {
     },
   )
 
-  export async function sandboxes(id: string) {
+  export async function sandboxes(id: ProjectIDType) {
     const row = Database.use((db) => db.select().from(ProjectTable).where(eq(ProjectTable.id, id)).get())
     if (!row) return []
     const data = fromRow(row)
@@ -425,7 +427,7 @@ export namespace Project {
     return valid
   }
 
-  export async function addSandbox(id: string, directory: string) {
+  export async function addSandbox(id: ProjectIDType, directory: string) {
     const row = Database.use((db) => db.select().from(ProjectTable).where(eq(ProjectTable.id, id)).get())
     if (!row) throw new Error(`Project not found: ${id}`)
     const sandboxes = [...row.sandboxes]
@@ -449,7 +451,7 @@ export namespace Project {
     return data
   }
 
-  export async function removeSandbox(id: string, directory: string) {
+  export async function removeSandbox(id: ProjectIDType, directory: string) {
     const row = Database.use((db) => db.select().from(ProjectTable).where(eq(ProjectTable.id, id)).get())
     if (!row) throw new Error(`Project not found: ${id}`)
     const sandboxes = row.sandboxes.filter((s) => s !== directory)
