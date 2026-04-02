@@ -3,7 +3,7 @@ import { createClient } from "./gen/client/client.gen.js"
 import { createRemoteFetch, importRemoteKey } from "../remote.js"
 import type { Config as ConfigV2 } from "./gen/client/types.gen.js"
 
-export { importRemoteKey }
+export { importRemoteKey, createRemoteFetch }
 
 export type RemoteClientConfigV2 = ConfigV2 & {
   relayUrl: string

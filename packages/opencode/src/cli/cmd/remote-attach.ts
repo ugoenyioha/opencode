@@ -2,8 +2,11 @@ import { cmd } from "./cmd"
 import { Log } from "../../util/log"
 import { UI } from "../ui"
 import { URL } from "url"
-// @ts-expect-error — fork-only module not in upstream SDK types
-import { createRemoteClient, importRemoteKey } from "@opencode-ai/sdk/v2/remote"
+import { createRemoteFetch, importRemoteKey } from "@opencode-ai/sdk/v2/remote"
+import { tui } from "./tui/app"
+import { win32DisableProcessedInput, win32InstallCtrlCGuard } from "./tui/win32"
+import { TuiConfig } from "../../config/tui"
+import { Instance } from "../../project/instance"
 
 export const RemoteAttachCommand = cmd({
   command: "remote-attach <url>",
@@ -12,17 +15,20 @@ export const RemoteAttachCommand = cmd({
     yargs.positional("url", {
       type: "string",
       demandOption: true,
-      describe: "The Remote Control URL (e.g. https://viewer.opencode.dev/remote?relay=...)",
+      describe: "The Remote Control URL (e.g. https://viewer.opencode.dev/remote?relay=...#key=...)",
     }),
   handler: async (args) => {
     const log = Log.create({ service: "remote-attach" })
-    UI.println(UI.Style.TEXT_INFO + "Connecting to Remote OpenCode Session..." + UI.Style.TEXT_NORMAL)
+    const unguard = win32InstallCtrlCGuard()
 
     try {
-      // 1. Parse the URL and extract the connection parameters
+      win32DisableProcessedInput()
+
+      UI.println(UI.Style.TEXT_INFO + "Connecting to Remote OpenCode Session..." + UI.Style.TEXT_NORMAL)
+
+      // 1. Parse the URL and extract connection parameters
       const parsedUrl = new URL(args.url)
 
-      // Hash isn't normally passed to server, but it might be in the CLI argument string
       const hashMatch = args.url.match(/#key=(.+)/)
       const keyBase64 = hashMatch ? hashMatch[1] : null
 
@@ -37,10 +43,9 @@ export const RemoteAttachCommand = cmd({
         throw new Error("URL is missing 'relay' or 'session' query parameters.")
       }
 
-      UI.println(UI.Style.TEXT_DIM + `Relay: ${relayUrl}` + UI.Style.TEXT_NORMAL)
-      UI.println(UI.Style.TEXT_DIM + `Session: ${sessionId}` + UI.Style.TEXT_NORMAL)
+      log.info("connecting", { relay: relayUrl, session: sessionId })
 
-      // 2. Exchange the anonymous request for a Viewer JWT
+      // 2. Exchange anonymous request for a Viewer JWT
       const joinRes = await fetch(`${relayUrl}/api/session/join`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -53,9 +58,9 @@ export const RemoteAttachCommand = cmd({
 
       const { token } = await (joinRes.json() as Promise<{ token: string }>)
 
-      // 3. Initialize the Remote SDK client
+      // 3. Create E2E encrypted remote fetch
       const encryptionKey = await importRemoteKey(keyBase64)
-      const sdk = createRemoteClient({
+      const remoteFetch = createRemoteFetch({
         relayUrl,
         sessionId,
         token,
@@ -63,21 +68,29 @@ export const RemoteAttachCommand = cmd({
         fetch: globalThis.fetch,
       })
 
-      UI.println(
-        UI.Style.TEXT_SUCCESS + "Successfully authenticated and established E2E bridge." + UI.Style.TEXT_NORMAL,
-      )
-      UI.println(UI.Style.TEXT_INFO + "Waiting for state sync... (TUI integration pending)" + UI.Style.TEXT_NORMAL)
+      log.info("connected", { session: sessionId })
 
-      // 4. Hook up the TUI
-      // In a real implementation, we would now initialize the standard OpenCode Ink TUI
-      // and pipe the SSE events and `sdk.session.prompt()` calls over the SDK client,
-      // exactly like how the local `opencode session` command works.
+      // 4. Resolve local TUI config
+      const config = await Instance.provide({
+        directory: process.cwd(),
+        fn: () => TuiConfig.get(),
+      })
 
-      // For now, we will just keep the connection alive
-      await new Promise(() => {})
+      // 5. Launch TUI with remote fetch — all API calls and SSE events
+      //    are transparently proxied over the encrypted WebSocket tunnel
+      await tui({
+        url: "http://remote.opencode.internal",
+        fetch: remoteFetch,
+        config,
+        args: {
+          continue: true,
+        },
+      })
     } catch (e) {
       UI.error((e as Error).message)
       process.exit(1)
+    } finally {
+      unguard?.()
     }
   },
 })
