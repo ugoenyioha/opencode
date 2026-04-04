@@ -50,6 +50,8 @@ import {
   TeamShutdownTool,
   TeamCleanupTool,
   TeamStatusTool,
+  TeamModeSetTool,
+  TeamPermissionResponseTool,
 } from "./team"
 import { TeamWaitTool } from "./team_wait"
 import { Glob } from "../util/glob"
@@ -310,6 +312,8 @@ export namespace ToolRegistry {
             TeamCleanupTool,
             TeamStatusTool,
             TeamWaitTool,
+            TeamModeSetTool,
+            TeamPermissionResponseTool,
           ]
         : []),
       ...custom,

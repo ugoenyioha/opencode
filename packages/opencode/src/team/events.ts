@@ -1,6 +1,123 @@
 import z from "zod"
 import { BusEvent } from "../bus/bus-event"
 
+// ---------------------------------------------------------------------------
+// Structured Message Protocol
+// ---------------------------------------------------------------------------
+// All team messages flow through the same inbox + inject path, but protocol
+// messages carry a typed `structured` payload in addition to a human-readable
+// `text` summary. This lets recipients route on type without regex-parsing
+// plain text, while still giving the model readable context.
+//
+// Wire format stored in TeamMessageTable.content:
+//   Plain message : the text itself (no JSON wrapper)
+//   Structured    : JSON string of StructuredEnvelope
+// ---------------------------------------------------------------------------
+
+export const StructuredEnvelopeSchema = z.object({
+  /** Discriminator — always present so recipients can detect structured messages */
+  __structured: z.literal(true),
+  /** The typed payload */
+  msg: z.discriminatedUnion("type", [
+    // Shutdown handshake ------------------------------------------------
+    z.object({
+      type: z.literal("shutdown_request"),
+      request_id: z.string(),
+      reason: z.string().optional(),
+    }),
+    z.object({
+      type: z.literal("shutdown_response"),
+      request_id: z.string(),
+      approve: z.boolean(),
+      reason: z.string().optional(),
+    }),
+
+    // Plan approval handshake -------------------------------------------
+    z.object({
+      type: z.literal("plan_approval_request"),
+      request_id: z.string(),
+      /** The plan text the teammate wants approved */
+      plan: z.string(),
+    }),
+    z.object({
+      type: z.literal("plan_approval_response"),
+      request_id: z.string(),
+      approve: z.boolean(),
+      feedback: z.string().optional(),
+    }),
+
+    // Permission request (teammate asks lead to allow a tool) -----------
+    z.object({
+      type: z.literal("permission_request"),
+      request_id: z.string(),
+      tool_name: z.string(),
+      /** JSON-serialised tool input so the lead can review it */
+      tool_input: z.string(),
+    }),
+    z.object({
+      type: z.literal("permission_response"),
+      request_id: z.string(),
+      allow: z.boolean(),
+      reason: z.string().optional(),
+    }),
+
+    // Permission mode change (lead pushes new mode to all teammates) ----
+    z.object({
+      type: z.literal("mode_set"),
+      mode: z.enum(["default", "plan", "auto", "acceptEdits"]),
+    }),
+
+    // Lifecycle notifications (one-way, no response needed) -------------
+    z.object({
+      type: z.literal("idle_notification"),
+      summary: z.string(),
+      /** Why the loop ended */
+      idle_reason: z.enum(["completed", "cancelled", "waiting"]),
+    }),
+    z.object({
+      type: z.literal("task_assignment"),
+      task_id: z.string(),
+      content: z.string(),
+      assigned_by: z.string(),
+    }),
+  ]),
+  /** Human-readable summary rendered into the model's context */
+  text: z.string(),
+})
+
+export type StructuredEnvelope = z.infer<typeof StructuredEnvelopeSchema>
+export type StructuredMessage = StructuredEnvelope["msg"]
+export type StructuredMessageType = StructuredMessage["type"]
+
+/** Returns true if the raw inbox content is a structured protocol message */
+export function isStructuredContent(content: string): boolean {
+  if (!content.startsWith("{")) return false
+  try {
+    const parsed = JSON.parse(content)
+    return parsed.__structured === true
+  } catch {
+    return false
+  }
+}
+
+/** Parse raw inbox content into a StructuredEnvelope, or null if it's plain text */
+export function parseStructuredContent(content: string): StructuredEnvelope | null {
+  if (!isStructuredContent(content)) return null
+  const result = StructuredEnvelopeSchema.safeParse(JSON.parse(content))
+  return result.success ? result.data : null
+}
+
+/** Serialize a structured message to the wire format stored in the inbox */
+export function encodeStructured(msg: StructuredMessage, text: string): string {
+  const envelope: StructuredEnvelope = { __structured: true, msg, text }
+  return JSON.stringify(envelope)
+}
+
+/** Generate a unique request ID for handshake messages */
+export function newRequestId(): string {
+  return `req_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+}
+
 /**
  * Member lifecycle status.
  * Transitions: ready -> busy -> shutdown_requested -> shutdown; any -> error -> ready.
@@ -204,6 +321,50 @@ export namespace TeamEvent {
       teamName: z.string(),
       leadSessionID: z.string().nullable(),
       delegate: z.boolean(),
+    }),
+  )
+
+  /** Fired when a structured protocol message is sent (shutdown/plan/permission/mode) */
+  export const StructuredMessageSent = BusEvent.define(
+    "team.structured_message",
+    z.object({
+      teamName: z.string(),
+      from: z.string(),
+      to: z.string(),
+      messageType: z.string(),
+      requestId: z.string().optional(),
+    }),
+  )
+
+  /** Fired when a permission request arrives from a teammate at the lead */
+  export const PermissionRequest = BusEvent.define(
+    "team.permission.request",
+    z.object({
+      teamName: z.string(),
+      memberName: z.string(),
+      requestId: z.string(),
+      toolName: z.string(),
+      toolInput: z.string(),
+    }),
+  )
+
+  /** Fired when the lead responds to a teammate's permission request */
+  export const PermissionResponse = BusEvent.define(
+    "team.permission.response",
+    z.object({
+      teamName: z.string(),
+      memberName: z.string(),
+      requestId: z.string(),
+      allow: z.boolean(),
+    }),
+  )
+
+  /** Fired when the lead pushes a permission mode change to all teammates */
+  export const ModeSet = BusEvent.define(
+    "team.mode.set",
+    z.object({
+      teamName: z.string(),
+      mode: z.string(),
     }),
   )
 }

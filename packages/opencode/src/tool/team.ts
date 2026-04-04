@@ -7,7 +7,7 @@ import { Session } from "../session"
 import { Agent } from "../agent/agent"
 import { Provider } from "../provider/provider"
 import { Bus } from "../bus"
-import { TeamEvent } from "../team/events"
+import { TeamEvent, newRequestId } from "../team/events"
 import { Config } from "../config/config"
 
 /**
@@ -276,28 +276,143 @@ export const TeamSpawnTool = Tool.define("team_spawn", {
 })
 
 /**
- * Send a message to a specific teammate or the lead.
+ * Send a direct message to a teammate or the lead.
+ * Supports both plain text and typed structured protocol messages.
  */
 export const TeamMessageTool = Tool.define("team_message", {
   description:
     "Send a message to a specific teammate or the team lead. " +
     "Use this to share findings, ask questions, or coordinate work. " +
+    "For protocol interactions (shutdown handshake, plan approval, permission responses), " +
+    "pass a `structured` payload instead of (or alongside) `text`. " +
     "Note: task subagents cannot use this tool — only teammates and the lead.",
   parameters: z.object({
     to: z.string().describe("Name of the recipient teammate, or 'lead' to message the team lead"),
-    text: z.string().describe("The message content"),
+    text: z.string().optional().describe("Free-form message content (plain text coordination)"),
+    structured: z
+      .object({
+        type: z
+          .enum([
+            "shutdown_request",
+            "shutdown_response",
+            "plan_approval_request",
+            "plan_approval_response",
+            "permission_request",
+            "permission_response",
+            "mode_set",
+            "idle_notification",
+            "task_assignment",
+          ])
+          .describe("Protocol message type"),
+        request_id: z.string().optional().describe("Request ID — echo back from the original request when responding"),
+        reason: z.string().optional(),
+        approve: z.boolean().optional().describe("For shutdown_response and plan_approval_response"),
+        feedback: z.string().optional().describe("For plan_approval_response rejections"),
+        plan: z.string().optional().describe("For plan_approval_request — the plan text to be reviewed"),
+        tool_name: z.string().optional().describe("For permission_request"),
+        tool_input: z.string().optional().describe("For permission_request — JSON-serialised tool input"),
+        allow: z.boolean().optional().describe("For permission_response"),
+        mode: z
+          .enum(["default", "plan", "auto", "acceptEdits"])
+          .optional()
+          .describe("For mode_set — the new permission mode"),
+        summary: z.string().optional().describe("For idle_notification"),
+        idle_reason: z
+          .enum(["completed", "cancelled", "waiting"])
+          .optional()
+          .describe("For idle_notification"),
+        task_id: z.string().optional().describe("For task_assignment"),
+        content: z.string().optional().describe("For task_assignment — task content"),
+        assigned_by: z.string().optional().describe("For task_assignment"),
+      })
+      .optional()
+      .describe("Typed protocol message — use for structured handshakes instead of plain text conventions"),
   }),
   async execute(params, ctx): Promise<{ title: string; output: string; metadata: Record<string, any> }> {
     const teamInfo = await Team.findBySession(ctx.sessionID)
     if (!teamInfo) {
-      return {
-        title: "Error",
-        output: "You are not part of any team.",
-        metadata: {},
-      }
+      return { title: "Error", output: "You are not part of any team.", metadata: {} }
     }
 
     const fromName = teamInfo.role === "lead" ? "lead" : teamInfo.memberName!
+
+    if (params.structured) {
+      const s = params.structured
+      // Build the typed StructuredMessage from the flat params
+      let msg: Parameters<typeof TeamMessaging.sendStructured>[0]["msg"]
+
+      switch (s.type) {
+        case "shutdown_request":
+          msg = { type: "shutdown_request", request_id: s.request_id ?? newRequestId(), reason: s.reason }
+          break
+        case "shutdown_response":
+          if (s.request_id === undefined || s.approve === undefined)
+            return { title: "Error", output: "shutdown_response requires request_id and approve fields.", metadata: {} }
+          msg = { type: "shutdown_response", request_id: s.request_id, approve: s.approve, reason: s.reason }
+          break
+        case "plan_approval_request":
+          if (!s.plan)
+            return { title: "Error", output: "plan_approval_request requires a plan field.", metadata: {} }
+          msg = { type: "plan_approval_request", request_id: s.request_id ?? newRequestId(), plan: s.plan }
+          break
+        case "plan_approval_response":
+          if (s.request_id === undefined || s.approve === undefined)
+            return { title: "Error", output: "plan_approval_response requires request_id and approve fields.", metadata: {} }
+          msg = { type: "plan_approval_response", request_id: s.request_id, approve: s.approve, feedback: s.feedback }
+          break
+        case "permission_request":
+          if (!s.tool_name || !s.tool_input)
+            return { title: "Error", output: "permission_request requires tool_name and tool_input fields.", metadata: {} }
+          msg = {
+            type: "permission_request",
+            request_id: s.request_id ?? newRequestId(),
+            tool_name: s.tool_name,
+            tool_input: s.tool_input,
+          }
+          break
+        case "permission_response":
+          if (s.request_id === undefined || s.allow === undefined)
+            return { title: "Error", output: "permission_response requires request_id and allow fields.", metadata: {} }
+          msg = { type: "permission_response", request_id: s.request_id, allow: s.allow, reason: s.reason }
+          break
+        case "mode_set":
+          if (!s.mode)
+            return { title: "Error", output: "mode_set requires a mode field.", metadata: {} }
+          msg = { type: "mode_set", mode: s.mode }
+          break
+        case "idle_notification":
+          if (!s.summary || !s.idle_reason)
+            return { title: "Error", output: "idle_notification requires summary and idle_reason fields.", metadata: {} }
+          msg = { type: "idle_notification", summary: s.summary, idle_reason: s.idle_reason }
+          break
+        case "task_assignment":
+          if (!s.task_id || !s.content || !s.assigned_by)
+            return { title: "Error", output: "task_assignment requires task_id, content, and assigned_by fields.", metadata: {} }
+          msg = { type: "task_assignment", task_id: s.task_id, content: s.content, assigned_by: s.assigned_by }
+          break
+        default:
+          return { title: "Error", output: `Unknown structured message type: ${(s as { type: string }).type}`, metadata: {} }
+      }
+
+      const inboxId = await TeamMessaging.sendStructured({
+        teamName: teamInfo.team.name,
+        from: fromName,
+        to: params.to,
+        msg,
+        text: params.text,
+      })
+
+      return {
+        title: `[${s.type}] sent to ${params.to}`,
+        output: `Structured message (${s.type}) delivered to "${params.to}".`,
+        metadata: { to: params.to, type: s.type, inboxId },
+      }
+    }
+
+    // Plain text path
+    if (!params.text) {
+      return { title: "Error", output: "Either text or structured must be provided.", metadata: {} }
+    }
 
     await TeamMessaging.send({
       teamName: teamInfo.team.name,
@@ -813,6 +928,111 @@ export const TeamStatusTool = Tool.define("team_status", {
         tasksCompleted: completed,
         unread: unread.length,
       },
+    }
+  },
+})
+
+/**
+ * Set the permission mode for all active teammates simultaneously.
+ * Broadcasts a structured mode_set message so every teammate transitions
+ * to the new mode on their next turn — equivalent to Claude Code's
+ * TeamsDialog Shift+Tab "cycle all modes" feature.
+ */
+export const TeamModeSetTool = Tool.define("team_mode_set", {
+  description:
+    "Set the permission mode for all active teammates simultaneously. " +
+    "Useful when you want to move the whole team from plan mode into implementation mode, " +
+    "or lock everything back down. Broadcasts a structured mode_set message that each " +
+    "teammate processes on their next turn. Only the team lead can call this.",
+  parameters: z.object({
+    mode: z
+      .enum(["default", "plan", "auto", "acceptEdits"])
+      .describe(
+        "The permission mode to set for all teammates:\n" +
+          "  default     — normal permissions, tools require confirmation\n" +
+          "  plan        — read-only mode, teammates plan but cannot write/execute\n" +
+          "  auto        — full autonomy, no confirmations required\n" +
+          "  acceptEdits — auto-accept file edits but prompt on other tools",
+      ),
+  }),
+  async execute(params, ctx): Promise<{ title: string; output: string; metadata: Record<string, any> }> {
+    const teamInfo = await Team.findBySession(ctx.sessionID)
+    if (!teamInfo || teamInfo.role !== "lead") {
+      return { title: "Error", output: "Only the team lead can set teammate modes.", metadata: {} }
+    }
+
+    const team = await Team.get(teamInfo.team.name)
+    if (!team) return { title: "Error", output: "Team not found.", metadata: {} }
+
+    const activeMembers = team.members.filter((m) => m.status !== "shutdown")
+    if (activeMembers.length === 0) {
+      return { title: "No active teammates", output: "No active teammates to update.", metadata: {} }
+    }
+
+    await TeamMessaging.broadcastStructured({
+      teamName: teamInfo.team.name,
+      from: "lead",
+      msg: { type: "mode_set", mode: params.mode },
+    })
+
+    return {
+      title: `Mode set to ${params.mode}`,
+      output: [
+        `Permission mode "${params.mode}" broadcast to ${activeMembers.length} active teammate(s).`,
+        "Each teammate will apply the new mode on their next turn.",
+        "",
+        "Modes:",
+        "  default     — normal tool confirmations",
+        "  plan        — read-only, no writes/execution",
+        "  auto        — full autonomy, no prompts",
+        "  acceptEdits — auto-accept file edits",
+      ].join("\n"),
+      metadata: { mode: params.mode, notified: activeMembers.length },
+    }
+  },
+})
+
+/**
+ * Approve or deny a teammate's permission request.
+ * When a teammate encounters a tool in "ask" mode, they send a permission_request
+ * structured message to the lead. The lead uses this tool to respond.
+ */
+export const TeamPermissionResponseTool = Tool.define("team_permission_response", {
+  description:
+    "Approve or deny a teammate's permission request. " +
+    "When a teammate needs to use a tool that requires confirmation, they send you a " +
+    "permission_request message with a request_id. Use this tool to approve or deny it. " +
+    "The teammate will resume execution immediately after receiving your response. " +
+    "Only the team lead should call this.",
+  parameters: z.object({
+    to: z.string().describe("Teammate name to send the response to"),
+    request_id: z.string().describe("The request_id from the permission_request message"),
+    allow: z.boolean().describe("Whether to allow (true) or deny (false) the tool use"),
+    reason: z.string().optional().describe("Optional explanation for the decision"),
+  }),
+  async execute(params, ctx): Promise<{ title: string; output: string; metadata: Record<string, any> }> {
+    const teamInfo = await Team.findBySession(ctx.sessionID)
+    if (!teamInfo || teamInfo.role !== "lead") {
+      return { title: "Error", output: "Only the team lead can respond to permission requests.", metadata: {} }
+    }
+
+    await TeamMessaging.sendStructured({
+      teamName: teamInfo.team.name,
+      from: "lead",
+      to: params.to,
+      msg: {
+        type: "permission_response",
+        request_id: params.request_id,
+        allow: params.allow,
+        reason: params.reason,
+      },
+    })
+
+    const decision = params.allow ? "ALLOWED" : "DENIED"
+    return {
+      title: `Permission ${decision} for ${params.to}`,
+      output: `Permission ${decision} for ${params.to} (request ${params.request_id}).${params.reason ? ` Reason: ${params.reason}` : ""} The teammate will resume immediately.`,
+      metadata: { to: params.to, request_id: params.request_id, allow: params.allow },
     }
   },
 })

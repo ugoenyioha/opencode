@@ -7,6 +7,13 @@ import { Identifier } from "../id/id"
 import { Team, TeamEvent } from "./index"
 import { Inbox } from "./inbox"
 import { MessageID, PartID } from "../session/schema"
+import {
+  type StructuredMessage,
+  type StructuredEnvelope,
+  parseStructuredContent,
+  encodeStructured,
+  newRequestId,
+} from "./events"
 
 const log = Log.create({ service: "team.messaging" })
 const MAX_TEXT = 10 * 1024
@@ -16,6 +23,39 @@ function validateText(text: string) {
   throw new Error(`Team message too large (${text.length} chars). Maximum is ${MAX_TEXT} chars.`)
 }
 
+/**
+ * Render a structured message into human-readable text for injection into
+ * the model's context. The model sees this text — it never sees the raw JSON.
+ */
+function renderStructuredForModel(envelope: StructuredEnvelope): string {
+  const { msg } = envelope
+  switch (msg.type) {
+    case "shutdown_request":
+      return `[Shutdown request] Please wrap up your current work and shut down. Reason: ${msg.reason ?? "requested by lead"}. Respond with team_message({ type: "shutdown_response", request_id: "${msg.request_id}", approve: true }).`
+    case "shutdown_response":
+      return `[Shutdown ${msg.approve ? "accepted" : "rejected"}] request_id: ${msg.request_id}${msg.reason ? `. Reason: ${msg.reason}` : ""}`
+    case "plan_approval_request":
+      return `[Plan approval request] request_id: ${msg.request_id}\n\nPlan submitted for review:\n${msg.plan}`
+    case "plan_approval_response":
+      return msg.approve
+        ? `[Plan approved] request_id: ${msg.request_id}. You now have full write access. Proceed with implementation.`
+        : `[Plan rejected] request_id: ${msg.request_id}. Feedback: ${msg.feedback ?? "Please revise your plan."}`
+    case "permission_request":
+      return `[Permission request] request_id: ${msg.request_id}\nTool: ${msg.tool_name}\nInput: ${msg.tool_input}\n\nApprove or deny with team_message({ type: "permission_response", request_id: "${msg.request_id}", allow: true/false }).`
+    case "permission_response":
+      return `[Permission ${msg.allow ? "granted" : "denied"}] request_id: ${msg.request_id}${msg.reason ? `. ${msg.reason}` : ""}`
+    case "mode_set":
+      return `[Permission mode changed to: ${msg.mode}]`
+    case "idle_notification":
+      return `[Teammate idle — reason: ${msg.idle_reason}] ${msg.summary}`
+    case "task_assignment":
+      return `[Task assigned] ID: ${msg.task_id}\n${msg.content}\n(assigned by ${msg.assigned_by})`
+    default:
+      // Fallthrough for unknown types — surface the text field
+      return envelope.text
+  }
+}
+
 function messageId(): string {
   return `im_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
 }
@@ -23,42 +63,41 @@ function messageId(): string {
 /**
  * High-level messaging layer. Writes to inbox (source of truth),
  * injects synthetic user messages into sessions (delivery), and auto-wakes idle recipients.
+ *
+ * Supports two message modes:
+ *   Plain text  — send()/broadcast(): free-form coordination messages
+ *   Structured  — sendStructured(): typed protocol messages (shutdown, plan approval,
+ *                 permission request/response, mode change, notifications)
  */
 export namespace TeamMessaging {
   /** Get unread messages for a session's team participant */
-  export async function pending(sessionID: string): Promise<Array<{ id: string; from: string; text: string }>> {
+  export async function pending(sessionID: string): Promise<Array<{ id: string; from: string; text: string; structured?: StructuredEnvelope }>> {
     const info = await Team.findBySession(sessionID)
     if (!info) return []
     const name = info.role === "lead" ? "lead" : info.memberName!
     const unread = await Inbox.unread(info.team.name, name)
-    return unread.map((item) => ({ id: item.id, from: item.from, text: item.text }))
+    return unread.map((item) => {
+      const envelope = parseStructuredContent(item.text)
+      return {
+        id: item.id,
+        from: item.from,
+        // Always return model-renderable text; caller may also inspect `structured`
+        text: envelope ? renderStructuredForModel(envelope) : item.text,
+        structured: envelope ?? undefined,
+      }
+    })
   }
 
   /**
-   * Send a message from one team member to another.
-   * Writes to the recipient's inbox (source of truth), then injects
-   * a synthetic user message into their session (delivery mechanism),
-   * then auto-wakes if idle.
+   * Send a plain-text message from one team member to another.
    */
   export async function send(input: { teamName: string; from: string; to: string; text: string }): Promise<void> {
     validateText(input.text)
     const team = await Team.get(input.teamName)
     if (!team) throw new Error(`Team "${input.teamName}" not found`)
 
-    // Find recipient session
-    let targetSessionID: string | undefined
-    if (input.to === "lead") {
-      targetSessionID = team.leadSessionID ?? undefined
-    } else {
-      const member = team.members.find((m) => m.name === input.to)
-      if (!member) throw new Error(`Member "${input.to}" not found in team "${input.teamName}"`)
-      if (member.status === "shutdown") throw new Error(`Member "${input.to}" has shut down`)
-      targetSessionID = member.sessionID
-    }
+    const targetSessionID = resolveRecipientSession(team, input.to)
 
-    if (!targetSessionID) throw new Error(`Could not find session for "${input.to}"`)
-
-    // Write to inbox (source of truth)
     const inboxId = messageId()
     await Inbox.write(input.teamName, input.to, {
       id: inboxId,
@@ -67,7 +106,6 @@ export namespace TeamMessaging {
       timestamp: Date.now(),
     })
 
-    // Inject into session (delivery mechanism), tagged with inbox ID for dedup
     await injectMessage(targetSessionID, input.from, input.text, inboxId)
     Team.touch(input.teamName)
 
@@ -79,9 +117,168 @@ export namespace TeamMessaging {
       text: input.text,
     })
 
-    // Auto-wake: if the recipient session is idle, start its prompt loop
-    // so the LLM processes the injected message.
     autoWake(targetSessionID, input.from, input.text)
+  }
+
+  /**
+   * Send a typed structured protocol message from one team member to another.
+   * The message is stored as a JSON envelope in the inbox, but the model
+   * always sees a human-readable rendering (never raw JSON).
+   *
+   * Use this for all protocol interactions:
+   *   shutdown_request / shutdown_response
+   *   plan_approval_request / plan_approval_response
+   *   permission_request / permission_response
+   *   mode_set
+   *   idle_notification / task_assignment
+   */
+  export async function sendStructured(input: {
+    teamName: string
+    from: string
+    to: string
+    msg: StructuredMessage
+    /** Optional override for the human-readable text; auto-generated if omitted */
+    text?: string
+  }): Promise<string> {
+    const team = await Team.get(input.teamName)
+    if (!team) throw new Error(`Team "${input.teamName}" not found`)
+
+    const envelope: StructuredEnvelope = {
+      __structured: true,
+      msg: input.msg,
+      text: input.text ?? renderStructuredForModel({ __structured: true, msg: input.msg, text: "" }),
+    }
+
+    const wireContent = encodeStructured(input.msg, envelope.text)
+    validateText(wireContent)
+
+    const targetSessionID = resolveRecipientSession(team, input.to)
+    const inboxId = messageId()
+
+    await Inbox.write(input.teamName, input.to, {
+      id: inboxId,
+      from: input.from,
+      // Store the full JSON envelope as the inbox content
+      text: wireContent,
+      timestamp: Date.now(),
+    })
+
+    // Inject the model-readable rendering (not the raw JSON) into the session
+    await injectMessage(targetSessionID, input.from, envelope.text, inboxId)
+    Team.touch(input.teamName)
+
+    // Publish typed bus events for structured protocol messages
+    const requestId = "request_id" in input.msg ? (input.msg as { request_id: string }).request_id : undefined
+    await Bus.publish(TeamEvent.StructuredMessageSent, {
+      teamName: input.teamName,
+      from: input.from,
+      to: input.to,
+      messageType: input.msg.type,
+      requestId,
+    })
+
+    // Publish domain-specific events for routing
+    if (input.msg.type === "permission_request") {
+      await Bus.publish(TeamEvent.PermissionRequest, {
+        teamName: input.teamName,
+        memberName: input.from,
+        requestId: input.msg.request_id,
+        toolName: input.msg.tool_name,
+        toolInput: input.msg.tool_input,
+      })
+    } else if (input.msg.type === "permission_response") {
+      await Bus.publish(TeamEvent.PermissionResponse, {
+        teamName: input.teamName,
+        memberName: input.to,
+        requestId: input.msg.request_id,
+        allow: input.msg.allow,
+      })
+    } else if (input.msg.type === "mode_set") {
+      await Bus.publish(TeamEvent.ModeSet, {
+        teamName: input.teamName,
+        mode: input.msg.mode,
+      })
+    }
+
+    log.info("structured message sent", {
+      teamName: input.teamName,
+      from: input.from,
+      to: input.to,
+      type: input.msg.type,
+    })
+
+    autoWake(targetSessionID, input.from, envelope.text)
+    return inboxId
+  }
+
+  /**
+   * Broadcast a structured message to all non-shutdown members except the sender.
+   * Used for mode_set (lead pushes permission mode to all teammates simultaneously).
+   */
+  export async function broadcastStructured(input: {
+    teamName: string
+    from: string
+    msg: StructuredMessage
+    text?: string
+  }): Promise<void> {
+    const team = await Team.get(input.teamName)
+    if (!team) throw new Error(`Team "${input.teamName}" not found`)
+
+    const envelope: StructuredEnvelope = {
+      __structured: true,
+      msg: input.msg,
+      text: input.text ?? renderStructuredForModel({ __structured: true, msg: input.msg, text: "" }),
+    }
+
+    const targets = [
+      ...(input.from !== "lead" && team.leadSessionID
+        ? [{ name: "lead", sessionID: team.leadSessionID }]
+        : []),
+      ...team.members
+        .filter((m) => m.name !== input.from && m.status !== "shutdown")
+        .map((m) => ({ name: m.name, sessionID: m.sessionID })),
+    ]
+
+    const wireContent = encodeStructured(input.msg, envelope.text)
+    for (const target of targets) {
+      const inboxId = messageId()
+      await Inbox.write(input.teamName, target.name, {
+        id: inboxId,
+        from: input.from,
+        text: wireContent,
+        timestamp: Date.now(),
+      }).catch((err: unknown) => {
+        log.warn("broadcastStructured inbox write failed", { target: target.name, error: String(err) })
+      })
+      await injectMessage(target.sessionID, input.from, envelope.text, inboxId).catch((err: unknown) => {
+        log.warn("broadcastStructured inject failed", { target: target.name, error: String(err) })
+      })
+      autoWake(target.sessionID, input.from, envelope.text)
+    }
+
+    if (input.msg.type === "mode_set") {
+      await Bus.publish(TeamEvent.ModeSet, { teamName: input.teamName, mode: input.msg.mode })
+    }
+
+    log.info("structured broadcast sent", {
+      teamName: input.teamName,
+      from: input.from,
+      type: input.msg.type,
+      targets: targets.length,
+    })
+  }
+
+  /** Resolve a named recipient to their session ID, throwing if not found/shutdown */
+  function resolveRecipientSession(team: Awaited<ReturnType<typeof Team.get>>, to: string): string {
+    if (!team) throw new Error("Team not found")
+    if (to === "lead") {
+      if (!team.leadSessionID) throw new Error("Lead session not found")
+      return team.leadSessionID
+    }
+    const member = team.members.find((m) => m.name === to)
+    if (!member) throw new Error(`Member "${to}" not found`)
+    if (member.status === "shutdown") throw new Error(`Member "${to}" has shut down`)
+    return member.sessionID
   }
 
   /**
@@ -313,6 +510,10 @@ export namespace TeamMessaging {
    * Inject a synthetic user message into a session from a teammate.
    * This is how teammates "receive" messages — as user messages
    * with a TeamMessagePart that the prompt loop will process.
+   *
+   * If `text` is a structured JSON envelope (from sendStructured), it is
+   * first rendered into model-readable text before injection. Raw JSON is
+   * never injected into the session history.
    */
   async function injectMessage(
     sessionID: string,
@@ -320,8 +521,11 @@ export namespace TeamMessaging {
     text: string,
     inboxMessageId?: string,
   ): Promise<void> {
-    // Get the session to find the current agent and model
-    // Don't limit — we need to find the last user message which may not be the most recent
+    // Render structured messages to human-readable text before injecting.
+    // This ensures the model always sees readable instructions, never raw JSON.
+    const envelope = parseStructuredContent(text)
+    const rendered = envelope ? renderStructuredForModel(envelope) : text
+
     const msgs = await Session.messages({ sessionID })
     const lastUser = msgs.findLast((m) => m.info.role === "user")
     if (!lastUser) {
@@ -344,7 +548,7 @@ export namespace TeamMessaging {
       messageID: msgId,
       sessionID,
       type: "text",
-      text: `[Team message from ${fromName}]: ${text}`,
+      text: `[Team message from ${fromName}]: ${rendered}`,
       synthetic: true,
       ...(inboxMessageId ? { metadata: { inboxMessageId } } : {}),
     })
