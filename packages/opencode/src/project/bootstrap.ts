@@ -54,6 +54,9 @@ export async function InstanceBootstrap() {
     // Dynamic import — only load team module when the feature flag is enabled
     import("../team").then(({ Team }) => {
       Team.onCleanedRestorePermissions()
+      import("../team/permission-routing").then(({ setupPermissionRouting }) => {
+        setupPermissionRouting()
+      })
       Team.recover()
         .catch((err) => {
           Log.Default.warn("team recovery failed", { error: err instanceof Error ? err.message : err })
