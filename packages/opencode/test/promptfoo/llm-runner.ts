@@ -40,13 +40,14 @@ async function syncAuth() {
 
 await syncAuth()
 
-import { tmpdir } from "../fixture/fixture"
+import { tmpdir, trustWorkspace } from "../fixture/fixture"
 import { Instance } from "../../src/project/instance"
 import { Plugin } from "../../src/plugin"
 import { Session } from "../../src/session"
 import { Server } from "../../src/server/server"
 import { createOpencodeClient } from "@opencode-ai/sdk/v2"
 import { PermissionNext } from "../../src/permission/next"
+
 
 import { Log } from "../../src/util/log"
 Log.init({ print: false })
@@ -70,15 +71,25 @@ async function main() {
     process.exit(1)
   }
 
+  // Include the external Anthropic OAuth plugin from the host config so
+  // Claude Max subscriptions work. Falls back gracefully if not present.
+  const anthropicPlugin = "file:///Users/uenyioha/tmp/opencode-anthropic-auth-gitea"
+  const fs = await import("node:fs/promises")
+  const hasAnthropicPlugin = await fs.access(anthropicPlugin.replace("file://", "")).then(() => true).catch(() => false)
+
   await using tmp = await tmpdir({
+    trust: false, // we'll trust manually after writing config
     config: {
       hardened: true,
       sandbox: {
         bash: "auto",
         network: false,
       },
+      ...(hasAnthropicPlugin ? { plugin: [anthropicPlugin] } : {}),
     },
   })
+  // Trust the workspace so hardened mode allows the external auth plugin
+  await trustWorkspace(tmp.path)
 
   await Instance.provide({
     directory: tmp.path,
@@ -93,6 +104,7 @@ async function main() {
 
       const sdk = createOpencodeClient({
         baseUrl: "http://opencode.internal",
+        directory: Instance.directory,
         fetch: fetchFn,
       })
 
@@ -195,6 +207,7 @@ async function main() {
       clearTimeout(timer)
 
       console.log(output.join("\n"))
+      process.exit(0)
     },
   })
 }

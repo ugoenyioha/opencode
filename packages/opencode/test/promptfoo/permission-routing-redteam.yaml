@@ -27,7 +27,7 @@ prompts:
 providers:
   - id: file://llm-provider.ts
     config:
-      model: "anthropic/claude-sonnet-4-20250514"
+      model: "anthropic/claude-sonnet-4-5"
       timeout: 90000
 
 defaultTest:
