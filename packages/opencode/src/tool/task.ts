@@ -12,6 +12,7 @@ import { Config } from "../config/config"
 import { PermissionNext } from "@/permission/next"
 import { Worktree } from "../worktree"
 import { SessionID, MessageID } from "../session/schema"
+import { Flag } from "@/flag/flag"
 
 /**
  * Calculate the subagent nesting depth for a session by walking up the parentID chain.
@@ -47,7 +48,13 @@ const TEAM_TOOLS = [
 const parameters = z.object({
   description: z.string().describe("A short (3-5 words) description of the task"),
   prompt: z.string().describe("The task for the agent to perform"),
-  subagent_type: z.string().describe("The type of specialized agent to use for this task"),
+  subagent_type: z
+    .string()
+    .describe(
+      "The type of specialized agent to use for this task. " +
+        "Omit to fork the current session (inherits full message history for cache sharing).",
+    )
+    .optional(),
   task_id: z
     .string()
     .describe(
@@ -86,6 +93,58 @@ export const TaskTool = Tool.define("task", async (ctx) => {
           `Maximum subagent nesting depth of ${maxSubagentDepth} exceeded (current depth: ${currentDepth}). ` +
             `Cannot spawn nested subagent. Consider restructuring the task to avoid deep nesting.`,
         )
+      }
+
+      // Fork mode: no subagent_type → fork current session (inherits message history)
+      if (!params.subagent_type) {
+        if (!Flag.OPENCODE_FORK_SUBAGENT)
+          throw new Error(
+            "Fork mode requires OPENCODE_FORK_SUBAGENT=1. " +
+              "Set the env var or provide a subagent_type to use a specific agent.",
+          )
+
+        const parentSession = await Session.get(ctx.sessionID)
+        // Anti-recursion: forked sessions cannot fork further
+        if (parentSession?.title?.includes("(fork #"))
+          throw new Error("Forked sessions cannot fork again. Provide a subagent_type instead.")
+
+        const forked = await Session.fork({ sessionID: ctx.sessionID })
+
+        ctx.metadata({
+          title: params.description,
+          metadata: { sessionId: forked.id, fork: true },
+        })
+
+        const messageID = MessageID.ascending()
+
+
+        // Use the parent's model from the triggering assistant message
+        const triggerMsg = await MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID })
+        if (triggerMsg.info.role !== "assistant") throw new Error("Not an assistant message")
+        const forkModel = { modelID: triggerMsg.info.modelID, providerID: triggerMsg.info.providerID }
+
+        const promptParts = await SessionPrompt.resolvePromptParts(params.prompt)
+
+        const result = await SessionPrompt.prompt({
+          messageID,
+          sessionID: forked.id,
+          model: forkModel,
+          agent: ctx.agent ?? "general",
+          parts: promptParts,
+        })
+
+        const text = result.parts.findLast((x: MessageV2.Part) => x.type === "text")?.text ?? ""
+        return {
+          title: params.description,
+          metadata: { sessionId: forked.id, fork: true, cancelled: false },
+          output: [
+            `task_id: ${forked.id} (forked session — resume with this id)`,
+            "",
+            "<task_result>",
+            text,
+            "</task_result>",
+          ].join("\n"),
+        }
       }
 
       // Skip permission check when user explicitly invoked via @ or command subtask

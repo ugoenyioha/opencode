@@ -64,6 +64,7 @@ export namespace Flag {
   export const OPENCODE_DISABLE_FILETIME_CHECK = truthy("OPENCODE_DISABLE_FILETIME_CHECK")
   export const OPENCODE_EXPERIMENTAL_PLAN_MODE = OPENCODE_EXPERIMENTAL || truthy("OPENCODE_EXPERIMENTAL_PLAN_MODE")
   export declare const OPENCODE_EXPERIMENTAL_AGENT_TEAMS: boolean
+  export declare const OPENCODE_FORK_SUBAGENT: boolean
   export const OPENCODE_EXPERIMENTAL_MARKDOWN = !falsy("OPENCODE_EXPERIMENTAL_MARKDOWN")
   export const OPENCODE_MODELS_URL = process.env["OPENCODE_MODELS_URL"]
   export const OPENCODE_MODELS_PATH = process.env["OPENCODE_MODELS_PATH"]
@@ -160,6 +161,14 @@ Object.defineProperty(Flag, "OPENCODE_DISABLE_EXTERNAL_SKILLS", {
 Object.defineProperty(Flag, "OPENCODE_EXPERIMENTAL_AGENT_TEAMS", {
   get() {
     return Flag.OPENCODE_EXPERIMENTAL || truthy("OPENCODE_EXPERIMENTAL_AGENT_TEAMS")
+  },
+  enumerable: true,
+  configurable: false,
+})
+
+Object.defineProperty(Flag, "OPENCODE_FORK_SUBAGENT", {
+  get() {
+    return truthy("OPENCODE_FORK_SUBAGENT")
   },
   enumerable: true,
   configurable: false,
