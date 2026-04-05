@@ -9,12 +9,61 @@
 - **Output**: creates `migration/<timestamp>_<slug>/migration.sql` and `snapshot.json`.
 - **Tests**: migration tests should read the per-folder layout (no `_journal.json`).
 
-## Session cron
+# opencode Effect rules
 
-The `/loop` command stores recurring jobs in the `session_cron` table (schema in `src/session/session.sql.ts`, logic in `src/session/cron.ts`). Jobs cascade-delete with their session. The ticker is started during bootstrap (`SessionCron.start()`) and polls every 30 seconds.
+Use these rules when writing or migrating Effect code.
 
-## MCP tool deferral
+See `specs/effect-migration.md` for the compact pattern reference and examples.
 
-When the total number of MCP tools exceeds `OPENCODE_MCP_DEFER_THRESHOLD` (default: `20`), unused tools are lazy-loaded to save context window tokens. A `tool_search` tool is injected as a fallback so the AI can discover deferred tools by name or description.
+## Core
 
-Tools the AI has already invoked in the conversation remain loaded. Adjust the threshold with the environment variable if your MCP servers expose many tools.
+- Use `Effect.gen(function* () { ... })` for composition.
+- Use `Effect.fn("Domain.method")` for named/traced effects and `Effect.fnUntraced` for internal helpers.
+- `Effect.fn` / `Effect.fnUntraced` accept pipeable operators as extra arguments, so avoid unnecessary outer `.pipe()` wrappers.
+- Use `Effect.callback` for callback-based APIs.
+- Prefer `DateTime.nowAsDate` over `new Date(yield* Clock.currentTimeMillis)` when you need a `Date`.
+
+## Schemas and errors
+
+- Use `Schema.Class` for multi-field data.
+- Use branded schemas (`Schema.brand`) for single-value types.
+- Use `Schema.TaggedErrorClass` for typed errors.
+- Use `Schema.Defect` instead of `unknown` for defect-like causes.
+- In `Effect.gen` / `Effect.fn`, prefer `yield* new MyError(...)` over `yield* Effect.fail(new MyError(...))` for direct early-failure branches.
+
+## Runtime vs InstanceState
+
+- Use `makeRuntime` (from `src/effect/run-service.ts`) for all services. It returns `{ runPromise, runFork, runCallback }` backed by a shared `memoMap` that deduplicates layers.
+- Use `InstanceState` (from `src/effect/instance-state.ts`) for per-directory or per-project state that needs per-instance cleanup. It uses `ScopedCache` keyed by directory — each open project gets its own state, automatically cleaned up on disposal.
+- If two open directories should not share one copy of the service, it needs `InstanceState`.
+- Do the work directly in the `InstanceState.make` closure — `ScopedCache` handles run-once semantics. Don't add fibers, `ensure()` callbacks, or `started` flags on top.
+- Use `Effect.addFinalizer` or `Effect.acquireRelease` inside the `InstanceState.make` closure for cleanup (subscriptions, process teardown, etc.).
+- Use `Effect.forkScoped` inside the closure for background stream consumers — the fiber is interrupted when the instance is disposed.
+
+## Preferred Effect services
+
+- In effectified services, prefer yielding existing Effect services over dropping down to ad hoc platform APIs.
+- Prefer `FileSystem.FileSystem` instead of raw `fs/promises` for effectful file I/O.
+- Prefer `ChildProcessSpawner.ChildProcessSpawner` with `ChildProcess.make(...)` instead of custom process wrappers.
+- Prefer `HttpClient.HttpClient` instead of raw `fetch`.
+- Prefer `Path.Path`, `Config`, `Clock`, and `DateTime` when those concerns are already inside Effect code.
+- For background loops or scheduled tasks, use `Effect.repeat` or `Effect.schedule` with `Effect.forkScoped` in the layer definition.
+
+## Effect.cached for deduplication
+
+Use `Effect.cached` when multiple concurrent callers should share a single in-flight computation rather than storing `Fiber | undefined` or `Promise | undefined` manually. See `specs/effect-migration.md` for the full pattern.
+
+## Instance.bind — ALS for native callbacks
+
+`Instance.bind(fn)` captures the current Instance AsyncLocalStorage context and restores it synchronously when called.
+
+Use it for native addon callbacks (`@parcel/watcher`, `node-pty`, native `fs.watch`, etc.) that need to call `Bus.publish` or anything that reads `Instance.directory`.
+
+You do not need it for `setTimeout`, `Promise.then`, `EventEmitter.on`, or Effect fibers.
+
+```typescript
+const cb = Instance.bind((err, evts) => {
+  Bus.publish(MyEvent, { ... })
+})
+nativeAddon.subscribe(dir, cb)
+```

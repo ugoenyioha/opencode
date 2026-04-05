@@ -1,11 +1,11 @@
-import { BoxRenderable, TextareaRenderable, MouseEvent, PasteEvent, t, dim, fg } from "@opentui/core"
-import { createEffect, createMemo, type JSX, onMount, createSignal, onCleanup, on, Show, Switch, Match } from "solid-js"
+import { BoxRenderable, TextareaRenderable, MouseEvent, PasteEvent, decodePasteBytes, t, dim, fg } from "@opentui/core"
+import { createEffect, createMemo, onMount, createSignal, onCleanup, on, Show, Switch, Match } from "solid-js"
 import "opentui-spinner/solid"
 import path from "path"
 import { Filesystem } from "@/util/filesystem"
 import { useLocal } from "@tui/context/local"
 import { useTheme } from "@tui/context/theme"
-import { EmptyBorder } from "@tui/component/border"
+import { EmptyBorder, SplitBorder } from "@tui/component/border"
 import { useSDK } from "@tui/context/sdk"
 import { useRoute } from "@tui/context/route"
 import { useSync } from "@tui/context/sync"
@@ -13,15 +13,16 @@ import { MessageID, PartID } from "@/session/schema"
 import { createStore, produce } from "solid-js/store"
 import { useKeybind } from "@tui/context/keybind"
 import { usePromptHistory, type PromptInfo } from "./history"
+import { assign } from "./part"
 import { usePromptStash } from "./stash"
 import { DialogStash } from "../dialog-stash"
 import { type AutocompleteRef, Autocomplete } from "./autocomplete"
 import { useCommandDialog } from "../dialog-command"
-import { useRenderer } from "@opentui/solid"
+import { useKeyboard, useRenderer, type JSX } from "@opentui/solid"
 import { Editor } from "@tui/util/editor"
 import { useExit } from "../../context/exit"
 import { Clipboard } from "../../util/clipboard"
-import type { FilePart } from "@opencode-ai/sdk/v2"
+import type { AssistantMessage, FilePart } from "@opencode-ai/sdk/v2"
 import { TuiEvent } from "../../event"
 import { iife } from "@/util/iife"
 import { Locale } from "@/util/locale"
@@ -34,22 +35,22 @@ import { useToast } from "../../ui/toast"
 import { useKV } from "../../context/kv"
 import { useTextareaKeybindings } from "../textarea-keybindings"
 import { DialogSkill } from "../dialog-skill"
-import { DialogContext } from "../dialog-context"
-import { DialogBtw } from "../dialog-btw"
-import { SessionLoop } from "@/session/loop"
+import { CONSOLE_MANAGED_ICON, consoleManagedProviderLabel } from "@tui/util/provider-origin"
 
 export type PromptProps = {
   sessionID?: string
+  workspaceID?: string
   visible?: boolean
   disabled?: boolean
   onSubmit?: () => void
-  ref?: (ref: PromptRef) => void
+  ref?: (ref: PromptRef | undefined) => void
   hint?: JSX.Element
+  right?: JSX.Element
   showPlaceholder?: boolean
-  /** When set, submit sends a team message to this teammate instead of a normal prompt */
-  selectedTeammate?: string | null
-  /** Called after a team message is sent so the parent can reset selection state */
-  onTeammateMessageSent?: () => void
+  placeholders?: {
+    normal?: string[]
+    shell?: string[]
+  }
 }
 
 export type PromptRef = {
@@ -62,8 +63,15 @@ export type PromptRef = {
   submit(): void
 }
 
-const PLACEHOLDERS = ["Fix a TODO in the codebase", "What is the tech stack of this project?", "Fix broken tests"]
-const SHELL_PLACEHOLDERS = ["ls -la", "git status", "pwd"]
+const money = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+})
+
+function randomIndex(count: number) {
+  if (count <= 0) return 0
+  return Math.floor(Math.random() * count)
+}
 
 export function Prompt(props: PromptProps) {
   let input: TextareaRenderable
@@ -78,22 +86,24 @@ export function Prompt(props: PromptProps) {
   const dialog = useDialog()
   const toast = useToast()
   const status = createMemo(() => sync.data.session_status?.[props.sessionID ?? ""] ?? { type: "idle" })
-  const teamBusy = createMemo(() => {
-    const sid = props.sessionID
-    if (!sid) return 0
-    const team = sync.data.team?.[sid]
-    if (!team || team.role !== "lead") return 0
-    return team.members.filter((m) => {
-      if (m.status === "shutdown") return false
-      return ["starting", "running", "cancel_requested", "cancelling", "completing"].includes(m.execution_status)
-    }).length
-  })
   const history = usePromptHistory()
   const stash = usePromptStash()
   const command = useCommandDialog()
   const renderer = useRenderer()
   const { theme, syntax } = useTheme()
   const kv = useKV()
+  const list = createMemo(() => props.placeholders?.normal ?? [])
+  const shell = createMemo(() => props.placeholders?.shell ?? [])
+  const [auto, setAuto] = createSignal<AutocompleteRef>()
+  const activeOrgName = createMemo(() => sync.data.console_state.activeOrgName)
+  const canSwitchOrgs = createMemo(() => sync.data.console_state.switchableOrgCount > 1)
+  const currentProviderLabel = createMemo(() => {
+    const current = local.model.current()
+    const provider = local.model.parsed().provider
+    if (!current) return provider
+    return consoleManagedProviderLabel(sync.data.console_state.consoleManagedProviders, current.providerID, provider)
+  })
+  const hasRightContent = createMemo(() => Boolean(props.right || activeOrgName()))
 
   function promptModelWarning() {
     toast.show({
@@ -137,6 +147,25 @@ export function Prompt(props: PromptProps) {
     return messages.findLast((m) => m.role === "user")
   })
 
+  const usage = createMemo(() => {
+    if (!props.sessionID) return
+    const msg = sync.data.message[props.sessionID] ?? []
+    const last = msg.findLast((item): item is AssistantMessage => item.role === "assistant" && item.tokens.output > 0)
+    if (!last) return
+
+    const tokens =
+      last.tokens.input + last.tokens.output + last.tokens.reasoning + last.tokens.cache.read + last.tokens.cache.write
+    if (tokens <= 0) return
+
+    const model = sync.data.provider.find((item) => item.id === last.providerID)?.models[last.modelID]
+    const pct = model?.limit.context ? `${Math.round((tokens / model.limit.context) * 100)}%` : undefined
+    const cost = msg.reduce((sum, item) => sum + (item.role === "assistant" ? item.cost : 0), 0)
+    return {
+      context: pct ? `${Locale.number(tokens)} (${pct})` : Locale.number(tokens),
+      cost: cost > 0 ? money.format(cost) : undefined,
+    }
+  })
+
   const [store, setStore] = createStore<{
     prompt: PromptInfo
     mode: "normal" | "shell"
@@ -144,7 +173,7 @@ export function Prompt(props: PromptProps) {
     interrupt: number
     placeholder: number
   }>({
-    placeholder: Math.floor(Math.random() * PLACEHOLDERS.length),
+    placeholder: randomIndex(list().length),
     prompt: {
       input: "",
       parts: [],
@@ -158,7 +187,7 @@ export function Prompt(props: PromptProps) {
     on(
       () => props.sessionID,
       () => {
-        setStore("placeholder", Math.floor(Math.random() * PLACEHOLDERS.length))
+        setStore("placeholder", randomIndex(list().length))
       },
       { defer: true },
     ),
@@ -187,19 +216,6 @@ export function Prompt(props: PromptProps) {
 
   command.register(() => {
     return [
-      {
-        title: "Context diagnostics",
-        value: "session.context",
-        category: "Session",
-        slash: {
-          name: "context",
-        },
-        enabled: !!props.sessionID,
-        onSelect: (dialog) => {
-          if (!props.sessionID) return
-          dialog.replace(() => <DialogContext sessionID={props.sessionID!} />)
-        },
-      },
       {
         title: "Clear prompt",
         value: "prompt.clear",
@@ -246,7 +262,7 @@ export function Prompt(props: PromptProps) {
         keybind: "session_interrupt",
         category: "Session",
         hidden: true,
-        enabled: status().type !== "idle" || teamBusy() > 0,
+        enabled: status().type !== "idle",
         onSelect: (dialog) => {
           if (autocomplete.visible) return
           if (!input.focused) return
@@ -257,22 +273,6 @@ export function Prompt(props: PromptProps) {
           }
           if (!props.sessionID) return
 
-          // Lead is idle but teammates are busy — cancel teammates directly
-          if (status().type === "idle" && teamBusy() > 0) {
-            const team = sync.data.team?.[props.sessionID]
-            if (team?.members) {
-              for (const m of team.members) {
-                if (
-                  ["starting", "running", "cancel_requested", "cancelling", "completing"].includes(m.execution_status)
-                ) {
-                  sdk.client.session.abort({ sessionID: m.sessionID }).catch(() => {})
-                }
-              }
-            }
-            dialog.clear()
-            return
-          }
-
           setStore("interrupt", store.interrupt + 1)
 
           setTimeout(() => {
@@ -280,8 +280,6 @@ export function Prompt(props: PromptProps) {
           }, 5000)
 
           if (store.interrupt >= 2) {
-            // Abort the lead session — server-side abort propagation
-            // (session.ts route) will also cancel active teammates
             sdk.client.session.abort({
               sessionID: props.sessionID,
             })
@@ -402,6 +400,20 @@ export function Prompt(props: PromptProps) {
     ]
   })
 
+  // Windows Terminal 1.25+ handles Ctrl+V on keydown when kitty events are
+  // enabled, but still reports the kitty key-release event. Probe on release.
+  if (process.platform === "win32") {
+    useKeyboard(
+      (evt) => {
+        if (!input.focused) return
+        if (evt.name === "v" && evt.ctrl && evt.eventType === "release") {
+          command.trigger("prompt.paste")
+        }
+      },
+      { release: true },
+    )
+  }
+
   const ref: PromptRef = {
     get focused() {
       return input.focused
@@ -435,9 +447,29 @@ export function Prompt(props: PromptProps) {
     },
   }
 
+  onCleanup(() => {
+    props.ref?.(undefined)
+  })
+
   createEffect(() => {
-    if (props.visible !== false) input?.focus()
-    if (props.visible === false) input?.blur()
+    if (!input || input.isDestroyed) return
+    if (props.visible === false || dialog.stack.length > 0) {
+      input.blur()
+      return
+    }
+
+    // Slot/plugin updates can remount the background prompt while a dialog is open.
+    // Keep focus with the dialog and let the prompt reclaim it after the dialog closes.
+    input.focus()
+  })
+
+  createEffect(() => {
+    if (!input || input.isDestroyed) return
+    input.traits = {
+      capture: auto()?.visible ? ["escape", "navigate", "submit", "tab"] : undefined,
+      suspend: !!props.disabled || store.mode === "shell",
+      status: store.mode === "shell" ? "SHELL" : undefined,
+    }
   })
 
   function restoreExtmarksFromParts(parts: PromptInfo["parts"]) {
@@ -575,68 +607,42 @@ export function Prompt(props: PromptProps) {
 
   async function submit() {
     if (props.disabled) return
+    if (autocomplete?.visible) return
     if (!store.prompt.input) return
-    const currentTrimmed = store.prompt.input.trim()
-    if (autocomplete?.visible && !currentTrimmed.startsWith("/")) return
     const trimmed = store.prompt.input.trim()
-    let inputText = store.prompt.input
-    const slash = (() => {
-      if (!inputText.startsWith("/")) return
-      const firstLine = inputText.split("\n")[0]
-      return firstLine.split(" ")[0].slice(1)
-    })()
-
-    if (slash === "btw") {
-      if (!props.sessionID) {
-        toast.show({ message: "Start a session before using /btw", variant: "error" })
-        return
-      }
-      const firstLineEnd = inputText.indexOf("\n")
-      const firstLine = firstLineEnd === -1 ? inputText : inputText.slice(0, firstLineEnd)
-      const args =
-        firstLine.split(" ").slice(1).join(" ") + (firstLineEnd === -1 ? "" : "\n" + inputText.slice(firstLineEnd + 1))
-      const question = args.trim()
-      if (!question) {
-        toast.show({
-          message: "Usage: /btw <question>, /btw background <task>, /btw todo <item>, or /btw status",
-          variant: "error",
-        })
-        return
-      }
-      const first = question.split(/\s+/)[0]
-      if (!["background", "todo", "status"].includes(first)) {
-        input.extmarks.clear()
-        input.clear()
-        setStore("prompt", { input: "", parts: [] })
-        setStore("extmarkToPartIndex", new Map())
-        dialog.replace(() => (
-          <DialogBtw sessionID={props.sessionID!} question={question.replace(/^ask\s+/, "").trim()} />
-        ))
-        return
-      }
-    }
-
-    if (slash === "context") {
-      if (!props.sessionID) {
-        toast.show({ message: "Start a session before using /context", variant: "error" })
-        return
-      }
-      dialog.replace(() => <DialogContext sessionID={props.sessionID!} />)
-      return
-    }
-
     if (trimmed === "exit" || trimmed === "quit" || trimmed === ":q") {
       exit()
       return
     }
     const selectedModel = local.model.current()
-    const sessionID = props.sessionID
-      ? props.sessionID
-      : await (async () => {
-          const sessionID = await sdk.client.session.create({}).then((x) => x.data!.id)
-          return sessionID
-        })()
+    if (!selectedModel) {
+      promptModelWarning()
+      return
+    }
+
+    let sessionID = props.sessionID
+    if (sessionID == null) {
+      const res = await sdk.client.session.create({
+        workspaceID: props.workspaceID,
+      })
+
+      if (res.error) {
+        console.log("Creating a session failed:", res.error)
+
+        toast.show({
+          message: "Creating a session failed. Open console for more details.",
+          variant: "error",
+        })
+
+        return
+      }
+
+      sessionID = res.data.id
+    }
+
     const messageID = MessageID.ascending()
+    let inputText = store.prompt.input
+
     // Expand pasted text inline before submitting
     const allExtmarks = input.extmarks.getAllForTypeId(promptPartTypeId)
     const sortedExtmarks = allExtmarks.sort((a: { start: number }, b: { start: number }) => b.start - a.start)
@@ -660,54 +666,7 @@ export function Prompt(props: PromptProps) {
     const currentMode = store.mode
     const variant = local.model.variant.current()
 
-    const loop = SessionLoop.parse(inputText)
-
-    // Team message interception: when a teammate is selected, send via team_message endpoint
-    if (loop?.type === "invalid") {
-      toast.show({ message: loop.message, variant: "error" })
-    } else if (loop?.type === "stop") {
-      const result = await SessionLoop.stop(sdk as any, sessionID).catch(() => undefined)
-      if (!result?.ok) {
-        toast.show({ message: "Failed to stop /loop jobs", variant: "error" })
-      }
-      if (result?.ok) {
-        toast.show({ message: "Stopped loop jobs for this session", variant: "success" })
-      }
-    } else if (loop?.type === "create") {
-      const result = await SessionLoop.create(sdk as any, sessionID, {
-        interval_ms: loop.interval_ms,
-        prompt: loop.prompt,
-      }).catch(() => undefined)
-      if (!result?.ok) {
-        toast.show({ message: "Failed to schedule /loop job", variant: "error" })
-      }
-      if (result?.ok) {
-        toast.show({ message: `Scheduled loop every ${loop.minutes} minute(s)`, variant: "success" })
-      }
-    } else if (props.selectedTeammate) {
-      const teammate = props.selectedTeammate
-      try {
-        const res = await sdk.fetch(`${sdk.url}/session/${sessionID}/team-message`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            agent: local.agent.current().name,
-            to: teammate,
-            text: inputText,
-          }),
-        })
-        if (!res.ok) {
-          toast.show({ message: `Failed to message @${teammate}`, variant: "error" })
-        }
-      } catch {
-        toast.show({ message: `Failed to message @${teammate}`, variant: "error" })
-      }
-      props.onTeammateMessageSent?.()
-      // Fall through to the clear logic below
-    } else if (!selectedModel) {
-      promptModelWarning()
-      return
-    } else if (store.mode === "shell") {
+    if (store.mode === "shell") {
       sdk.client.session.shell({
         sessionID,
         agent: local.agent.current().name,
@@ -718,44 +677,6 @@ export function Prompt(props: PromptProps) {
         command: inputText,
       })
       setStore("mode", "normal")
-    } else if (
-      inputText.startsWith("/") &&
-      iife(() => {
-        const firstLine = inputText.split("\n")[0]
-        const slash = firstLine.split(" ")[0].slice(1)
-        return slash === "refresh" || slash === "reload"
-      })
-    ) {
-      command.trigger("app.refresh")
-    } else if (
-      inputText.startsWith("/") &&
-      iife(() => {
-        const firstLine = inputText.split("\n")[0]
-        const slash = firstLine.split(" ")[0].slice(1)
-        return slash === "memory" || slash === "tasks" || slash === "team" || slash === "status"
-      })
-    ) {
-      const firstLine = inputText.split("\n")[0]
-      const slash = firstLine.split(" ")[0].slice(1)
-      const mapping: Record<string, string> = {
-        memory: "memory.edit",
-        tasks: "task.list",
-        team: "team.show",
-        status: "opencode.status",
-      }
-      command.trigger(mapping[slash])
-    } else if (
-      inputText.startsWith("/") &&
-      iife(() => {
-        const firstLine = inputText.split("\n")[0]
-        const slash = firstLine.split(" ")[0]
-        return command.slashes().some((item) => item.display === slash || item.aliases?.includes(slash))
-      })
-    ) {
-      const firstLine = inputText.split("\n")[0]
-      const slash = firstLine.split(" ")[0]
-      const match = command.slashes().find((item) => item.display === slash || item.aliases?.includes(slash))
-      match?.onSelect()
     } else if (
       inputText.startsWith("/") &&
       iife(() => {
@@ -801,10 +722,7 @@ export function Prompt(props: PromptProps) {
               type: "text",
               text: inputText,
             },
-            ...nonTextParts.map((x) => ({
-              id: PartID.ascending(),
-              ...x,
-            })),
+            ...nonTextParts.map(assign),
           ],
         })
         .catch(() => {})
@@ -924,12 +842,14 @@ export function Prompt(props: PromptProps) {
   })
 
   const placeholderText = createMemo(() => {
-    if (props.sessionID) return undefined
+    if (props.showPlaceholder === false) return undefined
     if (store.mode === "shell") {
-      const example = SHELL_PLACEHOLDERS[store.placeholder % SHELL_PLACEHOLDERS.length]
+      if (!shell().length) return undefined
+      const example = shell()[store.placeholder % shell().length]
       return `Run a command... "${example}"`
     }
-    return `Ask anything... "${PLACEHOLDERS[store.placeholder % PLACEHOLDERS.length]}"`
+    if (!list().length) return undefined
+    return `Ask anything... "${list()[store.placeholder % list().length]}"`
   })
 
   const spinnerDef = createMemo(() => {
@@ -956,10 +876,12 @@ export function Prompt(props: PromptProps) {
     <>
       <Autocomplete
         sessionID={props.sessionID}
-        ref={(r) => (autocomplete = r)}
+        ref={(r) => {
+          autocomplete = r
+          setAuto(() => r)
+        }}
         anchor={() => anchor}
         input={() => input}
-        onSlashSubmit={() => submit()}
         setPrompt={(cb) => {
           setStore("prompt", produce(cb))
         }}
@@ -980,8 +902,7 @@ export function Prompt(props: PromptProps) {
           border={["left"]}
           borderColor={highlight()}
           customBorderChars={{
-            ...EmptyBorder,
-            vertical: "┃",
+            ...SplitBorder.customBorderChars,
             bottomLeft: "╹",
           }}
         >
@@ -995,6 +916,7 @@ export function Prompt(props: PromptProps) {
           >
             <textarea
               placeholder={placeholderText()}
+              placeholderColor={theme.textMuted}
               textColor={keybind.leader ? theme.textMuted : theme.text}
               focusedTextColor={keybind.leader ? theme.textMuted : theme.text}
               minHeight={1}
@@ -1011,10 +933,9 @@ export function Prompt(props: PromptProps) {
                   e.preventDefault()
                   return
                 }
-                // Handle clipboard paste (Ctrl+V) - check for images first on Windows
-                // This is needed because Windows terminal doesn't properly send image data
-                // through bracketed paste, so we need to intercept the keypress and
-                // directly read from clipboard before the terminal handles it
+                // Check clipboard for images before terminal-handled paste runs.
+                // This helps terminals that forward Ctrl+V to the app; Windows
+                // Terminal 1.25+ usually handles Ctrl+V before this path.
                 if (keybind.match("input_paste", e)) {
                   const content = await Clipboard.read()
                   if (content?.mime.startsWith("image/")) {
@@ -1047,7 +968,7 @@ export function Prompt(props: PromptProps) {
                   }
                 }
                 if (e.name === "!" && input.visualCursor.offset === 0) {
-                  setStore("placeholder", Math.floor(Math.random() * SHELL_PLACEHOLDERS.length))
+                  setStore("placeholder", randomIndex(shell().length))
                   setStore("mode", "shell")
                   e.preventDefault()
                   return
@@ -1095,8 +1016,11 @@ export function Prompt(props: PromptProps) {
                 // Normalize line endings at the boundary
                 // Windows ConPTY/Terminal often sends CR-only newlines in bracketed paste
                 // Replace CRLF first, then any remaining CR
-                const normalizedText = event.text.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
+                const normalizedText = decodePasteBytes(event.bytes).replace(/\r\n/g, "\n").replace(/\r/g, "\n")
                 const pastedContent = normalizedText.trim()
+
+                // Windows Terminal <1.25 can surface image-only clipboard as an
+                // empty bracketed paste. Windows Terminal 1.25+ does not.
                 if (!pastedContent) {
                   command.trigger("prompt.paste")
                   return
@@ -1171,20 +1095,38 @@ export function Prompt(props: PromptProps) {
               cursorColor={theme.text}
               syntaxStyle={syntax()}
             />
-            <box flexDirection="row" flexShrink={0} paddingTop={1} gap={1}>
-              <text fg={highlight()}>
-                {store.mode === "shell" ? "Shell" : Locale.titlecase(local.agent.current().name)}{" "}
-              </text>
-              <Show when={store.mode === "normal"}>
-                <box flexDirection="row" gap={1}>
-                  <text flexShrink={0} fg={keybind.leader ? theme.textMuted : theme.text}>
-                    {local.model.parsed().model}
-                  </text>
-                  <text fg={theme.textMuted}>{local.model.parsed().provider}</text>
-                  <Show when={showVariant()}>
-                    <text fg={theme.textMuted}>·</text>
-                    <text>
-                      <span style={{ fg: theme.warning, bold: true }}>{local.model.variant.current()}</span>
+            <box flexDirection="row" flexShrink={0} paddingTop={1} gap={1} justifyContent="space-between">
+              <box flexDirection="row" gap={1}>
+                <text fg={highlight()}>
+                  {store.mode === "shell" ? "Shell" : Locale.titlecase(local.agent.current().name)}{" "}
+                </text>
+                <Show when={store.mode === "normal"}>
+                  <box flexDirection="row" gap={1}>
+                    <text flexShrink={0} fg={keybind.leader ? theme.textMuted : theme.text}>
+                      {local.model.parsed().model}
+                    </text>
+                    <text fg={theme.textMuted}>{currentProviderLabel()}</text>
+                    <Show when={showVariant()}>
+                      <text fg={theme.textMuted}>·</text>
+                      <text>
+                        <span style={{ fg: theme.warning, bold: true }}>{local.model.variant.current()}</span>
+                      </text>
+                    </Show>
+                  </box>
+                </Show>
+              </box>
+              <Show when={hasRightContent()}>
+                <box flexDirection="row" gap={1} alignItems="center">
+                  {props.right}
+                  <Show when={activeOrgName()}>
+                    <text
+                      fg={theme.textMuted}
+                      onMouseUp={() => {
+                        if (!canSwitchOrgs()) return
+                        command.trigger("console.org.switch")
+                      }}
+                    >
+                      {`${CONSOLE_MANAGED_ICON} ${activeOrgName()}`}
                     </text>
                   </Show>
                 </box>
@@ -1219,21 +1161,7 @@ export function Prompt(props: PromptProps) {
           />
         </box>
         <box flexDirection="row" justifyContent="space-between">
-          <Show
-            when={status().type !== "idle"}
-            fallback={
-              <Show when={teamBusy() > 0}>
-                <box flexDirection="row" gap={1} marginLeft={1}>
-                  <Show when={kv.get("animations_enabled", true)} fallback={<text fg={theme.textMuted}>[⋯]</text>}>
-                    <spinner color={spinnerDef().color} frames={spinnerDef().frames} interval={40} />
-                  </Show>
-                  <text fg={theme.textMuted}>
-                    {teamBusy()} teammate{teamBusy() > 1 ? "s" : ""} working
-                  </text>
-                </box>
-              </Show>
-            }
-          >
+          <Show when={status().type !== "idle"} fallback={props.hint ?? <text />}>
             <box
               flexDirection="row"
               gap={1}
@@ -1317,14 +1245,20 @@ export function Prompt(props: PromptProps) {
             <box gap={2} flexDirection="row">
               <Switch>
                 <Match when={store.mode === "normal"}>
-                  <Show when={local.model.variant.list().length > 0}>
-                    <text fg={theme.text}>
-                      {keybind.print("variant_cycle")} <span style={{ fg: theme.textMuted }}>variants</span>
-                    </text>
-                  </Show>
-                  <text fg={theme.text}>
-                    {keybind.print("agent_cycle")} <span style={{ fg: theme.textMuted }}>agents</span>
-                  </text>
+                  <Switch>
+                    <Match when={usage()}>
+                      {(item) => (
+                        <text fg={theme.textMuted} wrapMode="none">
+                          {[item().context, item().cost].filter(Boolean).join(" · ")}
+                        </text>
+                      )}
+                    </Match>
+                    <Match when={true}>
+                      <text fg={theme.text}>
+                        {keybind.print("agent_cycle")} <span style={{ fg: theme.textMuted }}>agents</span>
+                      </text>
+                    </Match>
+                  </Switch>
                   <text fg={theme.text}>
                     {keybind.print("command_list")} <span style={{ fg: theme.textMuted }}>commands</span>
                   </text>

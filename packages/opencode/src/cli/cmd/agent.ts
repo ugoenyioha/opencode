@@ -14,23 +14,7 @@ import type { Argv } from "yargs"
 
 type AgentMode = "all" | "primary" | "subagent"
 
-const AVAILABLE_TOOLS = [
-  "bash",
-  "read",
-  "write",
-  "edit",
-  "list",
-  "glob",
-  "grep",
-  "webfetch",
-  "task",
-  "todowrite",
-  "todoread",
-  "session_task_create",
-  "session_task_update",
-  "session_task_get",
-  "session_task_list",
-]
+const AVAILABLE_TOOLS = ["bash", "read", "write", "edit", "list", "glob", "grep", "webfetch", "task", "todowrite"]
 
 const AgentCreateCommand = cmd({
   command: "create",
@@ -125,7 +109,7 @@ const AgentCreateCommand = cmd({
         // Generate agent
         const spinner = prompts.spinner()
         spinner.start("Generating agent configuration...")
-        const model = args.model ? Provider.parseModel(await Provider.resolveModel(args.model)) : undefined
+        const model = args.model ? Provider.parseModel(args.model) : undefined
         const generated = await Agent.generate({ description, model }).catch((error) => {
           spinner.stop(`LLM failed to generate agent: ${error.message}`, 1)
           if (isFullyNonInteractive) process.exit(1)

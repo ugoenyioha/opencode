@@ -9,6 +9,8 @@ import { TeamTable, TeamTaskTable } from "./team.sql"
 import { SessionTable } from "../session/session.sql"
 import { Config } from "../config/config"
 import { SessionID, MessageID, PartID } from "../session/schema"
+// Helper to cast plain strings to branded SessionID at DB/event boundaries
+const sid = (s: string) => SessionID.make(s)
 import {
   TeamEvent,
   MemberStatus as MemberStatusSchema,
@@ -215,8 +217,8 @@ export namespace Team {
         Promise.resolve()
           .then(async () => {
             const config = await Config.get()
-            const lifespan = config.server?.limits?.team_max_lifespan ?? 6 * 60 * 60 * 1000
-            const idle = config.server?.limits?.team_idle_timeout ?? 60 * 60 * 1000
+            const lifespan = 6 * 60 * 60 * 1000
+            const idle = 60 * 60 * 1000
             const now = Date.now()
             const teams = await list()
 
@@ -301,7 +303,7 @@ export namespace Team {
       if (existing) throw new Error(`Team "${input.name}" already exists`)
 
       const config = await Config.get()
-      const limit = config.server?.limits?.max_teams ?? 50
+      const limit = 50
       const active = Database.use(
         (db) =>
           db
@@ -635,7 +637,7 @@ export namespace Team {
       try {
         const { Session } = await import("../session")
         const session = await Session.get(sessionID)
-        if (session && !session.parentID && !session.teammate) {
+        if (session && !session.parentID && !session.team_meta) {
           const team = teams[0]
           const leadExists = team.leadSessionID
             ? await Session.get(team.leadSessionID).catch(() => undefined)
@@ -698,7 +700,7 @@ export namespace Team {
     const { Provider } = await import("../provider/provider")
 
     if (input.model) {
-      const parsed = Provider.parseModel(await Provider.resolveModel(input.model))
+      const parsed = Provider.parseModel(input.model)
       try {
         await Provider.getModel(parsed.providerID, parsed.modelID)
       } catch (e: unknown) {
@@ -766,11 +768,8 @@ export namespace Team {
       }
     }
 
-    const session = await Session.createNext({
-      id: sessionID,
-      parentID: input.parentSessionID,
-      teammate: true,
-      directory,
+    const session = await Session.create({
+      parentID: sid(input.parentSessionID),
       title: `${input.name} (@${input.agent.name} teammate, ${label})${input.planApproval ? " [plan mode]" : ""}`,
       permission: rules,
     })

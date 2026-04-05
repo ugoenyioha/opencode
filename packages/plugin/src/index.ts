@@ -9,10 +9,11 @@ import type {
   Message,
   Part,
   Auth,
-  Config,
+  Config as SDKConfig,
 } from "@opencode-ai/sdk"
+import type { Provider as ProviderV2, Model as ModelV2 } from "@opencode-ai/sdk/v2"
 
-import type { BunShell } from "./shell"
+import type { BunShell } from "./shell.js"
 import { type ToolDefinition } from "./tool.js"
 
 export * from "./tool.js"
@@ -32,86 +33,24 @@ export type PluginInput = {
   $: BunShell
 }
 
-export type Plugin = (input: PluginInput) => Promise<Hooks>
+export type PluginOptions = Record<string, unknown>
 
-export type AuthStrategy = "api-key" | "jwt" | "spiffe" | "oauth2" | "oidc" | "plugin"
-
-/**
- * The authorization decision returned by an `a2a.authz` hook.
- *
- * - `allow: true` — permit the request. `reason` is optional and used for audit logging only.
- * - `allow: false` — deny the request. `reason` is surfaced in the response error body.
- *   `status_code` defaults to `403` if omitted.
- *
- * Leaving `output.decision` as `undefined` is treated as **deny** by the runtime
- * (fail-closed, reason code `a2a_authz_no_decision`).
- */
-export type A2AAuthzDecision = {
-  allow: boolean
-  /** Human-readable reason. Surfaced in error body on deny; used for audit logs on allow. */
-  reason?: string
-  /** Optional deny status hint. Use 4xx/5xx values. */
-  status_code?: number
+export type Config = Omit<SDKConfig, "plugin"> & {
+  plugin?: Array<string | [string, PluginOptions]>
 }
 
-/**
- * Input provided to every `a2a.authz` hook invocation.
- */
-export type A2AAuthzInput = {
-  /** The A2A agent ID being accessed. */
-  agent: string
-  /**
-   * The action being authorized.
-   * - `"invoke"` — protected agent task/message route.
-   * - `"view"` — discovery route (agent card or agent listing).
-   */
-  action: "invoke" | "view"
-  /** HTTP method of the incoming request (e.g. `"POST"`, `"GET"`). */
-  method: string
-  /** Request path (e.g. `/a2a/my-agent/message:send`). */
-  path: string
-  /**
-   * Sanitized request headers. Credential headers (`Authorization`,
-   * `X-A2A-Key`) are present as keys but their values are **redacted**
-   * to `"[redacted]"` to prevent credential leakage into plugins.
-   */
-  headers: Record<string, string>
-  /**
-   * Authentication strategy that successfully verified the caller.
-   * `"none"` means the agent is public (no auth configured).
-   */
-  strategy: AuthStrategy | "none"
-  /** Authenticated principal identity (e.g. SPIFFE ID, JWT `sub`, `"api-key"`). */
-  principal: string
-  /**
-   * Alias for `principal`. The identity of the human or service that authenticated
-   * via the A2A auth layer (API key, JWT, OIDC, OAuth2).
-   */
-  user_principal: string
-  /**
-   * SPIFFE workload identity of the calling service, derived from the local
-   * SPIRE Workload API. `undefined` when SPIFFE is not configured or the
-   * workload identity could not be fetched.
-   */
-  workload_principal?: string
-  /**
-   * Authz plugin context forwarded from `server.a2a.authz.plugin` (or the
-   * per-agent override). Use `plugin.policy` to pass arbitrary config to
-   * your hook — e.g. OPA policy path, SpiceDB namespace, ACL realm.
-   */
-  plugin: {
-    /** Matches `server.a2a.authz.plugin.id` in opencode.json. */
-    id: string
-    /** Opaque policy object from config, passed through unchanged. */
-    policy: Record<string, unknown>
-  }
+export type Plugin = (input: PluginInput, options?: PluginOptions) => Promise<Hooks>
+
+export type PluginModule = {
+  id?: string
+  server: Plugin
+  tui?: never
 }
 
-export type RouteDefinition = {
-  method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" | "OPTIONS" | "*"
-  path: string
-  auth?: AuthStrategy | AuthStrategy[]
-  handler: (req: Request, params: Record<string, string>) => Promise<Response>
+type Rule = {
+  key: string
+  op: "eq" | "neq"
+  value: string
 }
 
 export type AuthHook = {
@@ -128,7 +67,9 @@ export type AuthHook = {
               message: string
               placeholder?: string
               validate?: (value: string) => string | undefined
+              /** @deprecated Use `when` instead */
               condition?: (inputs: Record<string, string>) => boolean
+              when?: Rule
             }
           | {
               type: "select"
@@ -139,10 +80,12 @@ export type AuthHook = {
                 value: string
                 hint?: string
               }>
+              /** @deprecated Use `when` instead */
               condition?: (inputs: Record<string, string>) => boolean
+              when?: Rule
             }
         >
-        authorize(inputs?: Record<string, string>): Promise<AuthOuathResult>
+        authorize(inputs?: Record<string, string>): Promise<AuthOAuthResult>
       }
     | {
         type: "api"
@@ -154,7 +97,9 @@ export type AuthHook = {
               message: string
               placeholder?: string
               validate?: (value: string) => string | undefined
+              /** @deprecated Use `when` instead */
               condition?: (inputs: Record<string, string>) => boolean
+              when?: Rule
             }
           | {
               type: "select"
@@ -165,7 +110,9 @@ export type AuthHook = {
                 value: string
                 hint?: string
               }>
+              /** @deprecated Use `when` instead */
               condition?: (inputs: Record<string, string>) => boolean
+              when?: Rule
             }
         >
         authorize?(inputs?: Record<string, string>): Promise<
@@ -182,20 +129,20 @@ export type AuthHook = {
   )[]
 }
 
-export type AuthOuathResult = { url: string; instructions: string; placeholder?: string } & (
+export type AuthOAuthResult = { url: string; instructions: string } & (
   | {
       method: "auto"
       callback(): Promise<
         | ({
             type: "success"
             provider?: string
-            next?: "model" | "clear"
           } & (
             | {
                 refresh: string
                 access: string
                 expires: number
                 accountId?: string
+                enterpriseUrl?: string
               }
             | { key: string }
           ))
@@ -210,13 +157,13 @@ export type AuthOuathResult = { url: string; instructions: string; placeholder?:
         | ({
             type: "success"
             provider?: string
-            next?: "model" | "clear"
           } & (
             | {
                 refresh: string
                 access: string
                 expires: number
                 accountId?: string
+                enterpriseUrl?: string
               }
             | { key: string }
           ))
@@ -227,73 +174,26 @@ export type AuthOuathResult = { url: string; instructions: string; placeholder?:
     }
 )
 
+export type ProviderHookContext = {
+  auth?: Auth
+}
+
+export type ProviderHook = {
+  id: string
+  models?: (provider: ProviderV2, ctx: ProviderHookContext) => Promise<Record<string, ModelV2>>
+}
+
+/** @deprecated Use AuthOAuthResult instead. */
+export type AuthOuathResult = AuthOAuthResult
+
 export interface Hooks {
   event?: (input: { event: Event }) => Promise<void>
   config?: (input: Config) => Promise<void>
-  "http.request"?: (
-    input: {
-      method: string
-      path: string
-      headers: Record<string, string>
-      clientIP: string
-    },
-    output: {
-      response?: {
-        status: number
-        body: string
-        headers?: Record<string, string>
-      }
-    },
-  ) => Promise<void>
-  "http.route"?: RouteDefinition[]
   tool?: {
     [key: string]: ToolDefinition
   }
   auth?: AuthHook
-  /**
-   * **A2A Authorization Hook** (`a2a.authz`)
-   *
-   * Called on every authenticated A2A request **after** the built-in authn step
-   * (API key, JWT, SPIFFE, OIDC, OAuth2) and **after** any configured `ext_authz`
-   * gRPC check. Allows plugins to implement custom authorization logic — for
-   * example, querying an OPA policy engine, a SpiceDB instance, or a simple ACL.
-   *
-   * ### Decision semantics
-   *
-   * Set `output.decision` to express an authorization decision:
-   *
-   * | `output.decision` | Effect |
-   * |---|---|
-   * | `undefined` (default) | No decision produced. Runtime denies request (fail-closed). |
-   * | `{ allow: true }` | Request is **allowed**. Hook chain stops immediately. |
-   * | `{ allow: false, reason?, status_code? }` | Request is **denied**. First denying hook wins. |
-   *
-   * If the hook **throws** or **times out**, the runtime treats it as a deny
-   * with `status_code: 403` (fail-closed). To opt into fail-open, catch your
-   * own errors inside the hook and return `{ allow: true }`.
-   *
-   * ### Actions
-   *
-   * - `"invoke"` — caller is sending a message or managing tasks (protected endpoint).
-   * - `"view"` — caller is checking discovery (agent card / agent listing). Return
-   *   `{ allow: false }` to hide the agent from discovery responses.
-   *
-   * ### Example
-   *
-   * ```typescript
-   * import type { Plugin } from "@opencode-ai/plugin"
-   *
-   * export const MyAuthzPlugin: Plugin = async () => ({
-   *   "a2a.authz": async (input, output) => {
-   *     if (input.agent === "restricted-agent" && input.principal !== "spiffe://corp/svc") {
-   *       output.decision = { allow: false, reason: "Access restricted", status_code: 403 }
-   *     }
-   *     // If you do not set output.decision, runtime denies request (fail-closed)
-   *   },
-   * })
-   * ```
-   */
-  "a2a.authz"?: (input: A2AAuthzInput, output: { decision?: A2AAuthzDecision }) => Promise<void>
+  provider?: ProviderHook
   /**
    * Called when a new message is received
    */
@@ -318,43 +218,6 @@ export interface Hooks {
     input: { sessionID: string; agent: string; model: Model; provider: ProviderContext; message: UserMessage },
     output: { headers: Record<string, string> },
   ) => Promise<void>
-  /**
-   * Called immediately before an LLM request is issued.
-   * Intended for observability and auditing of the final request payload.
-   * This hook is observational only: runtime passes a sanitized snapshot and
-   * ignores any mutations made by plugins.
-   */
-  llm_input?: (
-    input: { sessionID: string; agent: string; model: Model; provider: ProviderContext; message: UserMessage },
-    output: {
-      system: string[]
-      messages: Record<string, unknown>[]
-      toolNames: string[]
-      headers: Record<string, string>
-      temperature?: number
-      topP?: number
-      topK?: number
-      options: Record<string, any>
-    },
-  ) => Promise<void>
-  /**
-   * Called when an LLM step completes or errors.
-   * Intended for observability of finish reason, usage, and provider metadata.
-   */
-  llm_output?: (
-    input: { sessionID: string; agent: string; model: Model; provider: ProviderContext; message: UserMessage },
-    output:
-      | {
-          type: "finish-step"
-          finishReason: string
-          usage: Record<string, unknown>
-          providerMetadata?: Record<string, unknown>
-        }
-      | {
-          type: "error"
-          error: string
-        },
-  ) => Promise<void>
   "permission.ask"?: (input: Permission, output: { status: "ask" | "deny" | "allow" }) => Promise<void>
   "command.execute.before"?: (
     input: { command: string; sessionID: string; arguments: string },
@@ -366,7 +229,7 @@ export interface Hooks {
   ) => Promise<void>
   "shell.env"?: (
     input: { cwd: string; sessionID?: string; callID?: string },
-    output: { env: Record<string, string>; isSnapshotValid?: boolean; passthrough?: string[] },
+    output: { env: Record<string, string> },
   ) => Promise<void>
   "tool.execute.after"?: (
     input: { tool: string; sessionID: string; callID: string; args: any },
@@ -402,33 +265,6 @@ export interface Hooks {
     input: { sessionID: string },
     output: { context: string[]; prompt?: string },
   ) => Promise<void>
-  "experimental.session.compacted"?: (
-    input: { sessionID: string },
-    output: { summary: string; messageID: string },
-  ) => Promise<void>
-  "mcp.elicitation"?: (
-    input: {
-      sessionID: string
-      requestID: string
-      tool: string
-      prompt: unknown
-    },
-    output: {
-      response?: { text?: string; data?: Record<string, unknown> }
-      reject?: boolean
-    },
-  ) => Promise<void>
-  "mcp.elicitation.result"?: (
-    input: {
-      sessionID: string
-      requestID: string
-      tool: string
-      prompt: unknown
-    },
-    output: {
-      response: { text?: string; data?: Record<string, unknown> }
-    },
-  ) => Promise<void>
   "experimental.text.complete"?: (
     input: { sessionID: string; messageID: string; partID: string },
     output: { text: string },
@@ -437,16 +273,4 @@ export interface Hooks {
    * Modify tool definitions (description and parameters) sent to LLM
    */
   "tool.definition"?: (input: { toolID: string }, output: { description: string; parameters: any }) => Promise<void>
-  /**
-   * Called right after the system prompt (instructions) is compiled for a session.
-   * Allows plugins to inspect or dynamically mutate the final instructions.
-   */
-  "chat.instructions.loaded"?: (
-    input: { sessionID: string; agent: string; model: Model },
-    output: { instructions: string[] },
-  ) => Promise<void>
-  /**
-   * Called whenever the configuration is updated and saved to disk.
-   */
-  "config.change"?: (input: {}, output: {}) => Promise<void>
 }

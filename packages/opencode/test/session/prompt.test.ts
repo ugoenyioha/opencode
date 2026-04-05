@@ -1,16 +1,93 @@
 import path from "path"
-import { describe, expect, test, spyOn } from "bun:test"
+import { describe, expect, test } from "bun:test"
+import { NamedError } from "@opencode-ai/util/error"
 import { fileURLToPath } from "url"
 import { Instance } from "../../src/project/instance"
+import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Session } from "../../src/session"
 import { MessageV2 } from "../../src/session/message-v2"
 import { SessionPrompt } from "../../src/session/prompt"
 import { Log } from "../../src/util/log"
 import { tmpdir } from "../fixture/fixture"
-import { MCP } from "../../src/mcp"
-import { Flag } from "../../src/flag/flag"
 
 Log.init({ print: false })
+
+function defer<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  const promise = new Promise<T>((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
+
+function chat(text: string) {
+  const payload =
+    [
+      `data: ${JSON.stringify({
+        id: "chatcmpl-1",
+        object: "chat.completion.chunk",
+        choices: [{ delta: { role: "assistant" } }],
+      })}`,
+      `data: ${JSON.stringify({
+        id: "chatcmpl-1",
+        object: "chat.completion.chunk",
+        choices: [{ delta: { content: text } }],
+      })}`,
+      `data: ${JSON.stringify({
+        id: "chatcmpl-1",
+        object: "chat.completion.chunk",
+        choices: [{ delta: {}, finish_reason: "stop" }],
+      })}`,
+      "data: [DONE]",
+    ].join("\n\n") + "\n\n"
+
+  const encoder = new TextEncoder()
+  return new ReadableStream<Uint8Array>({
+    start(ctrl) {
+      ctrl.enqueue(encoder.encode(payload))
+      ctrl.close()
+    },
+  })
+}
+
+function hanging(ready: () => void) {
+  const encoder = new TextEncoder()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const first =
+    `data: ${JSON.stringify({
+      id: "chatcmpl-1",
+      object: "chat.completion.chunk",
+      choices: [{ delta: { role: "assistant" } }],
+    })}` + "\n\n"
+  const rest =
+    [
+      `data: ${JSON.stringify({
+        id: "chatcmpl-1",
+        object: "chat.completion.chunk",
+        choices: [{ delta: { content: "late" } }],
+      })}`,
+      `data: ${JSON.stringify({
+        id: "chatcmpl-1",
+        object: "chat.completion.chunk",
+        choices: [{ delta: {}, finish_reason: "stop" }],
+      })}`,
+      "data: [DONE]",
+    ].join("\n\n") + "\n\n"
+
+  return new ReadableStream<Uint8Array>({
+    start(ctrl) {
+      ctrl.enqueue(encoder.encode(first))
+      ready()
+      timer = setTimeout(() => {
+        ctrl.enqueue(encoder.encode(rest))
+        ctrl.close()
+      }, 10000)
+    },
+    cancel() {
+      if (timer) clearTimeout(timer)
+    },
+  })
+}
 
 describe("session.prompt missing file", () => {
   test("does not fail the prompt when a file part is missing", async () => {
@@ -149,6 +226,159 @@ describe("session.prompt special characters", () => {
   })
 })
 
+describe("session.prompt regression", () => {
+  test("does not loop empty assistant turns for a simple reply", async () => {
+    let calls = 0
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url)
+        if (!url.pathname.endsWith("/chat/completions")) {
+          return new Response("not found", { status: 404 })
+        }
+        calls++
+        return new Response(chat("packages/opencode/src/session/processor.ts"), {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        })
+      },
+    })
+
+    try {
+      await using tmp = await tmpdir({
+        git: true,
+        init: async (dir) => {
+          await Bun.write(
+            path.join(dir, "opencode.json"),
+            JSON.stringify({
+              $schema: "https://opencode.ai/config.json",
+              enabled_providers: ["alibaba"],
+              provider: {
+                alibaba: {
+                  options: {
+                    apiKey: "test-key",
+                    baseURL: `${server.url.origin}/v1`,
+                  },
+                },
+              },
+              agent: {
+                build: {
+                  model: "alibaba/qwen-plus",
+                },
+              },
+            }),
+          )
+        },
+      })
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const session = await Session.create({ title: "Prompt regression" })
+          const result = await SessionPrompt.prompt({
+            sessionID: session.id,
+            agent: "build",
+            parts: [{ type: "text", text: "Where is SessionProcessor?" }],
+          })
+
+          expect(result.info.role).toBe("assistant")
+          expect(result.parts.some((part) => part.type === "text" && part.text.includes("processor.ts"))).toBe(true)
+
+          const msgs = await Session.messages({ sessionID: session.id })
+          expect(msgs.filter((msg) => msg.info.role === "assistant")).toHaveLength(1)
+          expect(calls).toBe(1)
+        },
+      })
+    } finally {
+      server.stop(true)
+    }
+  })
+
+  test("records aborted errors when prompt is cancelled mid-stream", async () => {
+    const ready = defer<void>()
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url)
+        if (!url.pathname.endsWith("/chat/completions")) {
+          return new Response("not found", { status: 404 })
+        }
+        return new Response(
+          hanging(() => ready.resolve()),
+          {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream" },
+          },
+        )
+      },
+    })
+
+    try {
+      await using tmp = await tmpdir({
+        git: true,
+        init: async (dir) => {
+          await Bun.write(
+            path.join(dir, "opencode.json"),
+            JSON.stringify({
+              $schema: "https://opencode.ai/config.json",
+              enabled_providers: ["alibaba"],
+              provider: {
+                alibaba: {
+                  options: {
+                    apiKey: "test-key",
+                    baseURL: `${server.url.origin}/v1`,
+                  },
+                },
+              },
+              agent: {
+                build: {
+                  model: "alibaba/qwen-plus",
+                },
+              },
+            }),
+          )
+        },
+      })
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const session = await Session.create({ title: "Prompt cancel regression" })
+          const run = SessionPrompt.prompt({
+            sessionID: session.id,
+            agent: "build",
+            parts: [{ type: "text", text: "Cancel me" }],
+          })
+
+          await ready.promise
+          await SessionPrompt.cancel(session.id)
+
+          const result = await Promise.race([
+            run,
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error("timed out waiting for cancel")), 1000),
+            ),
+          ])
+
+          expect(result.info.role).toBe("assistant")
+          if (result.info.role === "assistant") {
+            expect(result.info.error?.name).toBe("MessageAbortedError")
+          }
+
+          const msgs = await Session.messages({ sessionID: session.id })
+          const last = msgs.findLast((msg) => msg.info.role === "assistant")
+          expect(last?.info.role).toBe("assistant")
+          if (last?.info.role === "assistant") {
+            expect(last.info.error?.name).toBe("MessageAbortedError")
+          }
+        },
+      })
+    } finally {
+      server.stop(true)
+    }
+  })
+})
+
 describe("session.prompt agent variant", () => {
   test("applies agent variant only when using agent model", async () => {
     const prev = process.env.OPENAI_API_KEY
@@ -175,7 +405,7 @@ describe("session.prompt agent variant", () => {
           const other = await SessionPrompt.prompt({
             sessionID: session.id,
             agent: "build",
-            model: { providerID: "opencode", modelID: "kimi-k2.5-free" },
+            model: { providerID: ProviderID.make("opencode"), modelID: ModelID.make("kimi-k2.5-free") },
             noReply: true,
             parts: [{ type: "text", text: "hello" }],
           })
@@ -189,7 +419,7 @@ describe("session.prompt agent variant", () => {
             parts: [{ type: "text", text: "hello again" }],
           })
           if (match.info.role !== "user") throw new Error("expected user message")
-          expect(match.info.model).toEqual({ providerID: "openai", modelID: "gpt-5.2" })
+          expect(match.info.model).toEqual({ providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") })
           expect(match.info.variant).toBe("xhigh")
 
           const override = await SessionPrompt.prompt({
@@ -212,151 +442,77 @@ describe("session.prompt agent variant", () => {
   })
 })
 
-describe("session.prompt binary MCP content", () => {
-  test("stores image base64 output and returns a path reference", async () => {
-    await using tmp = await tmpdir()
+describe("session.agent-resolution", () => {
+  test("unknown agent throws typed error", async () => {
+    await using tmp = await tmpdir({ git: true })
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const { jsonSchema } = await import("ai")
-        const data = Buffer.from("phase4-image-bytes").toString("base64")
-        const tools = {
-          mcp_image: {
-            description: "returns image content",
-            parameters: jsonSchema({ type: "object", properties: {}, additionalProperties: false }),
-            execute: async () => ({
-              content: [{ type: "image", mimeType: "image/png", data }],
-            }),
-          },
+        const session = await Session.create({})
+        const err = await SessionPrompt.prompt({
+          sessionID: session.id,
+          agent: "nonexistent-agent-xyz",
+          noReply: true,
+          parts: [{ type: "text", text: "hello" }],
+        }).then(
+          () => undefined,
+          (e) => e,
+        )
+        expect(err).toBeDefined()
+        expect(err).not.toBeInstanceOf(TypeError)
+        expect(NamedError.Unknown.isInstance(err)).toBe(true)
+        if (NamedError.Unknown.isInstance(err)) {
+          expect(err.data.message).toContain('Agent not found: "nonexistent-agent-xyz"')
         }
-        const mockTools = spyOn(MCP, "tools").mockResolvedValue(tools as any)
-        const resolved = await SessionPrompt.resolveTools({
-          messages: [],
-          agent: {
-            name: "build",
-            permission: [{ permission: "*", action: "allow", pattern: "*" }],
-          } as any,
-          model: { api: { id: "test" }, providerID: "test" } as any,
-          session: { id: "ses_1234" } as any,
-          processor: { message: { id: "msg_1" } } as any,
-          bypassAgentCheck: true,
-        })
-        const out = await (resolved["mcp_image"] as any).execute({}, { toolCallId: "call_1" } as any)
-        const content = out.content[0]
-        expect(content.type).toBe("text")
-        expect(content.text).toContain("Saved binary MCP output to")
-        expect(content.text.includes(data)).toBe(false)
-        const match = content.text.match(/^Saved binary MCP output to (.+)$/)
-        expect(match).toBeTruthy()
-        const p = match![1]
-        expect(p.startsWith(path.join(tmp.path, ".opencode", "tool-output"))).toBe(true)
-        const saved = Buffer.from(await Bun.file(p).arrayBuffer()).toString("utf8")
-        expect(saved).toBe("phase4-image-bytes")
-        mockTools.mockRestore()
       },
     })
-  })
+  }, 30000)
 
-  test("stores resource blob base64 output and returns a path reference", async () => {
-    await using tmp = await tmpdir()
+  test("unknown agent error includes available agent names", async () => {
+    await using tmp = await tmpdir({ git: true })
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const { jsonSchema } = await import("ai")
-        const blob = Buffer.from("phase4-resource-bytes").toString("base64")
-        const tools = {
-          mcp_resource: {
-            description: "returns resource content",
-            parameters: jsonSchema({ type: "object", properties: {}, additionalProperties: false }),
-            execute: async () => ({
-              content: [
-                {
-                  type: "resource",
-                  resource: {
-                    blob,
-                    mimeType: "application/octet-stream",
-                    uri: "file:///tmp/resource.bin",
-                  },
-                },
-              ],
-            }),
-          },
+        const session = await Session.create({})
+        const err = await SessionPrompt.prompt({
+          sessionID: session.id,
+          agent: "nonexistent-agent-xyz",
+          noReply: true,
+          parts: [{ type: "text", text: "hello" }],
+        }).then(
+          () => undefined,
+          (e) => e,
+        )
+        expect(NamedError.Unknown.isInstance(err)).toBe(true)
+        if (NamedError.Unknown.isInstance(err)) {
+          expect(err.data.message).toContain("build")
         }
-        const mockTools = spyOn(MCP, "tools").mockResolvedValue(tools as any)
-        const resolved = await SessionPrompt.resolveTools({
-          messages: [],
-          agent: {
-            name: "build",
-            permission: [{ permission: "*", action: "allow", pattern: "*" }],
-          } as any,
-          model: { api: { id: "test" }, providerID: "test" } as any,
-          session: { id: "ses_1234" } as any,
-          processor: { message: { id: "msg_2" } } as any,
-          bypassAgentCheck: true,
-        })
-        const out = await (resolved["mcp_resource"] as any).execute({}, { toolCallId: "call_2" } as any)
-        const content = out.content[0]
-        expect(content.type).toBe("text")
-        expect(content.text).toContain("Saved binary MCP output to")
-        expect(content.text.includes(blob)).toBe(false)
-        const match = content.text.match(/^Saved binary MCP output to (.+)$/)
-        expect(match).toBeTruthy()
-        const p = match![1]
-        expect(p.startsWith(path.join(tmp.path, ".opencode", "tool-output"))).toBe(true)
-        const saved = Buffer.from(await Bun.file(p).arrayBuffer()).toString("utf8")
-        expect(saved).toBe("phase4-resource-bytes")
-        mockTools.mockRestore()
       },
     })
-  })
-})
+  }, 30000)
 
-describe("session.prompt deferred MCP instructions", () => {
-  test("includes MCP server instructions when tools are deferred", async () => {
-    await using tmp = await tmpdir({
-      config: {
-        mcp: {
-          gemini: {
-            type: "local",
-            command: ["npx", "gemini"],
-            instructions: "Use this server for comprehensive web search.",
-          },
-        },
-      },
-    })
-
+  test("unknown command throws typed error with available names", async () => {
+    await using tmp = await tmpdir({ git: true })
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const { jsonSchema } = await import("ai")
-        spyOn(MCP, "tools").mockResolvedValue({
-          gemini_web_search: {
-            description: "Search the web",
-            parameters: jsonSchema({ type: "object", properties: {} }),
-            execute: async () => "search",
-          },
-          gemini_other_tool: {
-            description: "Other deferred tool",
-            parameters: jsonSchema({ type: "object", properties: {} }),
-            execute: async () => "other",
-          },
-        } as any)
-        spyOn(MCP, "toolMeta").mockResolvedValue({
-          gemini_web_search: { server: "gemini", tool: "web_search" },
-          gemini_other_tool: { server: "gemini", tool: "other_tool" },
-        })
-
-        const originalThreshold = Flag.OPENCODE_MCP_DEFER_THRESHOLD
-        try {
-          ;(Flag as any).OPENCODE_MCP_DEFER_THRESHOLD = 1
-          const block = await SessionPrompt.deferredInstructions([] as any)
-          expect(block).toContain("Some MCP servers have deferred tools")
-          expect(block).toContain("## gemini")
-          expect(block).toContain("Use this server for comprehensive web search.")
-        } finally {
-          ;(Flag as any).OPENCODE_MCP_DEFER_THRESHOLD = originalThreshold
+        const session = await Session.create({})
+        const err = await SessionPrompt.command({
+          sessionID: session.id,
+          command: "nonexistent-command-xyz",
+          arguments: "",
+        }).then(
+          () => undefined,
+          (e) => e,
+        )
+        expect(err).toBeDefined()
+        expect(err).not.toBeInstanceOf(TypeError)
+        expect(NamedError.Unknown.isInstance(err)).toBe(true)
+        if (NamedError.Unknown.isInstance(err)) {
+          expect(err.data.message).toContain('Command not found: "nonexistent-command-xyz"')
+          expect(err.data.message).toContain("init")
         }
       },
     })
-  })
+  }, 30000)
 })

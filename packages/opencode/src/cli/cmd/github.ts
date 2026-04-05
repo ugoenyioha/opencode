@@ -22,14 +22,15 @@ import { ModelsDev } from "../../provider/models"
 import { Instance } from "@/project/instance"
 import { bootstrap } from "../bootstrap"
 import { Session } from "../../session"
-import { Identifier } from "../../id/id"
+import type { SessionID } from "../../session/schema"
+import { MessageID, PartID } from "../../session/schema"
 import { Provider } from "../../provider/provider"
 import { Bus } from "../../bus"
 import { MessageV2 } from "../../session/message-v2"
 import { SessionPrompt } from "@/session/prompt"
-import { $ } from "bun"
+import { Git } from "@/git"
 import { setTimeout as sleep } from "node:timers/promises"
-import { MessageID, PartID } from "@/session/schema"
+import { Process } from "@/util/process"
 
 type GitHubAuthor = {
   login: string
@@ -256,7 +257,7 @@ export const GithubInstallCommand = cmd({
             }
 
             // Get repo info
-            const info = (await $`git remote get-url origin`.quiet().nothrow().text()).trim()
+            const info = (await Git.run(["remote", "get-url", "origin"], { cwd: Instance.worktree })).text().trim()
             const parsed = parseGitHubRemote(info)
             if (!parsed) {
               prompts.log.error(`Could not find git repository. Please run this command from a git repository.`)
@@ -481,7 +482,7 @@ export const GithubRunCommand = cmd({
       let octoRest: Octokit
       let octoGraph: typeof graphql
       let gitConfig: string
-      let session: { id: string; title: string; version: string }
+      let session: { id: SessionID; title: string; version: string }
       let shareId: string | undefined
       let exitCode = 0
       type PromptFiles = Awaited<ReturnType<typeof getUserPrompt>>["promptFiles"]
@@ -494,6 +495,26 @@ export const GithubRunCommand = cmd({
           ? "pr_review"
           : "issue"
         : undefined
+      const gitText = async (args: string[]) => {
+        const result = await Git.run(args, { cwd: Instance.worktree })
+        if (result.exitCode !== 0) {
+          throw new Process.RunFailedError(["git", ...args], result.exitCode, result.stdout, result.stderr)
+        }
+        return result.text().trim()
+      }
+      const gitRun = async (args: string[]) => {
+        const result = await Git.run(args, { cwd: Instance.worktree })
+        if (result.exitCode !== 0) {
+          throw new Process.RunFailedError(["git", ...args], result.exitCode, result.stdout, result.stderr)
+        }
+        return result
+      }
+      const gitStatus = (args: string[]) => Git.run(args, { cwd: Instance.worktree })
+      const commitChanges = async (summary: string, actor?: string) => {
+        const args = ["commit", "-m", summary]
+        if (actor) args.push("-m", `Co-authored-by: ${actor} <${actor}@users.noreply.github.com>`)
+        await gitRun(args)
+      }
 
       try {
         if (useGithubToken) {
@@ -554,7 +575,7 @@ export const GithubRunCommand = cmd({
           }
           const branchPrefix = isWorkflowDispatchEvent ? "dispatch" : "schedule"
           const branch = await checkoutNewBranch(branchPrefix)
-          const head = (await $`git rev-parse HEAD`).stdout.toString().trim()
+          const head = await gitText(["rev-parse", "HEAD"])
           const response = await chat(userPrompt, promptFiles)
           const { dirty, uncommittedChanges, switched } = await branchIsDirty(head, branch)
           if (switched) {
@@ -588,7 +609,7 @@ export const GithubRunCommand = cmd({
           // Local PR
           if (prData.headRepository.nameWithOwner === prData.baseRepository.nameWithOwner) {
             await checkoutLocalBranch(prData)
-            const head = (await $`git rev-parse HEAD`).stdout.toString().trim()
+            const head = await gitText(["rev-parse", "HEAD"])
             const dataPrompt = buildPromptDataForPR(prData)
             const response = await chat(`${userPrompt}\n\n${dataPrompt}`, promptFiles)
             const { dirty, uncommittedChanges, switched } = await branchIsDirty(head, prData.headRefName)
@@ -606,7 +627,7 @@ export const GithubRunCommand = cmd({
           // Fork PR
           else {
             const forkBranch = await checkoutForkBranch(prData)
-            const head = (await $`git rev-parse HEAD`).stdout.toString().trim()
+            const head = await gitText(["rev-parse", "HEAD"])
             const dataPrompt = buildPromptDataForPR(prData)
             const response = await chat(`${userPrompt}\n\n${dataPrompt}`, promptFiles)
             const { dirty, uncommittedChanges, switched } = await branchIsDirty(head, forkBranch)
@@ -625,7 +646,7 @@ export const GithubRunCommand = cmd({
         // Issue
         else {
           const branch = await checkoutNewBranch("issue")
-          const head = (await $`git rev-parse HEAD`).stdout.toString().trim()
+          const head = await gitText(["rev-parse", "HEAD"])
           const issueData = await fetchIssue()
           const dataPrompt = buildPromptDataForIssue(issueData)
           const response = await chat(`${userPrompt}\n\n${dataPrompt}`, promptFiles)
@@ -659,7 +680,7 @@ export const GithubRunCommand = cmd({
         exitCode = 1
         console.error(e instanceof Error ? e.message : String(e))
         let msg = e
-        if (e instanceof $.ShellError) {
+        if (e instanceof Process.RunFailedError) {
           msg = e.stderr.toString()
         } else if (e instanceof Error) {
           msg = e.message
@@ -848,11 +869,6 @@ export const GithubRunCommand = cmd({
       function subscribeSessionEvents() {
         const TOOL: Record<string, [string, string]> = {
           todowrite: ["Todo", UI.Style.TEXT_WARNING_BOLD],
-          todoread: ["Todo", UI.Style.TEXT_WARNING_BOLD],
-          session_task_create: ["Task", UI.Style.TEXT_WARNING_BOLD],
-          session_task_update: ["Task", UI.Style.TEXT_WARNING_BOLD],
-          session_task_get: ["Task", UI.Style.TEXT_WARNING_BOLD],
-          session_task_list: ["Task", UI.Style.TEXT_WARNING_BOLD],
           bash: ["Bash", UI.Style.TEXT_DANGER_BOLD],
           edit: ["Edit", UI.Style.TEXT_SUCCESS_BOLD],
           glob: ["Glob", UI.Style.TEXT_INFO_BOLD],
@@ -873,7 +889,7 @@ export const GithubRunCommand = cmd({
         }
 
         let text = ""
-        Bus.subscribe(MessageV2.Event.PartUpdated, async (evt) => {
+        Bus.subscribe(MessageV2.Event.PartUpdated, (evt) => {
           if (evt.properties.part.sessionID !== session.id) return
           //if (evt.properties.part.messageID === messageID) return
           const part = evt.properties.part
@@ -952,8 +968,6 @@ export const GithubRunCommand = cmd({
           ],
         })
 
-        const msg = result
-
         // result should always be assistant just satisfying type checker
         if (result.info.role === "assistant" && result.info.error) {
           const err = result.info.error
@@ -967,12 +981,12 @@ export const GithubRunCommand = cmd({
           throw new Error(`${err.name}: ${errorMsg}`)
         }
 
-        const text = extractResponseText(msg.parts)
+        const text = extractResponseText(result.parts)
         if (text) return text
 
         // No text part (tool-only or reasoning-only) - ask agent to summarize
         console.log("Requesting summary from agent...")
-        const summaryResult = await SessionPrompt.prompt({
+        const summary = await SessionPrompt.prompt({
           sessionID: session.id,
           messageID: MessageID.ascending(),
           variant,
@@ -989,8 +1003,6 @@ export const GithubRunCommand = cmd({
             },
           ],
         })
-
-        const summary = summaryResult
 
         if (summary.info.role === "assistant" && summary.info.error) {
           const err = summary.info.error
@@ -1058,29 +1070,29 @@ export const GithubRunCommand = cmd({
         const config = "http.https://github.com/.extraheader"
         // actions/checkout@v6 no longer stores credentials in .git/config,
         // so this may not exist - use nothrow() to handle gracefully
-        const ret = await $`git config --local --get ${config}`.nothrow()
+        const ret = await gitStatus(["config", "--local", "--get", config])
         if (ret.exitCode === 0) {
           gitConfig = ret.stdout.toString().trim()
-          await $`git config --local --unset-all ${config}`
+          await gitRun(["config", "--local", "--unset-all", config])
         }
 
         const newCredentials = Buffer.from(`x-access-token:${appToken}`, "utf8").toString("base64")
 
-        await $`git config --local ${config} "AUTHORIZATION: basic ${newCredentials}"`
-        await $`git config --global user.name "${AGENT_USERNAME}"`
-        await $`git config --global user.email "${AGENT_USERNAME}@users.noreply.github.com"`
+        await gitRun(["config", "--local", config, `AUTHORIZATION: basic ${newCredentials}`])
+        await gitRun(["config", "--global", "user.name", AGENT_USERNAME])
+        await gitRun(["config", "--global", "user.email", `${AGENT_USERNAME}@users.noreply.github.com`])
       }
 
       async function restoreGitConfig() {
         if (gitConfig === undefined) return
         const config = "http.https://github.com/.extraheader"
-        await $`git config --local ${config} "${gitConfig}"`
+        await gitRun(["config", "--local", config, gitConfig])
       }
 
       async function checkoutNewBranch(type: "issue" | "schedule" | "dispatch") {
         console.log("Checking out new branch...")
         const branch = generateBranchName(type)
-        await $`git checkout -b ${branch}`
+        await gitRun(["checkout", "-b", branch])
         return branch
       }
 
@@ -1090,8 +1102,8 @@ export const GithubRunCommand = cmd({
         const branch = pr.headRefName
         const depth = Math.max(pr.commits.totalCount, 20)
 
-        await $`git fetch origin --depth=${depth} ${branch}`
-        await $`git checkout ${branch}`
+        await gitRun(["fetch", "origin", `--depth=${depth}`, branch])
+        await gitRun(["checkout", branch])
       }
 
       async function checkoutForkBranch(pr: GitHubPullRequest) {
@@ -1101,9 +1113,9 @@ export const GithubRunCommand = cmd({
         const localBranch = generateBranchName("pr")
         const depth = Math.max(pr.commits.totalCount, 20)
 
-        await $`git remote add fork https://github.com/${pr.headRepository.nameWithOwner}.git`
-        await $`git fetch fork --depth=${depth} ${remoteBranch}`
-        await $`git checkout -b ${localBranch} fork/${remoteBranch}`
+        await gitRun(["remote", "add", "fork", `https://github.com/${pr.headRepository.nameWithOwner}.git`])
+        await gitRun(["fetch", "fork", `--depth=${depth}`, remoteBranch])
+        await gitRun(["checkout", "-b", localBranch, `fork/${remoteBranch}`])
         return localBranch
       }
 
@@ -1124,28 +1136,23 @@ export const GithubRunCommand = cmd({
       async function pushToNewBranch(summary: string, branch: string, commit: boolean, isSchedule: boolean) {
         console.log("Pushing to new branch...")
         if (commit) {
-          await $`git add .`
+          await gitRun(["add", "."])
           if (isSchedule) {
-            // No co-author for scheduled events - the schedule is operating as the repo
-            await $`git commit -m "${summary}"`
+            await commitChanges(summary)
           } else {
-            await $`git commit -m "${summary}
-
-Co-authored-by: ${actor} <${actor}@users.noreply.github.com>"`
+            await commitChanges(summary, actor)
           }
         }
-        await $`git push -u origin ${branch}`
+        await gitRun(["push", "-u", "origin", branch])
       }
 
       async function pushToLocalBranch(summary: string, commit: boolean) {
         console.log("Pushing to local branch...")
         if (commit) {
-          await $`git add .`
-          await $`git commit -m "${summary}
-
-Co-authored-by: ${actor} <${actor}@users.noreply.github.com>"`
+          await gitRun(["add", "."])
+          await commitChanges(summary, actor)
         }
-        await $`git push`
+        await gitRun(["push"])
       }
 
       async function pushToForkBranch(summary: string, pr: GitHubPullRequest, commit: boolean) {
@@ -1154,30 +1161,28 @@ Co-authored-by: ${actor} <${actor}@users.noreply.github.com>"`
         const remoteBranch = pr.headRefName
 
         if (commit) {
-          await $`git add .`
-          await $`git commit -m "${summary}
-
-Co-authored-by: ${actor} <${actor}@users.noreply.github.com>"`
+          await gitRun(["add", "."])
+          await commitChanges(summary, actor)
         }
-        await $`git push fork HEAD:${remoteBranch}`
+        await gitRun(["push", "fork", `HEAD:${remoteBranch}`])
       }
 
       async function branchIsDirty(originalHead: string, expectedBranch: string) {
         console.log("Checking if branch is dirty...")
         // Detect if the agent switched branches during chat (e.g. created
         // its own branch, committed, and possibly pushed/created a PR).
-        const current = (await $`git rev-parse --abbrev-ref HEAD`).stdout.toString().trim()
+        const current = await gitText(["rev-parse", "--abbrev-ref", "HEAD"])
         if (current !== expectedBranch) {
           console.log(`Branch changed during chat: expected ${expectedBranch}, now on ${current}`)
           return { dirty: true, uncommittedChanges: false, switched: true }
         }
 
-        const ret = await $`git status --porcelain`
+        const ret = await gitStatus(["status", "--porcelain"])
         const status = ret.stdout.toString().trim()
         if (status.length > 0) {
           return { dirty: true, uncommittedChanges: true, switched: false }
         }
-        const head = (await $`git rev-parse HEAD`).stdout.toString().trim()
+        const head = await gitText(["rev-parse", "HEAD"])
         return {
           dirty: head !== originalHead,
           uncommittedChanges: false,
@@ -1189,11 +1194,11 @@ Co-authored-by: ${actor} <${actor}@users.noreply.github.com>"`
       // Falls back to fetching from origin when local refs are missing
       // (common in shallow clones from actions/checkout).
       async function hasNewCommits(base: string, head: string) {
-        const result = await $`git rev-list --count ${base}..${head}`.nothrow()
+        const result = await gitStatus(["rev-list", "--count", `${base}..${head}`])
         if (result.exitCode !== 0) {
           console.log(`rev-list failed, fetching origin/${base}...`)
-          await $`git fetch origin ${base} --depth=1`.nothrow()
-          const retry = await $`git rev-list --count origin/${base}..${head}`.nothrow()
+          await gitStatus(["fetch", "origin", base, "--depth=1"])
+          const retry = await gitStatus(["rev-list", "--count", `origin/${base}..${head}`])
           if (retry.exitCode !== 0) return true // assume dirty if we can't tell
           return parseInt(retry.stdout.toString().trim()) > 0
         }

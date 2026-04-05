@@ -9,10 +9,11 @@ import { Config } from "@/config/config"
 import { Bus } from "@/bus"
 import { GlobalBus } from "@/bus/global"
 import type { Event } from "@opencode-ai/sdk/v2"
-import type { BunWebSocketData } from "hono/bun"
 import { Flag } from "@/flag/flag"
-import { Database } from "@/storage/db"
 import { setTimeout as sleep } from "node:timers/promises"
+import { writeHeapSnapshot } from "node:v8"
+import { WorkspaceID } from "@/control-plane/schema"
+import { Heap } from "@/cli/heap"
 
 await Log.init({
   print: process.argv.includes("--print-logs"),
@@ -22,6 +23,8 @@ await Log.init({
     return "INFO"
   })(),
 })
+
+Heap.start()
 
 process.on("unhandledRejection", (e) => {
   Log.Default.error("rejection", {
@@ -40,13 +43,13 @@ GlobalBus.on("event", (event) => {
   Rpc.emit("global.event", event)
 })
 
-let server: Bun.Server<BunWebSocketData> | undefined
+let server: Awaited<ReturnType<typeof Server.listen>> | undefined
 
 const eventStream = {
   abort: undefined as AbortController | undefined,
 }
 
-const startEventStream = (directory: string) => {
+const startEventStream = (input: { directory: string; workspaceID?: string }) => {
   if (eventStream.abort) eventStream.abort.abort()
   const abort = new AbortController()
   eventStream.abort = abort
@@ -55,7 +58,7 @@ const startEventStream = (directory: string) => {
   ;(async () => {
     while (!signal.aborted) {
       const shouldReconnect = await Instance.provide({
-        directory,
+        directory: input.directory,
         init: InstanceBootstrap,
         fn: () =>
           new Promise<boolean>((resolve) => {
@@ -108,12 +111,9 @@ const startEventStream = (directory: string) => {
   })
 }
 
-startEventStream(process.cwd())
+startEventStream({ directory: process.cwd() })
 
 export const rpc = {
-  setDirectory(input: { directory: string }) {
-    startEventStream(input.directory)
-  },
   async fetch(input: { url: string; method: string; headers: Record<string, string>; body?: string }) {
     const headers = { ...input.headers }
     const auth = getAuthorizationHeader()
@@ -125,7 +125,7 @@ export const rpc = {
       headers,
       body: input.body,
     })
-    const response = await Server.internalFetch(request)
+    const response = await Server.Default().fetch(request)
     const body = await response.text()
     return {
       status: response.status,
@@ -133,10 +133,14 @@ export const rpc = {
       body,
     }
   },
-  async server(input: { port: number; hostname: string; unix?: string; mdns?: boolean; cors?: string[] }) {
+  snapshot() {
+    const result = writeHeapSnapshot("server.heapsnapshot")
+    return result
+  },
+  async server(input: { port: number; hostname: string; mdns?: boolean; cors?: string[] }) {
     if (server) await server.stop(true)
     server = await Server.listen(input)
-    return { url: input.unix ? `unix://${input.unix}` : server.url.toString() }
+    return { url: server.url.toString() }
   },
   async checkUpgrade(input: { directory: string }) {
     await Instance.provide({
@@ -148,26 +152,16 @@ export const rpc = {
     })
   },
   async reload() {
-    Config.global.reset()
-    await Instance.disposeAll()
+    await Config.invalidate(true)
+  },
+  async setWorkspace(input: { workspaceID?: string }) {
+    startEventStream({ directory: process.cwd(), workspaceID: input.workspaceID })
   },
   async shutdown() {
     Log.Default.info("worker shutting down")
     if (eventStream.abort) eventStream.abort.abort()
-    try {
-      await Promise.race([
-        Instance.disposeAll(),
-        new Promise((resolve) => {
-          setTimeout(resolve, 5000)
-        }),
-      ])
-      if (server) server.stop(true)
-    } catch (error) {
-      Log.Default.warn("worker shutdown encountered error", {
-        error: error instanceof Error ? error.message : String(error),
-      })
-    }
-    Database.close()
+    await Instance.disposeAll()
+    if (server) await server.stop(true)
   },
 }
 

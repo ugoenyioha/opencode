@@ -1,6 +1,6 @@
 import type { Argv } from "yargs"
 import path from "path"
-import { pathToFileURL } from "bun"
+import { pathToFileURL } from "url"
 import { UI } from "../ui"
 import { cmd } from "./cmd"
 import { Flag } from "../../flag/flag"
@@ -11,7 +11,7 @@ import { createOpencodeClient, type Message, type OpencodeClient, type ToolPart 
 import { Server } from "../../server/server"
 import { Provider } from "../../provider/provider"
 import { Agent } from "../../agent/agent"
-import { PermissionNext } from "../../permission/next"
+import { Permission } from "../../permission"
 import { Tool } from "../../tool/tool"
 import { GlobTool } from "../../tool/glob"
 import { GrepTool } from "../../tool/grep"
@@ -27,16 +27,14 @@ import { SkillTool } from "../../tool/skill"
 import { BashTool } from "../../tool/bash"
 import { TodoWriteTool } from "../../tool/todo"
 import { Locale } from "../../util/locale"
-import { SessionCron } from "@/session/cron"
-import { SessionLoop } from "@/session/loop"
 
-type ToolProps<T extends Tool.Info> = {
+type ToolProps<T> = {
   input: Tool.InferParameters<T>
   metadata: Tool.InferMetadata<T>
   part: ToolPart
 }
 
-function props<T extends Tool.Info>(part: ToolPart): ToolProps<T> {
+function props<T>(part: ToolPart): ToolProps<T> {
   const state = part.state
   return {
     input: state.input as Tool.InferParameters<T>,
@@ -205,40 +203,13 @@ function bash(info: ToolProps<typeof BashTool>) {
 }
 
 function todo(info: ToolProps<typeof TodoWriteTool>) {
-  const items = info.input.todos ?? []
   block(
     {
       icon: "#",
       title: "Todos",
     },
-    items.map((item: any) => `${item.status === "completed" ? "[x]" : "[ ]"} ${item.content}`).join("\n"),
+    info.input.todos.map((item) => `${item.status === "completed" ? "[x]" : "[ ]"} ${item.content}`).join("\n"),
   )
-}
-
-function tasks(part: ToolPart) {
-  const output = "output" in part.state ? part.state.output : undefined
-  if (!output) return
-  const parsed = safeParseTasks(output)
-  if (!parsed.length) return fallback(part)
-  block(
-    {
-      icon: "#",
-      title: "Tasks",
-    },
-    parsed.map((item: any) => `${item.status === "completed" ? "[x]" : "[ ]"} ${item.content}`).join("\n"),
-  )
-}
-
-function safeParseTasks(output?: string): any[] {
-  if (!output) return []
-  try {
-    const data = JSON.parse(output)
-    if (Array.isArray(data)) return data
-    if (data && typeof data === "object" && data.content) return [data]
-    return []
-  } catch {
-    return []
-  }
 }
 
 function normalizePath(input?: string) {
@@ -383,7 +354,7 @@ export const RunCommand = cmd({
       process.exit(1)
     }
 
-    const rules: PermissionNext.Ruleset = [
+    const rules: Permission.Ruleset = [
       {
         permission: "question",
         action: "deny",
@@ -452,10 +423,6 @@ export const RunCommand = cmd({
           if (part.tool === "websearch") return websearch(props<typeof WebSearchTool>(part))
           if (part.tool === "task") return task(props<typeof TaskTool>(part))
           if (part.tool === "todowrite") return todo(props<typeof TodoWriteTool>(part))
-          if (part.tool === "session_task_list") return tasks(part)
-          if (part.tool === "session_task_create") return tasks(part)
-          if (part.tool === "session_task_update") return tasks(part)
-          if (part.tool === "session_task_get") return tasks(part)
           if (part.tool === "skill") return skill(props<typeof SkillTool>(part))
           return fallback(part)
         } catch {
@@ -659,47 +626,6 @@ export const RunCommand = cmd({
       }
       await share(sdk, sessionID)
 
-      const loopCmd = SessionLoop.parse(message)
-      if (loopCmd?.type === "invalid") {
-        UI.error(loopCmd.message)
-        return
-      }
-      if (loopCmd?.type === "stop") {
-        if (args.attach) {
-          const result = await SessionLoop.stop(sdk as any, sessionID)
-          if (!result.ok) {
-            UI.error("Failed to stop /loop jobs")
-            return
-          }
-          UI.println(UI.Style.TEXT_INFO_BOLD + "~  " + `Stopped /loop jobs (${result.data.removed})`)
-          return
-        }
-        const removed = await SessionCron.stop({ sessionID })
-        UI.println(UI.Style.TEXT_INFO_BOLD + "~  " + `Stopped /loop jobs (${removed})`)
-        return
-      }
-      if (loopCmd?.type === "create") {
-        if (args.attach) {
-          const result = await SessionLoop.create(sdk as any, sessionID, {
-            interval_ms: loopCmd.interval_ms,
-            prompt: loopCmd.prompt,
-          })
-          if (!result.ok) {
-            UI.error("Failed to schedule /loop job")
-            return
-          }
-          UI.println(UI.Style.TEXT_INFO_BOLD + "~  " + `Scheduled /loop every ${loopCmd.minutes} minute(s)`)
-          return
-        }
-        await SessionCron.create({
-          sessionID,
-          interval_ms: loopCmd.interval_ms,
-          prompt: loopCmd.prompt,
-        })
-        UI.println(UI.Style.TEXT_INFO_BOLD + "~  " + `Scheduled /loop every ${loopCmd.minutes} minute(s)`)
-        return
-      }
-
       loop().catch((e) => {
         console.error(e)
         process.exit(1)
@@ -715,7 +641,7 @@ export const RunCommand = cmd({
           variant: args.variant,
         })
       } else {
-        const model = args.model ? Provider.parseModel(await Provider.resolveModel(args.model)) : undefined
+        const model = args.model ? Provider.parseModel(args.model) : undefined
         await sdk.session.prompt({
           sessionID,
           agent,
@@ -739,10 +665,11 @@ export const RunCommand = cmd({
     }
 
     await bootstrap(process.cwd(), async () => {
-      const sdk = createOpencodeClient({
-        baseUrl: "http://opencode.internal",
-        fetch: Server.internalFetch as typeof globalThis.fetch,
-      })
+      const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = new Request(input, init)
+        return Server.Default().fetch(request)
+      }) as typeof globalThis.fetch
+      const sdk = createOpencodeClient({ baseUrl: "http://opencode.internal", fetch: fetchFn })
       await execute(sdk)
     })
   },

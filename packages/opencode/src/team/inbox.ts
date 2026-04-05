@@ -97,8 +97,7 @@ export namespace Inbox {
     if (!fromSession) throw new Error(`Sender "${message.from}" not found`)
 
     // Enforce max_team_messages to prevent unbounded inbox growth
-    const config = await Config.get()
-    const limit = config.server?.limits?.max_team_messages ?? 1000
+    const limit = 1000
     const count =
       Database.use((db) =>
         db

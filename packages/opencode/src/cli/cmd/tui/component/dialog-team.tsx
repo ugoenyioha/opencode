@@ -91,7 +91,7 @@ export function DialogTeam() {
     const info = teamInfo()
     if (!info) return []
 
-    const memberOptions: DialogSelectOption<string>[] = info.members.map((m) => ({
+    const memberOptions: DialogSelectOption<string>[] = info.members.map((m: any) => ({
       title: `${m.name} (@${m.agent})`,
       value: `member:${m.sessionID}`,
       category: "Teammates",
@@ -99,7 +99,7 @@ export function DialogTeam() {
       gutter: <text fg={statusColor(m.status, theme)}>{statusIcon(m.status)}</text>,
     }))
 
-    const taskOptions: DialogSelectOption<string>[] = (info.tasks ?? []).map((t) => ({
+    const taskOptions: DialogSelectOption<string>[] = (info.tasks ?? []).map((t: any) => ({
       title: t.content,
       value: `task:${t.id}`,
       category: "Shared Tasks",

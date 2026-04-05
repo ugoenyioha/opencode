@@ -3,20 +3,19 @@ import { Project } from "../../src/project/project"
 import { Database, eq } from "../../src/storage/db"
 import { SessionTable } from "../../src/session/session.sql"
 import { ProjectTable } from "../../src/project/project.sql"
-import { Identifier } from "../../src/id/id"
+import { ProjectID } from "../../src/project/schema"
+import { SessionID } from "../../src/session/schema"
 import { Log } from "../../src/util/log"
 import { $ } from "bun"
 import { tmpdir } from "../fixture/fixture"
 
 Log.init({ print: false })
 
-const GLOBAL_PROJECT_ID = "global"
-
 function uid() {
-  return Identifier.ascending("session")
+  return SessionID.make(crypto.randomUUID())
 }
 
-function seed(opts: { id: string; dir: string; project: string }) {
+function seed(opts: { id: SessionID; dir: string; project: ProjectID }) {
   const now = Date.now()
   Database.use((db) =>
     db
@@ -40,7 +39,7 @@ function ensureGlobal() {
     db
       .insert(ProjectTable)
       .values({
-        id: GLOBAL_PROJECT_ID,
+        id: ProjectID.global,
         worktree: "/",
         time_created: Date.now(),
         time_updated: Date.now(),
@@ -53,28 +52,23 @@ function ensureGlobal() {
 
 describe("migrateFromGlobal", () => {
   test("migrates global sessions on first project creation", async () => {
-    // 1. Start with git init but no commits. On this branch a repo without a
-    // root commit still resolves to a local hashed project ID rather than
-    // "global", but sessions created before the first commit may still exist
-    // under the historical global bucket and need migrating once a real git ID
-    // appears.
+    // 1. Start with git init but no commits — creates "global" project row
     await using tmp = await tmpdir()
     await $`git init`.cwd(tmp.path).quiet()
     await $`git config user.name "Test"`.cwd(tmp.path).quiet()
     await $`git config user.email "test@opencode.test"`.cwd(tmp.path).quiet()
     const { project: pre } = await Project.fromDirectory(tmp.path)
-    expect(pre.id).not.toBe(GLOBAL_PROJECT_ID)
+    expect(pre.id).toBe(ProjectID.global)
 
     // 2. Seed a session under "global" with matching directory
-    ensureGlobal()
     const id = uid()
-    seed({ id, dir: tmp.path, project: GLOBAL_PROJECT_ID })
+    seed({ id, dir: tmp.path, project: ProjectID.global })
 
     // 3. Make a commit so the project gets a real ID
     await $`git commit --allow-empty -m "root"`.cwd(tmp.path).quiet()
 
     const { project: real } = await Project.fromDirectory(tmp.path)
-    expect(real.id).not.toBe(GLOBAL_PROJECT_ID)
+    expect(real.id).not.toBe(ProjectID.global)
 
     // 4. The session should have been migrated to the real project ID
     const row = Database.use((db) => db.select().from(SessionTable).where(eq(SessionTable.id, id)).get())
@@ -86,7 +80,7 @@ describe("migrateFromGlobal", () => {
     // 1. Create a repo with a commit — real project ID created immediately
     await using tmp = await tmpdir({ git: true })
     const { project } = await Project.fromDirectory(tmp.path)
-    expect(project.id).not.toBe(GLOBAL_PROJECT_ID)
+    expect(project.id).not.toBe(ProjectID.global)
 
     // 2. Ensure "global" project row exists (as it would from a prior no-git session)
     ensureGlobal()
@@ -95,7 +89,7 @@ describe("migrateFromGlobal", () => {
     //    This simulates a session created before git init that wasn't
     //    present when the real project row was first created.
     const id = uid()
-    seed({ id, dir: tmp.path, project: GLOBAL_PROJECT_ID })
+    seed({ id, dir: tmp.path, project: ProjectID.global })
 
     // 4. Call fromDirectory again — project row already exists,
     //    so the current code skips migration entirely. This is the bug.
@@ -106,41 +100,41 @@ describe("migrateFromGlobal", () => {
     expect(row!.project_id).toBe(project.id)
   })
 
-  test("migrates sessions with empty directory", async () => {
+  test("does not claim sessions with empty directory", async () => {
     await using tmp = await tmpdir({ git: true })
     const { project } = await Project.fromDirectory(tmp.path)
-    expect(project.id).not.toBe(GLOBAL_PROJECT_ID)
+    expect(project.id).not.toBe(ProjectID.global)
 
     ensureGlobal()
 
-    // Legacy sessions may lack a directory value
+    // Legacy sessions may lack a directory value.
+    // Without a matching origin directory, they should remain global.
     const id = uid()
-    seed({ id, dir: "", project: GLOBAL_PROJECT_ID })
+    seed({ id, dir: "", project: ProjectID.global })
 
     await Project.fromDirectory(tmp.path)
 
     const row = Database.use((db) => db.select().from(SessionTable).where(eq(SessionTable.id, id)).get())
     expect(row).toBeDefined()
-    // Empty directory means "no known origin" — should be claimed
-    expect(row!.project_id).toBe(project.id)
+    expect(row!.project_id).toBe(ProjectID.global)
   })
 
   test("does not steal sessions from unrelated directories", async () => {
     await using tmp = await tmpdir({ git: true })
     const { project } = await Project.fromDirectory(tmp.path)
-    expect(project.id).not.toBe(GLOBAL_PROJECT_ID)
+    expect(project.id).not.toBe(ProjectID.global)
 
     ensureGlobal()
 
     // Seed a session under "global" but for a DIFFERENT directory
     const id = uid()
-    seed({ id, dir: "/some/other/dir", project: GLOBAL_PROJECT_ID })
+    seed({ id, dir: "/some/other/dir", project: ProjectID.global })
 
     await Project.fromDirectory(tmp.path)
 
     const row = Database.use((db) => db.select().from(SessionTable).where(eq(SessionTable.id, id)).get())
     expect(row).toBeDefined()
     // Should remain under "global" — not stolen
-    expect(row!.project_id).toBe(GLOBAL_PROJECT_ID)
+    expect(row!.project_id).toBe(ProjectID.global)
   })
 })

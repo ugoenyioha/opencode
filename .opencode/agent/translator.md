@@ -1,12 +1,7 @@
 ---
 description: Translate content for a specified locale while preserving technical terms
 mode: subagent
-model: opencode/gemini-3-pro
-tools:
-  "team_message": true
-  "team_tasks": true
-  "team_status": true
-  "team_broadcast": true
+model: opencode/gpt-5.4
 ---
 
 You are a professional translator and localization specialist.

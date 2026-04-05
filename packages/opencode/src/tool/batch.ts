@@ -1,5 +1,7 @@
 import z from "zod"
 import { Tool } from "./tool"
+import { ProviderID, ModelID } from "../provider/schema"
+import { errorMessage } from "../util/error"
 import DESCRIPTION from "./batch.txt"
 import { PartID } from "../session/schema"
 
@@ -32,13 +34,13 @@ export const BatchTool = Tool.define("batch", async () => {
     },
     async execute(params, ctx) {
       const { Session } = await import("../session")
-      const { Identifier } = await import("../id/id")
+      const { PartID } = await import("../session/schema")
 
       const toolCalls = params.tool_calls.slice(0, 25)
       const discardedCalls = params.tool_calls.slice(25)
 
       const { ToolRegistry } = await import("./registry")
-      const availableTools = await ToolRegistry.tools({ modelID: "", providerID: "" })
+      const availableTools = await ToolRegistry.tools({ modelID: ModelID.make(""), providerID: ProviderID.make("") })
       const toolMap = new Map(availableTools.map((t) => [t.id, t]))
 
       const executeCall = async (call: (typeof toolCalls)[0]) => {
@@ -118,7 +120,7 @@ export const BatchTool = Tool.define("batch", async () => {
             state: {
               status: "error",
               input: call.parameters,
-              error: error instanceof Error ? error.message : String(error),
+              error: errorMessage(error),
               time: {
                 start: callStartTime,
                 end: Date.now(),

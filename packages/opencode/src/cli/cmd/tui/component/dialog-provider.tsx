@@ -13,6 +13,7 @@ import { DialogModel } from "./dialog-model"
 import { useKeyboard } from "@opentui/solid"
 import { Clipboard } from "@tui/util/clipboard"
 import { useToast } from "../ui/toast"
+import { CONSOLE_MANAGED_ICON, isConsoleManagedProvider } from "@tui/util/provider-origin"
 
 const PROVIDER_PRIORITY: Record<string, number> = {
   opencode: 0,
@@ -28,87 +29,111 @@ export function createDialogProviderOptions() {
   const dialog = useDialog()
   const sdk = useSDK()
   const toast = useToast()
+  const { theme } = useTheme()
   const options = createMemo(() => {
     return pipe(
       sync.data.provider_next.all,
       sortBy((x) => PROVIDER_PRIORITY[x.id] ?? 99),
-      map((provider) => ({
-        title: provider.name,
-        value: provider.id,
-        description: {
-          opencode: "(Recommended)",
-          anthropic: "(Claude Max or API key)",
-          openai: "(ChatGPT Plus/Pro or API key)",
-          "opencode-go": "Low cost subscription for everyone",
-        }[provider.id],
-        category: provider.id in PROVIDER_PRIORITY ? "Popular" : "Other",
-        async onSelect() {
-          const methods = sync.data.provider_auth[provider.id] ?? [
-            {
-              type: "api",
-              label: "API key",
-            },
-          ]
-          let index: number | null = 0
-          if (methods.length > 1) {
-            index = await new Promise<number | null>((resolve) => {
-              dialog.replace(
-                () => (
-                  <DialogSelect
-                    title="Select auth method"
-                    options={methods.map((x, index) => ({
-                      title: x.label,
-                      value: index,
-                    }))}
-                    onSelect={(option) => resolve(option.value)}
-                  />
-                ),
-                () => resolve(null),
-              )
-            })
-          }
-          if (index == null) return
-          const method = methods[index]
-          if (method.type === "oauth") {
-            let inputs: Record<string, string> | undefined
-            if (method.prompts?.length) {
-              const value = await PromptsMethod({
-                dialog,
-                prompts: method.prompts,
-              })
-              if (!value) return
-              inputs = value
-            }
+      map((provider) => {
+        const consoleManaged = isConsoleManagedProvider(sync.data.console_state.consoleManagedProviders, provider.id)
+        const connected = sync.data.provider_next.connected.includes(provider.id)
 
-            const result = await sdk.client.provider.oauth.authorize({
-              providerID: provider.id,
-              method: index,
-              inputs,
-            })
-            if (result.error) {
-              toast.show({
-                variant: "error",
-                message: JSON.stringify(result.error),
+        return {
+          title: provider.name,
+          value: provider.id,
+          description: {
+            opencode: "(Recommended)",
+            anthropic: "(API key)",
+            openai: "(ChatGPT Plus/Pro or API key)",
+            "opencode-go": "Low cost subscription for everyone",
+          }[provider.id],
+          footer: consoleManaged ? sync.data.console_state.activeOrgName : undefined,
+          category: provider.id in PROVIDER_PRIORITY ? "Popular" : "Other",
+          gutter: consoleManaged ? (
+            <text fg={theme.textMuted}>{CONSOLE_MANAGED_ICON}</text>
+          ) : connected ? (
+            <text fg={theme.success}>✓</text>
+          ) : undefined,
+          async onSelect() {
+            if (consoleManaged) return
+
+            const methods = sync.data.provider_auth[provider.id] ?? [
+              {
+                type: "api",
+                label: "API key",
+              },
+            ]
+            let index: number | null = 0
+            if (methods.length > 1) {
+              index = await new Promise<number | null>((resolve) => {
+                dialog.replace(
+                  () => (
+                    <DialogSelect
+                      title="Select auth method"
+                      options={methods.map((x, index) => ({
+                        title: x.label,
+                        value: index,
+                      }))}
+                      onSelect={(option) => resolve(option.value)}
+                    />
+                  ),
+                  () => resolve(null),
+                )
               })
-              dialog.clear()
-              return
             }
-            if (result.data?.method === "code") {
-              dialog.replace(() => (
-                <CodeMethod providerID={provider.id} title={method.label} index={index} authorization={result.data!} />
-              ))
+            if (index == null) return
+            const method = methods[index]
+            if (method.type === "oauth") {
+              let inputs: Record<string, string> | undefined
+              if (method.prompts?.length) {
+                const value = await PromptsMethod({
+                  dialog,
+                  prompts: method.prompts,
+                })
+                if (!value) return
+                inputs = value
+              }
+
+              const result = await sdk.client.provider.oauth.authorize({
+                providerID: provider.id,
+                method: index,
+                inputs,
+              })
+              if (result.error) {
+                toast.show({
+                  variant: "error",
+                  message: JSON.stringify(result.error),
+                })
+                dialog.clear()
+                return
+              }
+              if (result.data?.method === "code") {
+                dialog.replace(() => (
+                  <CodeMethod
+                    providerID={provider.id}
+                    title={method.label}
+                    index={index}
+                    authorization={result.data!}
+                  />
+                ))
+              }
+              if (result.data?.method === "auto") {
+                dialog.replace(() => (
+                  <AutoMethod
+                    providerID={provider.id}
+                    title={method.label}
+                    index={index}
+                    authorization={result.data!}
+                  />
+                ))
+              }
             }
-            if (result.data?.method === "auto") {
-              dialog.replace(() => (
-                <AutoMethod providerID={provider.id} title={method.label} index={index} authorization={result.data!} />
-              ))
+            if (method.type === "api") {
+              return dialog.replace(() => <ApiMethod providerID={provider.id} title={method.label} />)
             }
-          }
-          if (method.type === "api") {
-            return dialog.replace(() => <ApiMethod providerID={provider.id} title={method.label} />)
-          }
-        },
-      })),
+          },
+        }
+      }),
     )
   })
   return options
@@ -193,13 +218,9 @@ function CodeMethod(props: CodeMethodProps) {
   return (
     <DialogPrompt
       title={props.title}
-      placeholder={props.authorization.placeholder ?? "Authorization code"}
+      placeholder="Authorization code"
       onConfirm={async (value) => {
-        if (!value.trim()) {
-          dialog.clear()
-          return
-        }
-        const { data, error } = await sdk.client.provider.oauth.callback({
+        const { error } = await sdk.client.provider.oauth.callback({
           providerID: props.providerID,
           method: props.index,
           code: value,
@@ -207,10 +228,6 @@ function CodeMethod(props: CodeMethodProps) {
         if (!error) {
           await sdk.client.instance.dispose()
           await sync.bootstrap()
-          if (data?.next === "clear") {
-            dialog.clear()
-            return
-          }
           dialog.replace(() => <DialogModel providerID={props.providerID} />)
           return
         }
@@ -324,7 +341,9 @@ async function PromptsMethod(props: PromptsMethodProps) {
 
     const value = await new Promise<string | null>((resolve) => {
       props.dialog.replace(
-        () => <DialogPrompt title={prompt.message} placeholder={prompt.placeholder} onConfirm={(value) => resolve(value)} />,
+        () => (
+          <DialogPrompt title={prompt.message} placeholder={prompt.placeholder} onConfirm={(value) => resolve(value)} />
+        ),
         () => resolve(null),
       )
     })

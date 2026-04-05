@@ -6,6 +6,7 @@ import path from "path"
 import { fileURLToPath } from "url"
 import { UI } from "@/cli/ui"
 import { Log } from "@/util/log"
+import { errorMessage } from "@/util/error"
 import { withTimeout } from "@/util/timeout"
 import { withNetworkOptions, resolveNetworkOptions } from "@/cli/network"
 import { Filesystem } from "@/util/filesystem"
@@ -14,7 +15,7 @@ import type { EventSource } from "./context/sdk"
 import { win32DisableProcessedInput, win32InstallCtrlCGuard } from "./win32"
 import { TuiConfig } from "@/config/tui"
 import { Instance } from "@/project/instance"
-import { Config } from "@/config/config"
+import { writeHeapSnapshot } from "v8"
 
 declare global {
   const OPENCODE_WORKER_PATH: string
@@ -43,6 +44,9 @@ function createWorkerFetch(client: RpcClient): typeof fetch {
 function createEventSource(client: RpcClient): EventSource {
   return {
     on: (handler) => client.on<Event>("event", handler),
+    setWorkspace: (workspaceID) => {
+      void client.call("setWorkspace", { workspaceID })
+    },
   }
 }
 
@@ -136,14 +140,13 @@ export const TuiThreadCommand = cmd({
       }
 
       const client = Rpc.client<typeof rpc>(worker)
-      await client.call("setDirectory", { directory: cwd })
       const error = (e: unknown) => {
         Log.Default.error(e)
       }
       const reload = () => {
         client.call("reload", undefined).catch((err) => {
           Log.Default.warn("worker reload failed", {
-            error: err instanceof Error ? err.message : String(err),
+            error: errorMessage(err),
           })
         })
       }
@@ -160,7 +163,7 @@ export const TuiThreadCommand = cmd({
         process.off("SIGUSR2", reload)
         await withTimeout(client.call("shutdown", undefined), 5000).catch((error) => {
           Log.Default.warn("worker shutdown failed", {
-            error: error instanceof Error ? error.message : String(error),
+            error: errorMessage(error),
           })
         })
         worker.terminate()
@@ -169,10 +172,7 @@ export const TuiThreadCommand = cmd({
       const prompt = await input(args.prompt)
       const config = await Instance.provide({
         directory: cwd,
-        fn: async () => {
-          await Config.get()
-          return TuiConfig.get()
-        },
+        fn: () => TuiConfig.get(),
       })
 
       const network = await resolveNetworkOptions(args)
@@ -203,6 +203,11 @@ export const TuiThreadCommand = cmd({
       try {
         await tui({
           url: transport.url,
+          async onSnapshot() {
+            const tui = writeHeapSnapshot("tui.heapsnapshot")
+            const server = await client.call("snapshot", undefined)
+            return [tui, server]
+          },
           config,
           directory: cwd,
           fetch: transport.fetch,

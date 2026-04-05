@@ -1,9 +1,8 @@
 import { createSimpleContext } from "@opencode-ai/ui/context"
-import { type Accessor, batch, createEffect, createMemo, onCleanup, createSignal } from "solid-js"
+import { type Accessor, batch, createEffect, createMemo, onCleanup } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Persist, persisted } from "@/utils/persist"
 import { useCheckServerHealth } from "@/utils/server-health"
-import { importRemoteKey } from "@opencode-ai/sdk/v2/remote"
 
 type StoredProject = { worktree: string; expanded: boolean }
 type StoredServer = string | ServerConnection.HttpBase | ServerConnection.Http
@@ -71,21 +70,8 @@ export namespace ServerConnection {
     http: HttpBase
   } & Base
 
-  // Relay connection for Remote Control
-  export type Remote = {
-    type: "remote"
-    relayUrl: string
-    sessionId: string
-    token: string
-    encryptionKeyBase64: string
-    encryptionKey: CryptoKey
-    // We still need a dummy http block for compatibility with generic health checks
-    http: HttpBase
-  } & Base
-
   export type Any =
     | Http
-    | Remote
     // All these are desktop-only
     | (Sidecar | Ssh)
 
@@ -99,8 +85,6 @@ export namespace ServerConnection {
       }
       case "ssh":
         return Key.make(`ssh:${conn.host}`)
-      case "remote":
-        return Key.make(`remote:${conn.sessionId}`)
     }
   }
 
@@ -110,7 +94,11 @@ export namespace ServerConnection {
 
 export const { use: useServer, provider: ServerProvider } = createSimpleContext({
   name: "Server",
-  init: (props: { defaultServer: ServerConnection.Key; servers?: Array<ServerConnection.Any> }) => {
+  init: (props: {
+    defaultServer: ServerConnection.Key
+    disableHealthCheck?: boolean
+    servers?: Array<ServerConnection.Any>
+  }) => {
     const checkServerHealth = useCheckServerHealth()
 
     const [store, setStore, _, ready] = persisted(
@@ -124,8 +112,6 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
 
     const url = (x: StoredServer) => (typeof x === "string" ? x : "type" in x ? x.http.url : x.url)
 
-    const [ephemeralServers, setEphemeralServers] = createSignal<ServerConnection.Any[]>([])
-
     const allServers = createMemo((): Array<ServerConnection.Any> => {
       const servers = [
         ...(props.servers ?? []),
@@ -137,7 +123,6 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
               }
             : value,
         ),
-        ...ephemeralServers(),
       ]
 
       const deduped = new Map(
@@ -158,11 +143,6 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
     const healthy = () => state.healthy
 
     function startHealthPolling(conn: ServerConnection.Any) {
-      if (conn.type === "remote") {
-        setState("healthy", true)
-        return () => {}
-      }
-
       let alive = true
       let busy = false
 
@@ -209,12 +189,11 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
 
     function remove(key: ServerConnection.Key) {
       const list = store.list.filter((x) => url(x) !== key)
-      const next = allServers().find((x) => ServerConnection.key(x) !== key)
       batch(() => {
         setStore("list", list)
-        setEphemeralServers((prev) => prev.filter((x) => ServerConnection.key(x) !== key))
         if (state.active === key) {
-          setState("active", next ? ServerConnection.key(next) : props.defaultServer)
+          const next = list[0]
+          setState("active", next ? ServerConnection.Key.make(url(next)) : props.defaultServer)
         }
       })
     }
@@ -227,6 +206,10 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
       const current_ = current()
       if (!current_) return
 
+      if (props.disableHealthCheck) {
+        setState("healthy", true)
+        return
+      }
       setState("healthy", undefined)
       onCleanup(startHealthPolling(current_))
     })
@@ -240,69 +223,6 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
       const c = current()
       return (c?.type === "sidecar" && c.variant === "base") || (c?.type === "http" && isLocalHost(c.http.url))
     })
-
-    function connectRemote(opts: {
-      relayUrl: string
-      sessionId: string
-      joinGrant: string
-      encryptionKeyBase64: string
-      onConnect?: () => void
-      onError?: (err: Error) => void
-    }) {
-      const key = ServerConnection.Key.make(`remote:${opts.sessionId}`)
-      let closed = false
-      // 1. We will exchange the anonymous viewer url for a valid Viewer token by calling the Relay
-      const relayUrl = normalizeServerUrl(opts.relayUrl)
-      if (!relayUrl) {
-        opts.onError?.(new Error("Invalid relay URL"))
-        return () => {}
-      }
-
-      fetch(`${relayUrl}/api/session/join`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId: opts.sessionId, grant: opts.joinGrant }),
-      })
-        .then((res) => {
-          if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to join session`)
-          return res.json()
-        })
-        .then(async (data: { token?: string }) => {
-          if (!data.token) throw new Error("No token returned from relay")
-
-          const encryptionKey = await importRemoteKey(opts.encryptionKeyBase64)
-          if (closed) return
-
-          const conn: ServerConnection.Remote = {
-            type: "remote",
-            relayUrl,
-            sessionId: opts.sessionId,
-            token: data.token,
-            encryptionKeyBase64: opts.encryptionKeyBase64,
-            encryptionKey,
-            http: { url: `remote://${opts.sessionId}` }, // Dummy URL for generic logic
-          }
-
-          batch(() => {
-            setEphemeralServers((prev) => [
-              ...prev.filter((s) => ServerConnection.key(s) !== ServerConnection.key(conn)),
-              conn,
-            ])
-            setState("active", ServerConnection.key(conn))
-          })
-
-          opts.onConnect?.()
-        })
-        .catch((err) => {
-          if (closed) return
-          opts.onError?.(err instanceof Error ? err : new Error(String(err)))
-        })
-
-      return () => {
-        closed = true
-        remove(key)
-      }
-    }
 
     return {
       ready: isReady,
@@ -322,7 +242,6 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
       },
       setActive,
       add,
-      connectRemote,
       remove,
       projects: {
         list: projectsList,

@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bun run:*)",
+      "Bash(kill %1)",
+      "Bash(pkill -f \"src/index.ts run\")",
+      "Bash(OPENCODE_DEBUG=true bun run --cwd /Users/uenyioha/tmp/opencode-ng/packages/opencode --conditions=browser src/index.ts run -m anthropic/claude-sonnet-4-5 --print-logs \"say hello\")"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "playwright"
+  ]
+}

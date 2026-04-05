@@ -70,7 +70,7 @@ type TeamTask = {
   depends_on?: string[]
 }
 
-type TeamEntry = {
+export type TeamEntry = {
   teamName: string
   role: "lead" | "member"
   memberName?: string

@@ -13,14 +13,7 @@ export namespace ConfigPaths {
   }
 
   export async function projectFiles(name: string, directory: string, worktree: string) {
-    const files: string[] = []
-    for (const file of [`${name}.jsonc`, `${name}.json`]) {
-      const found = await Filesystem.findUp(file, directory, worktree)
-      for (const resolved of found.toReversed()) {
-        files.push(resolved)
-      }
-    }
-    return files
+    return Filesystem.findUp([`${name}.json`, `${name}.jsonc`], directory, worktree, { rootFirst: true })
   }
 
   export async function directories(directory: string, worktree: string) {
@@ -47,7 +40,7 @@ export namespace ConfigPaths {
   }
 
   export function fileInDirectory(dir: string, name: string) {
-    return [path.join(dir, `${name}.jsonc`), path.join(dir, `${name}.json`)]
+    return [path.join(dir, `${name}.json`), path.join(dir, `${name}.jsonc`)]
   }
 
   export const JsonError = NamedError.create(

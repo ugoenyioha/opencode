@@ -1,19 +1,15 @@
+import { $ } from "bun"
 import * as fs from "fs/promises"
 import os from "os"
 import path from "path"
+import { Effect, ServiceMap } from "effect"
+import type * as PlatformError from "effect/PlatformError"
+import type * as Scope from "effect/Scope"
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import type { Config } from "../../src/config/config"
-import { Config as ConfigModule } from "../../src/config/config"
-import { Team } from "../../src/team"
-import crypto from "crypto"
-import { ConfigPaths } from "../../src/config/paths"
-import { Filesystem } from "../../src/util/filesystem"
-import { Glob } from "../../src/util/glob"
-import { Trust } from "../../src/trust"
-import { Global } from "../../src/global"
+import { InstanceRef } from "../../src/effect/instance-ref"
 import { Instance } from "../../src/project/instance"
-
-import { Flag } from "../../src/flag/flag"
-import { Env } from "../../src/env"
+import { TestLLMServer } from "../lib/llm-server"
 
 // Strip null bytes from paths (defensive fix for CI environment issues)
 function sanitizePath(p: string): string {
@@ -38,11 +34,7 @@ function clean(dir: string) {
 
 async function stop(dir: string) {
   if (!(await exists(dir))) return
-  try {
-    Bun.spawnSync(["git", "fsmonitor--daemon", "stop"], { cwd: dir, stdout: "ignore", stderr: "ignore" })
-  } catch {
-    // Best-effort cleanup only. Temp dirs can disappear before this runs.
-  }
+  await $`git fsmonitor--daemon stop`.cwd(dir).quiet().nothrow()
 }
 
 type TmpDirOptions<T> = {
@@ -50,97 +42,16 @@ type TmpDirOptions<T> = {
   config?: Partial<Config.Info>
   init?: (dir: string) => Promise<T>
   dispose?: (dir: string) => Promise<T>
-  trust?: boolean
-}
-
-function localId(dir: string) {
-  return `local_${crypto.createHash("sha256").update(dir).digest("hex").slice(0, 16)}`
-}
-
-async function projectId(dir: string, git?: boolean) {
-  if (!git) return localId(dir)
-  const result = Bun.spawnSync(["git", "rev-list", "--max-parents=0", "--all"], {
-    cwd: dir,
-    stdout: "pipe",
-    stderr: "ignore",
-  })
-  const roots = result.success
-    ? result.stdout
-        .toString()
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .toSorted()
-    : undefined
-  if (!roots?.length) return localId(dir)
-  return roots[0] || localId(dir)
-}
-
-async function trustInputs(dir: string) {
-  const files = new Set<string>()
-  for (const file of await ConfigPaths.projectFiles("opencode", dir, dir)) {
-    files.add(file)
-  }
-  for await (const root of Filesystem.up({ targets: [".opencode"], start: dir, stop: dir })) {
-    const matches = await Glob.scan("**/*", {
-      cwd: root,
-      absolute: true,
-      include: "file",
-      dot: true,
-      symlink: true,
-    })
-    for (const match of matches) files.add(match)
-  }
-  for await (const root of Filesystem.up({ targets: [".claude", ".agents"], start: dir, stop: dir })) {
-    const matches = await Glob.scan("skills/**/SKILL.md", {
-      cwd: root,
-      absolute: true,
-      include: "file",
-      dot: true,
-      symlink: true,
-    })
-    for (const match of matches) files.add(match)
-  }
-  return [...files]
-}
-
-export async function trustWorkspace(dir: string, git?: boolean) {
-  const inputs = await trustInputs(dir)
-  if (!inputs.length) return
-  const { hash } = await Trust.hash(inputs)
-  const id = await projectId(dir, git)
-  const filepath = path.join(Global.Path.config, "trust.json")
-  const existing = await Filesystem.readJson<Record<string, string>>(filepath).catch(
-    () => ({}) as Record<string, string>,
-  )
-  existing[id] = hash
-  await Filesystem.writeJson(filepath, existing)
 }
 export async function tmpdir<T>(options?: TmpDirOptions<T>) {
   const dirpath = sanitizePath(path.join(os.tmpdir(), "opencode-test-" + Math.random().toString(36).slice(2)))
   await fs.mkdir(dirpath, { recursive: true })
   if (options?.git) {
-    Bun.spawnSync(["git", "init"], { cwd: dirpath, stdout: "ignore", stderr: "ignore" })
-    Bun.spawnSync(["git", "config", "core.fsmonitor", "false"], {
-      cwd: dirpath,
-      stdout: "ignore",
-      stderr: "ignore",
-    })
-    Bun.spawnSync(["git", "config", "user.email", "test@opencode.test"], {
-      cwd: dirpath,
-      stdout: "ignore",
-      stderr: "ignore",
-    })
-    Bun.spawnSync(["git", "config", "user.name", "Test"], {
-      cwd: dirpath,
-      stdout: "ignore",
-      stderr: "ignore",
-    })
-    Bun.spawnSync(["git", "commit", "--allow-empty", "-m", `root commit ${dirpath}`], {
-      cwd: dirpath,
-      stdout: "ignore",
-      stderr: "ignore",
-    })
+    await $`git init`.cwd(dirpath).quiet()
+    await $`git config core.fsmonitor false`.cwd(dirpath).quiet()
+    await $`git config user.email "test@opencode.test"`.cwd(dirpath).quiet()
+    await $`git config user.name "Test"`.cwd(dirpath).quiet()
+    await $`git commit --allow-empty -m "root commit ${dirpath}"`.cwd(dirpath).quiet()
   }
   if (options?.config) {
     await Bun.write(
@@ -152,27 +63,14 @@ export async function tmpdir<T>(options?: TmpDirOptions<T>) {
     )
   }
   const realpath = sanitizePath(await fs.realpath(dirpath))
-  const previousTestHome = process.env.OPENCODE_TEST_HOME
-  process.env.OPENCODE_TEST_HOME = realpath
-  await fs.mkdir(path.join(realpath, ".config", "opencode"), { recursive: true })
-  ConfigModule.global.reset()
-  if (options?.trust !== false) {
-    await trustWorkspace(realpath, options?.git)
-  }
   const extra = await options?.init?.(realpath)
   const result = {
     [Symbol.asyncDispose]: async () => {
       try {
         await options?.dispose?.(realpath)
       } finally {
-        await Team.drainActiveLoops().catch(() => undefined)
-        await Instance.disposeAll().catch(() => undefined)
-        ConfigModule.global.reset()
         if (options?.git) await stop(realpath).catch(() => undefined)
         await clean(realpath).catch(() => undefined)
-        if (previousTestHome === undefined) delete process.env.OPENCODE_TEST_HOME
-        else process.env.OPENCODE_TEST_HOME = previousTestHome
-        ConfigModule.global.reset()
       }
     },
     path: realpath,
@@ -181,28 +79,94 @@ export async function tmpdir<T>(options?: TmpDirOptions<T>) {
   return result
 }
 
-/**
- * Inject a real Anthropic OAuth token from the local auth.json file
- * so tests can use a Max subscription for real LLM calls.
- *
- * Returns a cleanup function that restores the original env.
- * Skips silently if no auth.json or no valid token is found.
- */
-export async function useRealAnthropicToken(): Promise<() => void> {
-  // Read from the REAL user auth.json, not the test sandbox
-  const authPath = path.join(os.homedir(), ".local", "share", "opencode", "auth.json")
-  try {
-    const raw = await fs.readFile(authPath, "utf8")
-    const data = JSON.parse(raw)
-    const token = data?.anthropic?.access
-    if (!token || typeof token !== "string") return () => {}
-    const prev = Env.get("ANTHROPIC_API_KEY")
-    Env.set("ANTHROPIC_API_KEY", token)
-    return () => {
-      if (prev) Env.set("ANTHROPIC_API_KEY", prev)
-      else Env.set("ANTHROPIC_API_KEY", "")
+/** Effectful scoped tmpdir. Cleaned up when the scope closes. Make sure these stay in sync */
+export function tmpdirScoped(options?: { git?: boolean; config?: Partial<Config.Info> }) {
+  return Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
+    const dirpath = sanitizePath(path.join(os.tmpdir(), "opencode-test-" + Math.random().toString(36).slice(2)))
+    yield* Effect.promise(() => fs.mkdir(dirpath, { recursive: true }))
+    const dir = sanitizePath(yield* Effect.promise(() => fs.realpath(dirpath)))
+
+    yield* Effect.addFinalizer(() =>
+      Effect.promise(async () => {
+        if (options?.git) await stop(dir).catch(() => undefined)
+        await clean(dir).catch(() => undefined)
+      }),
+    )
+
+    const git = (...args: string[]) =>
+      spawner.spawn(ChildProcess.make("git", args, { cwd: dir })).pipe(Effect.flatMap((handle) => handle.exitCode))
+
+    if (options?.git) {
+      yield* git("init")
+      yield* git("config", "core.fsmonitor", "false")
+      yield* git("config", "user.email", "test@opencode.test")
+      yield* git("config", "user.name", "Test")
+      yield* git("commit", "--allow-empty", "-m", "root commit")
     }
-  } catch {
-    return () => {}
-  }
+
+    if (options?.config) {
+      yield* Effect.promise(() =>
+        fs.writeFile(
+          path.join(dir, "opencode.json"),
+          JSON.stringify({ $schema: "https://opencode.ai/config.json", ...options.config }),
+        ),
+      )
+    }
+
+    return dir
+  })
+}
+
+export const provideInstance =
+  (directory: string) =>
+  <A, E, R>(self: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+    Effect.servicesWith((services: ServiceMap.ServiceMap<R>) =>
+      Effect.promise<A>(async () =>
+        Instance.provide({
+          directory,
+          fn: () => Effect.runPromiseWith(services)(self.pipe(Effect.provideService(InstanceRef, Instance.current))),
+        }),
+      ),
+    )
+
+export function provideTmpdirInstance<A, E, R>(
+  self: (path: string) => Effect.Effect<A, E, R>,
+  options?: { git?: boolean; config?: Partial<Config.Info> },
+) {
+  return Effect.gen(function* () {
+    const path = yield* tmpdirScoped(options)
+    let provided = false
+
+    yield* Effect.addFinalizer(() =>
+      provided
+        ? Effect.promise(() =>
+            Instance.provide({
+              directory: path,
+              fn: () => Instance.dispose(),
+            }),
+          ).pipe(Effect.ignore)
+        : Effect.void,
+    )
+
+    provided = true
+    return yield* self(path).pipe(provideInstance(path))
+  })
+}
+
+export function provideTmpdirServer<A, E, R>(
+  self: (input: { dir: string; llm: TestLLMServer["Service"] }) => Effect.Effect<A, E, R>,
+  options?: { git?: boolean; config?: (url: string) => Partial<Config.Info> },
+): Effect.Effect<
+  A,
+  E | PlatformError.PlatformError,
+  R | TestLLMServer | ChildProcessSpawner.ChildProcessSpawner | Scope.Scope
+> {
+  return Effect.gen(function* () {
+    const llm = yield* TestLLMServer
+    return yield* provideTmpdirInstance((dir) => self({ dir, llm }), {
+      git: options?.git,
+      config: options?.config?.(llm.url),
+    })
+  })
 }

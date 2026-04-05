@@ -7,6 +7,7 @@ import { useLocal } from "@tui/context/local"
 import { useToast } from "../../ui/toast"
 import { Clipboard } from "@tui/util/clipboard"
 import type { PromptInfo } from "@tui/component/prompt/history"
+import { strip } from "@tui/component/prompt/part"
 
 export function DialogMessage(props: {
   messageID: string
@@ -51,7 +52,7 @@ export function DialogMessage(props: {
                   if (part.type === "text") {
                     if (!part.synthetic) agg.input += part.text
                   }
-                  if (part.type === "file") agg.parts.push(part)
+                  if (part.type === "file") agg.parts.push(strip(part))
                   return agg
                 },
                 { input: "", parts: [] as PromptInfo["parts"] },

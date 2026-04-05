@@ -1,14 +1,5 @@
-export { ControlAccountTable } from "../control/control.sql"
-export {
-  SessionTable,
-  MessageTable,
-  PartTable,
-  TodoTable,
-  PermissionTable,
-  SessionCronTable,
-} from "../session/session.sql"
-export { SessionShareTable } from "../share/share.sql"
+export { AccountTable, AccountStateTable, ControlAccountTable } from "../account/account.sql"
 export { ProjectTable } from "../project/project.sql"
-export { A2ATaskTable } from "../plugin/a2a.sql"
+export { SessionTable, MessageTable, PartTable, TodoTable, PermissionTable } from "../session/session.sql"
+export { SessionShareTable } from "../share/share.sql"
 export { WorkspaceTable } from "../control-plane/workspace.sql"
-export { TeamTable, TeamTaskTable, TeamMessageTable } from "../team/team.sql"

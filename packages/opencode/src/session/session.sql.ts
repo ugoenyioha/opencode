@@ -1,11 +1,13 @@
 import { sqliteTable, text, integer, index, primaryKey } from "drizzle-orm/sqlite-core"
 import { ProjectTable } from "../project/project.sql"
 import type { MessageV2 } from "./message-v2"
-import type { Snapshot } from "@/snapshot"
-import type { PermissionNext } from "@/permission/next"
-import type { SessionID, MessageID, PartID } from "./schema"
+import type { Snapshot } from "../snapshot"
+import type { Permission } from "../permission"
 import type { ProjectID } from "../project/schema"
-import { Timestamps } from "@/storage/schema.sql"
+import type { SessionID, MessageID, PartID } from "./schema"
+import type { WorkspaceID } from "../control-plane/schema"
+import { Timestamps } from "../storage/schema.sql"
+
 
 type PartData = Omit<MessageV2.Part, "id" | "sessionID" | "messageID">
 type InfoData = Omit<MessageV2.Info, "id" | "sessionID">
@@ -18,7 +20,7 @@ export const SessionTable = sqliteTable(
       .$type<ProjectID>()
       .notNull()
       .references(() => ProjectTable.id, { onDelete: "cascade" }),
-    workspace_id: text(),
+    workspace_id: text().$type<WorkspaceID>(),
     parent_id: text().$type<SessionID>(),
     slug: text().notNull(),
     directory: text().notNull(),
@@ -30,11 +32,12 @@ export const SessionTable = sqliteTable(
     summary_files: integer(),
     summary_diffs: text({ mode: "json" }).$type<Snapshot.FileDiff[]>(),
     revert: text({ mode: "json" }).$type<{ messageID: MessageID; partID?: PartID; snapshot?: string; diff?: string }>(),
-    permission: text({ mode: "json" }).$type<PermissionNext.Ruleset>(),
+    permission: text({ mode: "json" }).$type<Permission.Ruleset>(),
+    // Agent teams columns (added by migration 20260308200903_agent-teams)
     teammate: integer({ mode: "boolean" }),
     team_id: text(),
-    team_role: text(), // "lead" | "member" | null
-    plan_approval: text(), // "none" | "pending" | "approved" | "rejected" | null
+    team_role: text().$type<"lead" | "member">(),
+    plan_approval: text().$type<"none" | "pending" | "approved" | "rejected">(),
     team_meta: text({ mode: "json" }).$type<{
       name: string
       agent: string
@@ -66,7 +69,7 @@ export const MessageTable = sqliteTable(
     ...Timestamps,
     data: text({ mode: "json" }).notNull().$type<InfoData>(),
   },
-  (table) => [index("message_session_idx").on(table.session_id)],
+  (table) => [index("message_session_time_created_id_idx").on(table.session_id, table.time_created, table.id)],
 )
 
 export const PartTable = sqliteTable(
@@ -81,13 +84,17 @@ export const PartTable = sqliteTable(
     ...Timestamps,
     data: text({ mode: "json" }).notNull().$type<PartData>(),
   },
-  (table) => [index("part_message_idx").on(table.message_id), index("part_session_idx").on(table.session_id)],
+  (table) => [
+    index("part_message_id_id_idx").on(table.message_id, table.id),
+    index("part_session_idx").on(table.session_id),
+  ],
 )
 
 export const TodoTable = sqliteTable(
   "todo",
   {
     session_id: text()
+      .$type<SessionID>()
       .notNull()
       .references(() => SessionTable.id, { onDelete: "cascade" }),
     content: text().notNull(),
@@ -107,14 +114,16 @@ export const PermissionTable = sqliteTable("permission", {
     .primaryKey()
     .references(() => ProjectTable.id, { onDelete: "cascade" }),
   ...Timestamps,
-  data: text({ mode: "json" }).notNull().$type<PermissionNext.Ruleset>(),
+  data: text({ mode: "json" }).notNull().$type<Permission.Ruleset>(),
 })
 
+/** Session cron jobs (added by migration 20260309055725_add_session_cron) */
 export const SessionCronTable = sqliteTable(
   "session_cron",
   {
     id: text().primaryKey(),
     session_id: text()
+      .$type<SessionID>()
       .notNull()
       .references(() => SessionTable.id, { onDelete: "cascade" }),
     interval_ms: integer().notNull(),
