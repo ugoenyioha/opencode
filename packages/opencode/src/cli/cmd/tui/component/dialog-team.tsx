@@ -7,6 +7,7 @@ import { useRouteData } from "../context/route"
 import { useRoute } from "../context/route"
 import { useToast } from "../ui/toast"
 import { useSDK } from "../context/sdk"
+import { handleShutdown, handleCancel, handleDelegateToggle } from "./dialog-team-actions"
 
 function statusIcon(status: string): string {
   switch (status) {
@@ -176,22 +177,16 @@ export function DialogTeam() {
             title: "shutdown",
             onTrigger: (option) => {
               const info = teamInfo()
-              if (!info || info.role !== "lead") {
-                toast.show({ message: "Only the team lead can shut down teammates", variant: "error" })
-                return
-              }
-              const [type, sessionID] = option.value.split(":", 2)
-              if (type !== "member" || !sessionID) return
-              const member = info.members.find((m) => m.sessionID === sessionID)
-              if (!member) return
-              sdk
-                .fetch(`${sdk.url}/team/${info.teamName}/shutdown`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ leadSessionID: route.sessionID, member: member.name }),
-                })
-                .then(() => toast.show({ message: `Shutdown requested for ${member.name}`, variant: "info" }))
-                .catch(() => toast.show({ message: `Failed to shutdown ${member.name}`, variant: "error" }))
+              if (!info) return
+              handleShutdown(option.value, {
+                teamName: info.teamName,
+                role: info.role,
+                members: info.members,
+                leadSessionID: route.sessionID,
+                sdkUrl: sdk.url,
+                fetch: sdk.fetch.bind(sdk),
+                showToast: (msg, variant) => toast.show({ message: msg, variant }),
+              })
             },
           },
           {
@@ -199,22 +194,16 @@ export function DialogTeam() {
             title: "kill (cancel)",
             onTrigger: (option) => {
               const info = teamInfo()
-              if (!info || info.role !== "lead") {
-                toast.show({ message: "Only the team lead can cancel teammates", variant: "error" })
-                return
-              }
-              const [type, sessionID] = option.value.split(":", 2)
-              if (type !== "member" || !sessionID) return
-              const member = info.members.find((m) => m.sessionID === sessionID)
-              if (!member) return
-              sdk
-                .fetch(`${sdk.url}/team/${info.teamName}/cancel`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ memberName: member.name }),
-                })
-                .then(() => toast.show({ message: `Cancelled ${member.name}`, variant: "info" }))
-                .catch(() => toast.show({ message: `Failed to cancel ${member.name}`, variant: "error" }))
+              if (!info) return
+              handleCancel(option.value, {
+                teamName: info.teamName,
+                role: info.role,
+                members: info.members,
+                leadSessionID: route.sessionID,
+                sdkUrl: sdk.url,
+                fetch: sdk.fetch.bind(sdk),
+                showToast: (msg, variant) => toast.show({ message: msg, variant }),
+              })
             },
           },
           {
@@ -222,25 +211,17 @@ export function DialogTeam() {
             title: "toggle delegate",
             onTrigger: () => {
               const info = teamInfo()
-              if (!info || info.role !== "lead") {
-                toast.show({ message: "Only the team lead can toggle delegate mode", variant: "error" })
-                return
-              }
-              // Derive current delegate state from team data (may not be in sync cache — best effort)
-              const currentDelegate = !!(info as any).delegate
-              sdk
-                .fetch(`${sdk.url}/team/${info.teamName}/delegate`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ enabled: !currentDelegate }),
-                })
-                .then(() =>
-                  toast.show({
-                    message: `Delegate mode ${!currentDelegate ? "enabled" : "disabled"}`,
-                    variant: "info",
-                  }),
-                )
-                .catch(() => toast.show({ message: "Failed to toggle delegate mode", variant: "error" }))
+              if (!info) return
+              handleDelegateToggle({
+                teamName: info.teamName,
+                role: info.role,
+                members: info.members,
+                delegate: !!(info as any).delegate,
+                leadSessionID: route.sessionID,
+                sdkUrl: sdk.url,
+                fetch: sdk.fetch.bind(sdk),
+                showToast: (msg, variant) => toast.show({ message: msg, variant }),
+              })
             },
           },
         ]}
