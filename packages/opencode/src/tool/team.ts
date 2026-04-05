@@ -539,10 +539,23 @@ export const TeamTasksTool = Tool.define("team_tasks", {
           return { title: "Error", output: "No task_id provided.", metadata: {} }
         }
         await TeamTasks.complete(teamName, params.task_id)
+
+        // Verification nudge: if all tasks are now done and none is a verifier,
+        // suggest spawning one.
+        const allTasks = await TeamTasks.list(teamName)
+        const active = allTasks.filter((t) => t.status !== "completed" && t.status !== "cancelled")
+        const hasVerifier = allTasks.some((t) =>
+          /verif/i.test(t.content) || /verif/i.test(t.id),
+        )
+        const nudge =
+          active.length === 0 && !hasVerifier
+            ? "\n\nAll tasks are complete. Consider spawning a verification teammate to independently confirm the work is correct before reporting done."
+            : ""
+
         return {
           title: `Completed task ${params.task_id}`,
-          output: `Task "${params.task_id}" marked as completed. Dependent tasks may have been unblocked.`,
-          metadata: {},
+          output: `Task "${params.task_id}" marked as completed. Dependent tasks may have been unblocked.${nudge}`,
+          metadata: { allDone: active.length === 0, nudgedVerification: nudge.length > 0 },
         }
       }
       case "update": {
