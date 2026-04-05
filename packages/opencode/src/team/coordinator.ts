@@ -38,6 +38,9 @@ export namespace CoordinatorMode {
     "team_mode_set",
     "team_permission_response",
     "team_wait",
+    // team memory
+    "team_memory_write",
+    "team_memory_read",
     // always needed
     "Invalid",
   ])

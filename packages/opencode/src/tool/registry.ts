@@ -54,6 +54,7 @@ import {
   TeamPermissionResponseTool,
 } from "./team"
 import { TeamWaitTool } from "./team_wait"
+import { TeamMemoryWriteTool, TeamMemoryReadTool } from "./team_memory"
 import { Glob } from "../util/glob"
 const WasmMetadata = z
   .object({
@@ -316,6 +317,7 @@ export namespace ToolRegistry {
             TeamPermissionResponseTool,
           ]
         : []),
+      ...(Flag.OPENCODE_TEAM_MEMORY ? [TeamMemoryWriteTool, TeamMemoryReadTool] : []),
       ...custom,
     ]
   }

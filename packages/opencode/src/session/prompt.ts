@@ -747,6 +747,13 @@ export namespace SessionPrompt {
         }
       }
 
+      // Team memory: inject shared facts into system prompt
+      if (Flag.OPENCODE_TEAM_MEMORY) {
+        const { TeamMemory } = await import("../team/memory")
+        const fragment = await TeamMemory.systemPromptFragment().catch(() => "")
+        if (fragment) system.push(fragment)
+      }
+
       await Plugin.trigger(
         "chat.instructions.loaded",
         { sessionID, agent: agent.name, model: JSON.parse(JSON.stringify(model)) },
