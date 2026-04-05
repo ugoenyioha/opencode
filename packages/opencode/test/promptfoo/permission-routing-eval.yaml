@@ -1,0 +1,52 @@
+description: "Permission Routing Correctness Eval — agent team permission escalation"
+
+prompts:
+  - "{{scenario}}"
+
+providers:
+  - file://permission-routing-provider.ts
+
+defaultTest:
+  options:
+    timeout: 30000
+
+tests:
+  # PR-01: Non-team session is silently ignored — no routing attempted
+  - description: "Non-team session passthrough"
+    vars:
+      scenario: non-team-passthrough
+    assert:
+      - type: javascript
+        value: "output.includes('RESULT:passthrough:no-routing')"
+
+  # PR-02: Teammate Asked event routes permission_request to lead inbox
+  - description: "Teammate routes permission_request to lead inbox"
+    vars:
+      scenario: teammate-routes-to-lead
+    assert:
+      - type: javascript
+        value: "output.includes('RESULT:routed:tool=bash:rid=present')"
+
+  # PR-03: Lead approves → routing resolves with allow=true
+  - description: "Lead allow=true resolves permission routing"
+    vars:
+      scenario: lead-allow
+    assert:
+      - type: javascript
+        value: "output.includes('RESULT:resolved:allow=true')"
+
+  # PR-04: Lead denies → routing resolves with allow=false
+  - description: "Lead allow=false resolves permission routing with denial"
+    vars:
+      scenario: lead-deny
+    assert:
+      - type: javascript
+        value: "output.includes('RESULT:resolved:allow=false')"
+
+  # PR-05: Wrong request_id is skipped, correct one resolves
+  - description: "Wrong request_id ignored, correct request_id resolves"
+    vars:
+      scenario: wrong-request-id-ignored
+    assert:
+      - type: javascript
+        value: "output.includes('RESULT:correct-rid-resolved:allow=true')"
