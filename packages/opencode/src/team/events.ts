@@ -170,6 +170,8 @@ export const TeamInfoSchema = z.object({
   created: z.number(),
   updated: z.number().optional(),
   delegate: z.boolean().optional(),
+  /** When true, the lead is in coordinator mode — slim tools + orchestrator prompt */
+  coordinator: z.boolean().optional(),
 })
 export type TeamInfo = z.infer<typeof TeamInfoSchema>
 

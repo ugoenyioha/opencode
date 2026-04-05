@@ -737,6 +737,16 @@ export namespace SessionPrompt {
         system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
       }
 
+      // Coordinator mode: inject compact orchestrator prompt for team leads
+      if (Flag.OPENCODE_EXPERIMENTAL_AGENT_TEAMS) {
+        const { Team } = await import("../team")
+        const { CoordinatorMode } = await import("../team/coordinator")
+        const teamInfo = await Team.findBySession(sessionID)
+        if (teamInfo?.role === "lead" && teamInfo.team.coordinator === true) {
+          system.push(CoordinatorMode.systemPrompt(teamInfo.team.name))
+        }
+      }
+
       await Plugin.trigger(
         "chat.instructions.loaded",
         { sessionID, agent: agent.name, model: JSON.parse(JSON.stringify(model)) },
@@ -918,6 +928,18 @@ export namespace SessionPrompt {
           return output
         },
       })
+    }
+
+    // Coordinator mode: restrict lead to coordination-only tools
+    if (Flag.OPENCODE_EXPERIMENTAL_AGENT_TEAMS) {
+      const { Team } = await import("../team")
+      const { CoordinatorMode } = await import("../team/coordinator")
+      const teamInfo = await Team.findBySession(input.session.id)
+      if (teamInfo?.role === "lead" && teamInfo.team.coordinator === true) {
+        for (const id of Object.keys(tools)) {
+          if (!CoordinatorMode.ALLOWED_TOOLS.has(id)) delete tools[id]
+        }
+      }
     }
 
     const activeTools = SessionCompaction.discovered(input.messages)

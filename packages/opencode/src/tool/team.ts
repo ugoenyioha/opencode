@@ -39,6 +39,14 @@ export const TeamCreateTool = Tool.define("team_create", {
           "(team_*, read, glob, grep, list). The lead cannot write, edit, or run bash commands. " +
           "Use this when you want the lead to focus entirely on orchestration.",
       ),
+    coordinator: z
+      .boolean()
+      .optional()
+      .describe(
+        "If true, enables coordinator mode: the lead gets a slim tool set (team_*, task, read) " +
+          "and an orchestrator system prompt. Use this for pure orchestration — the lead only " +
+          "spawns and directs teammates, never writes code directly.",
+      ),
   }),
   async execute(params, ctx): Promise<{ title: string; output: string; metadata: Record<string, any> }> {
     // Constraint: no nested teams — teammates cannot create teams
@@ -62,6 +70,7 @@ export const TeamCreateTool = Tool.define("team_create", {
       name: params.name,
       leadSessionID: ctx.sessionID,
       delegate: params.delegate,
+      coordinator: params.coordinator,
     })
 
     if (params.tasks?.length) {
@@ -91,6 +100,7 @@ export const TeamCreateTool = Tool.define("team_create", {
       output: [
         `Team "${params.name}" created. You are the lead.`,
         params.delegate ? "DELEGATE MODE: You are restricted to coordination tools only (no write/edit/bash)." : "",
+        params.coordinator ? "COORDINATOR MODE: You have a slim tool set and an orchestrator prompt. Spawn teammates and direct them — do not write code directly." : "",
         "",
         "Next steps:",
         "- Use team_spawn to add teammates",
@@ -107,7 +117,7 @@ export const TeamCreateTool = Tool.define("team_create", {
       ]
         .filter(Boolean)
         .join("\n"),
-      metadata: { teamName: params.name, delegate: !!params.delegate },
+      metadata: { teamName: params.name, delegate: !!params.delegate, coordinator: !!params.coordinator },
     }
   },
 })

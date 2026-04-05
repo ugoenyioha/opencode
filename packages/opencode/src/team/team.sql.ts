@@ -13,6 +13,7 @@ export const TeamTable = sqliteTable(
     name: text().notNull(),
     lead_session_id: text().references(() => SessionTable.id, { onDelete: "set null" }),
     delegate: integer({ mode: "boolean" }).default(false),
+    coordinator: integer({ mode: "boolean" }).default(false),
     status: text().notNull().default("active"), // "active" | "archived"
     ...Timestamps,
   },

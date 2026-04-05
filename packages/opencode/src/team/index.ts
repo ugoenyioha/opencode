@@ -149,6 +149,7 @@ function loadTeam(name: string) {
     created: team.time_created,
     updated: team.time_updated,
     delegate: !!team.delegate,
+    coordinator: !!team.coordinator,
   })
 }
 
@@ -293,6 +294,7 @@ export namespace Team {
       name: z.string(),
       leadSessionID: z.string(),
       delegate: z.boolean().optional(),
+      coordinator: z.boolean().optional(),
     }),
     async (input) => {
       const existing = await get(input.name)
@@ -326,6 +328,7 @@ export namespace Team {
         members: [],
         created: Date.now(),
         ...(input.delegate ? { delegate: true } : {}),
+        ...(input.coordinator ? { coordinator: true } : {}),
       }
 
       const id = teamId()
@@ -337,6 +340,7 @@ export namespace Team {
             name: input.name,
             lead_session_id: input.leadSessionID,
             delegate: !!input.delegate,
+            coordinator: !!input.coordinator,
             status: "active",
             time_created: team.created,
             time_updated: team.created,
