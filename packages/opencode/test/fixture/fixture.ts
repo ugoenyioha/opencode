@@ -46,6 +46,26 @@ type TmpDirOptions<T> = {
 export async function tmpdir<T>(options?: TmpDirOptions<T>) {
   const dirpath = sanitizePath(path.join(os.tmpdir(), "opencode-test-" + Math.random().toString(36).slice(2)))
   await fs.mkdir(dirpath, { recursive: true })
+  const prev = {
+    XDG_DATA_HOME: process.env.XDG_DATA_HOME,
+    XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
+    XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+    XDG_STATE_HOME: process.env.XDG_STATE_HOME,
+    OPENCODE_TEST_HOME: process.env.OPENCODE_TEST_HOME,
+    OPENCODE_TEST_MANAGED_CONFIG_DIR: process.env.OPENCODE_TEST_MANAGED_CONFIG_DIR,
+  }
+  process.env.XDG_DATA_HOME = path.join(dirpath, ".xdg", "data")
+  process.env.XDG_CACHE_HOME = path.join(dirpath, ".xdg", "cache")
+  process.env.XDG_CONFIG_HOME = path.join(dirpath, ".xdg", "config")
+  process.env.XDG_STATE_HOME = path.join(dirpath, ".xdg", "state")
+  process.env.OPENCODE_TEST_HOME = path.join(dirpath, ".home")
+  process.env.OPENCODE_TEST_MANAGED_CONFIG_DIR = path.join(dirpath, ".managed")
+  await fs.mkdir(process.env.XDG_DATA_HOME, { recursive: true })
+  await fs.mkdir(process.env.XDG_CACHE_HOME, { recursive: true })
+  await fs.mkdir(process.env.XDG_CONFIG_HOME, { recursive: true })
+  await fs.mkdir(process.env.XDG_STATE_HOME, { recursive: true })
+  await fs.mkdir(process.env.OPENCODE_TEST_HOME, { recursive: true })
+  await fs.mkdir(process.env.OPENCODE_TEST_MANAGED_CONFIG_DIR, { recursive: true })
   if (options?.git) {
     await $`git init`.cwd(dirpath).quiet()
     await $`git config core.fsmonitor false`.cwd(dirpath).quiet()
@@ -69,6 +89,10 @@ export async function tmpdir<T>(options?: TmpDirOptions<T>) {
       try {
         await options?.dispose?.(realpath)
       } finally {
+        for (const [key, value] of Object.entries(prev)) {
+          if (value === undefined) delete process.env[key]
+          else process.env[key] = value
+        }
         if (options?.git) await stop(realpath).catch(() => undefined)
         await clean(realpath).catch(() => undefined)
       }

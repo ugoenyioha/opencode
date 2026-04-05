@@ -1,15 +1,31 @@
-import { describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
 import path from "path"
 import { Instance } from "../../src/project/instance"
 import { Team, TeamTasks } from "../../src/team"
 import { Session } from "../../src/session"
+import { SessionPrompt } from "../../src/session/prompt"
+import { Env } from "../../src/env"
 import { Log } from "../../src/util/log"
 import { Identifier } from "../../src/id/id"
 import { TeamSpawnTool } from "../../src/tool/team"
 import { Provider } from "../../src/provider/provider"
 import { tmpdir } from "../fixture/fixture"
+import { initProjectors } from "../../src/server/projectors"
 
 Log.init({ print: false })
+
+beforeEach(() => {
+  spyOn(SessionPrompt, "loop").mockResolvedValue(undefined as never)
+})
+
+afterEach(() => {
+  mock.restore()
+})
+
+async function testInit() {
+  Env.set("ANTHROPIC_API_KEY", "test-key")
+  initProjectors()
+}
 
 function mockCtx(sessionID: string, messages: any[] = []) {
   return {
@@ -55,6 +71,7 @@ describe("TeamSpawnTool.execute", () => {
 
     await Instance.provide({
       directory: tmp.path,
+        init: testInit,
       fn: async () => {
         const lead = await Session.create({})
         await Team.create({ name: "spawn-guard", leadSessionID: lead.id })
@@ -86,6 +103,7 @@ describe("TeamSpawnTool.execute", () => {
 
     await Instance.provide({
       directory: tmp.path,
+        init: testInit,
       fn: async () => {
         const orphan = await Session.create({})
 
@@ -105,6 +123,7 @@ describe("TeamSpawnTool.execute", () => {
 
     await Instance.provide({
       directory: tmp.path,
+        init: testInit,
       fn: async () => {
         const lead = await Session.create({})
         await seedUserMessage(lead.id)
@@ -132,6 +151,7 @@ describe("TeamSpawnTool.execute", () => {
 
     await Instance.provide({
       directory: tmp.path,
+        init: testInit,
       fn: async () => {
         const lead = await Session.create({})
         await seedUserMessage(lead.id)
@@ -167,6 +187,7 @@ describe("TeamSpawnTool.execute", () => {
 
     await Instance.provide({
       directory: tmp.path,
+        init: testInit,
       fn: async () => {
         const lead = await Session.create({})
         await seedUserMessage(lead.id)
@@ -194,6 +215,7 @@ describe("TeamSpawnTool.execute", () => {
 
     await Instance.provide({
       directory: tmp.path,
+        init: testInit,
       fn: async () => {
         const lead = await Session.create({})
         await seedUserMessage(lead.id)
@@ -229,6 +251,7 @@ describe("TeamSpawnTool.execute", () => {
 
     await Instance.provide({
       directory: tmp.path,
+        init: testInit,
       fn: async () => {
         const lead = await Session.create({})
         await seedUserMessage(lead.id)
@@ -281,6 +304,7 @@ describe("TeamSpawnTool.execute", () => {
 
     await Instance.provide({
       directory: tmp.path,
+        init: testInit,
       fn: async () => {
         const lead = await Session.create({})
         await seedUserMessage(lead.id)
@@ -338,6 +362,7 @@ describe("TeamSpawnTool.execute", () => {
 
     await Instance.provide({
       directory: tmp.path,
+        init: testInit,
       fn: async () => {
         const lead = await Session.create({})
         await seedUserMessage(lead.id)
@@ -372,6 +397,7 @@ describe("TeamSpawnTool.execute", () => {
 
     await Instance.provide({
       directory: tmp.path,
+        init: testInit,
       fn: async () => {
         const lead = await Session.create({})
         await seedUserMessage(lead.id)
@@ -420,6 +446,7 @@ describe("TeamSpawnTool.execute", () => {
 
     await Instance.provide({
       directory: tmp.path,
+        init: testInit,
       fn: async () => {
         const lead = await Session.create({})
         await seedUserMessage(lead.id)
@@ -472,6 +499,7 @@ describe("TeamSpawnTool.execute", () => {
 
     await Instance.provide({
       directory: tmp.path,
+        init: testInit,
       fn: async () => {
         const lead = await Session.create({})
         await seedUserMessage(lead.id)
@@ -509,6 +537,7 @@ describe("TeamSpawnTool.execute", () => {
 
     await Instance.provide({
       directory: tmp.path,
+        init: testInit,
       fn: async () => {
         const lead = await Session.create({})
         await seedUserMessage(lead.id)
@@ -559,6 +588,7 @@ describe("TeamSpawnTool.execute", () => {
 
     await Instance.provide({
       directory: tmp.path,
+        init: testInit,
       fn: async () => {
         const lead = await Session.create({})
         await seedUserMessage(lead.id)
@@ -600,6 +630,7 @@ describe("TeamSpawnTool.execute", () => {
 
     await Instance.provide({
       directory: tmp.path,
+        init: testInit,
       fn: async () => {
         const lead = await Session.create({})
         await seedUserMessage(lead.id)

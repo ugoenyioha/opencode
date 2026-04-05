@@ -6,10 +6,21 @@ import { Filesystem } from "../util/filesystem"
 
 const app = "opencode"
 
-const data = path.join(xdgData!, app)
-const cache = path.join(xdgCache!, app)
-const config = path.join(xdgConfig!, app)
-const state = path.join(xdgState!, app)
+function dataPath() {
+  return path.join((process.env.XDG_DATA_HOME || xdgData)!, app)
+}
+
+function cachePath() {
+  return path.join((process.env.XDG_CACHE_HOME || xdgCache)!, app)
+}
+
+function configPath() {
+  return path.join((process.env.XDG_CONFIG_HOME || xdgConfig)!, app)
+}
+
+function statePath() {
+  return path.join((process.env.XDG_STATE_HOME || xdgState)!, app)
+}
 
 export namespace Global {
   export const Path = {
@@ -17,12 +28,24 @@ export namespace Global {
     get home() {
       return process.env.OPENCODE_TEST_HOME || os.homedir()
     },
-    data,
-    bin: path.join(cache, "bin"),
-    log: path.join(data, "log"),
-    cache,
-    config,
-    state,
+    get data() {
+      return dataPath()
+    },
+    get bin() {
+      return path.join(cachePath(), "bin")
+    },
+    get log() {
+      return path.join(dataPath(), "log")
+    },
+    get cache() {
+      return cachePath()
+    },
+    get config() {
+      return configPath()
+    },
+    get state() {
+      return statePath()
+    },
   }
 }
 

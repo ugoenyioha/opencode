@@ -248,6 +248,13 @@ export namespace Instruction {
     return runPromise((svc) => svc.systemPaths())
   }
 
+  export async function system() {
+    return runPromise((svc) => svc.system())
+  }
+
+  /** @deprecated no-op compat shim — rules are now cleared per-message via clear() */
+  export function invalidateRules() {}
+
   export function loaded(messages: MessageV2.WithParts[]) {
     return extract(messages)
   }
@@ -256,3 +263,6 @@ export namespace Instruction {
     return runPromise((svc) => svc.resolve(messages, filepath, messageID))
   }
 }
+
+/** @deprecated Use Instruction namespace directly */
+export { Instruction as InstructionPrompt }

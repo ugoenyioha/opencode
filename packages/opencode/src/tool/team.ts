@@ -215,7 +215,7 @@ export const TeamSpawnTool = Tool.define("team_spawn", {
     const model = await (async () => {
       // 1. Explicit model param — parse and validate against configured providers
       if (params.model) {
-        const parsed = Provider.parseModel(await Provider.resolveModel(params.model))
+        const parsed = Provider.parseModel(params.model)
         try {
           await Provider.getModel(parsed.providerID, parsed.modelID)
         } catch (e: unknown) {

@@ -25,6 +25,8 @@ import {
 
 Log.init({ print: false })
 
+process.env.OPENCODE_DISABLE_TEAM_AUTOWAKE = "1"
+
 // ---------- Mock Anthropic SSE server ----------
 
 const serverState = {

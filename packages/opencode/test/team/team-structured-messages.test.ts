@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, test } from "bun:test"
+import os from "os"
 import path from "path"
 import { Instance } from "../../src/project/instance"
 import { Team } from "../../src/team"
@@ -21,9 +22,23 @@ import {
   TeamModeSetTool,
   TeamPermissionResponseTool,
 } from "../../src/tool/team"
+import { initProjectors } from "../../src/server/projectors"
 
 Log.init({ print: false })
+
+process.env.OPENCODE_DISABLE_TEAM_AUTOWAKE = "1"
+afterAll(() => { delete process.env.OPENCODE_DISABLE_TEAM_AUTOWAKE })
 const projectRoot = path.join(__dirname, "../..")
+
+// Isolate config/data/cache/state for this test file so upstream config
+// validation changes don't read the user's real ~/.config/opencode.
+const xdgRoot = path.join(os.tmpdir(), `opencode-team-structured-${process.pid}`)
+process.env.XDG_DATA_HOME = path.join(xdgRoot, "data")
+process.env.XDG_CACHE_HOME = path.join(xdgRoot, "cache")
+process.env.XDG_CONFIG_HOME = path.join(xdgRoot, "config")
+process.env.XDG_STATE_HOME = path.join(xdgRoot, "state")
+process.env.OPENCODE_TEST_HOME = path.join(xdgRoot, "home")
+process.env.OPENCODE_TEST_MANAGED_CONFIG_DIR = path.join(xdgRoot, "managed")
 
 let counter = 0
 function uniqueName(base: string): string {
@@ -41,6 +56,12 @@ function mockCtx(sessionID: string) {
     ask: async () => {},
   } as any
 }
+
+async function testInit() {
+  Env.set("ANTHROPIC_API_KEY", "test-key")
+  initProjectors()
+}
+
 
 async function seedUserMessage(sessionID: string) {
   const mid = Identifier.ascending("message")
@@ -143,7 +164,7 @@ describe("TeamMessaging.sendStructured", () => {
   test("structured message is stored as JSON in inbox, rendered as text in session", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => { Env.set("ANTHROPIC_API_KEY", "test-key") },
+      init: testInit,
       fn: async () => {
         const name = uniqueName("struct-send")
         const lead = await Session.create({})
@@ -192,7 +213,7 @@ describe("TeamMessaging.sendStructured", () => {
   test("TeamMessaging.pending returns rendered text and structured envelope", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => { Env.set("ANTHROPIC_API_KEY", "test-key") },
+      init: testInit,
       fn: async () => {
         const name = uniqueName("struct-pending")
         const lead = await Session.create({})
@@ -228,7 +249,7 @@ describe("TeamMessaging.sendStructured", () => {
   test("StructuredMessageSent bus event fires with correct messageType", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => { Env.set("ANTHROPIC_API_KEY", "test-key") },
+      init: testInit,
       fn: async () => {
         const name = uniqueName("struct-bus")
         const lead = await Session.create({})
@@ -264,7 +285,7 @@ describe("TeamMessaging.sendStructured", () => {
   test("PermissionRequest bus event fires for permission_request type", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => { Env.set("ANTHROPIC_API_KEY", "test-key") },
+      init: testInit,
       fn: async () => {
         const name = uniqueName("struct-perm-req")
         const lead = await Session.create({})
@@ -305,7 +326,7 @@ describe("TeamMessaging.broadcastStructured", () => {
   test("mode_set broadcast reaches all active members, skips sender and shutdown members", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => { Env.set("ANTHROPIC_API_KEY", "test-key") },
+      init: testInit,
       fn: async () => {
         const name = uniqueName("struct-broadcast")
         const lead = await Session.create({})
@@ -365,7 +386,7 @@ describe("TeamMessageTool with structured payload", () => {
   test("shutdown_request via tool creates structured inbox message", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => { Env.set("ANTHROPIC_API_KEY", "test-key") },
+      init: testInit,
       fn: async () => {
         const name = uniqueName("tool-struct-shutdown")
         const lead = await Session.create({})
@@ -403,7 +424,7 @@ describe("TeamMessageTool with structured payload", () => {
   test("plan_approval_response via tool — approve=false includes feedback", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => { Env.set("ANTHROPIC_API_KEY", "test-key") },
+      init: testInit,
       fn: async () => {
         const name = uniqueName("tool-struct-plan-rej")
         const lead = await Session.create({})
@@ -448,7 +469,7 @@ describe("TeamMessageTool with structured payload", () => {
   test("plain text path still works when no structured field provided", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => { Env.set("ANTHROPIC_API_KEY", "test-key") },
+      init: testInit,
       fn: async () => {
         const name = uniqueName("tool-plain-text")
         const lead = await Session.create({})
@@ -482,7 +503,7 @@ describe("TeamMessageTool with structured payload", () => {
   test("error: neither text nor structured provided", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => { Env.set("ANTHROPIC_API_KEY", "test-key") },
+      init: testInit,
       fn: async () => {
         const name = uniqueName("tool-no-payload")
         const lead = await Session.create({})
@@ -502,7 +523,7 @@ describe("TeamMessageTool with structured payload", () => {
   test("error: shutdown_response missing approve field", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => { Env.set("ANTHROPIC_API_KEY", "test-key") },
+      init: testInit,
       fn: async () => {
         const name = uniqueName("tool-struct-missing")
         const lead = await Session.create({})
@@ -530,7 +551,7 @@ describe("TeamModeSetTool", () => {
   test("broadcasts mode_set to all active teammates, fires ModeSet event", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => { Env.set("ANTHROPIC_API_KEY", "test-key") },
+      init: testInit,
       fn: async () => {
         const name = uniqueName("modeset-tool")
         const lead = await Session.create({})
@@ -574,7 +595,7 @@ describe("TeamModeSetTool", () => {
   test("error: non-lead cannot set modes", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => { Env.set("ANTHROPIC_API_KEY", "test-key") },
+      init: testInit,
       fn: async () => {
         const name = uniqueName("modeset-non-lead")
         const lead = await Session.create({})
@@ -602,7 +623,7 @@ describe("TeamPermissionResponseTool", () => {
   test("sends permission_response structured message and fires PermissionResponse event", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => { Env.set("ANTHROPIC_API_KEY", "test-key") },
+      init: testInit,
       fn: async () => {
         const name = uniqueName("perm-resp-tool")
         const lead = await Session.create({})
@@ -650,7 +671,7 @@ describe("TeamPermissionResponseTool", () => {
   test("deny: allow=false sends DENIED response", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => { Env.set("ANTHROPIC_API_KEY", "test-key") },
+      init: testInit,
       fn: async () => {
         const name = uniqueName("perm-resp-deny")
         const lead = await Session.create({})
@@ -682,7 +703,7 @@ describe("TeamPermissionResponseTool", () => {
   test("error: non-lead cannot respond to permission requests", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => { Env.set("ANTHROPIC_API_KEY", "test-key") },
+      init: testInit,
       fn: async () => {
         const name = uniqueName("perm-resp-non-lead")
         const lead = await Session.create({})

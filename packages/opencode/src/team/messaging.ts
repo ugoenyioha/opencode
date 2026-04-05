@@ -455,6 +455,7 @@ export namespace TeamMessaging {
    * so the LLM picks up and processes the injected message.
    */
   async function autoWake(sessionID: string, from: string, text: string) {
+    if (process.env.OPENCODE_DISABLE_TEAM_AUTOWAKE === "1") return
     try {
       const status = await SessionStatus.get(sessionID)
       if (status.type !== "idle") return

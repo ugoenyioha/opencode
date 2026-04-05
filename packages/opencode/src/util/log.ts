@@ -49,6 +49,7 @@ export namespace Log {
   }
 
   let logpath = ""
+  let stream: ReturnType<typeof createWriteStream> | undefined
   export function file() {
     return logpath
   }
@@ -59,6 +60,17 @@ export namespace Log {
 
   export async function init(options: Options) {
     if (options.level) level = options.level
+    write = (msg: any) => {
+      process.stderr.write(msg)
+      return msg.length
+    }
+    if (stream) {
+      await new Promise((resolve) => {
+        stream?.end(resolve)
+      }).catch(() => {})
+      stream = undefined
+    }
+    await fs.mkdir(Global.Path.log, { recursive: true }).catch(() => {})
     cleanup(Global.Path.log)
     if (options.print) return
     logpath = path.join(
@@ -66,10 +78,10 @@ export namespace Log {
       options.dev ? "dev.log" : new Date().toISOString().split(".")[0].replace(/:/g, "") + ".log",
     )
     await fs.truncate(logpath).catch(() => {})
-    const stream = createWriteStream(logpath, { flags: "a" })
+    stream = createWriteStream(logpath, { flags: "a" })
     write = async (msg: any) => {
       return new Promise((resolve, reject) => {
-        stream.write(msg, (err) => {
+        stream!.write(msg, (err) => {
           if (err) reject(err)
           else resolve(msg.length)
         })

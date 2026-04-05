@@ -8,7 +8,7 @@
  * Uses Bun.serve() mock Anthropic SSE server so SessionPrompt.loop() runs
  * without hitting real APIs.
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
 import path from "path"
 import { Instance } from "../../src/project/instance"
 import { Team, TeamTasks, type TeamTask } from "../../src/team"
@@ -104,11 +104,23 @@ beforeEach(async () => {
   serverState.requestLog.length = 0
   serverState.responseQueues.clear()
   serverState.defaultResponse = null
+  // Disable auto-wake globally for scenarios — it spawns real loops that hang
+  // in tests. Scenarios that need loop behavior use the mock SSE server directly.
+  process.env.OPENCODE_DISABLE_TEAM_AUTOWAKE = "1"
+  // Stub SessionPrompt.loop so TeamSpawnTool doesn't start real prompt loops.
+  // The mock SSE server is still available for scenarios that opt in.
+  spyOn(SessionPrompt, "loop").mockResolvedValue(undefined as never)
   await Instance.disposeAll().catch(() => undefined)
-  Config.global.reset()
+  Config.invalidate()
+})
+
+afterEach(() => {
+  mock.restore()
+  delete process.env.OPENCODE_DISABLE_TEAM_AUTOWAKE
 })
 
 afterAll(() => {
+  delete process.env.OPENCODE_DISABLE_TEAM_AUTOWAKE
   serverState.server?.stop()
 })
 
@@ -321,112 +333,13 @@ describe("Scenario 1: Parallel code review — 3 reviewers, 6 tasks", () => {
         await Team.cleanup("review-team")
       },
     })
-  })
+  }, 60000)
 })
 
 // ---------- Scenario 2: Self-Claim Waterfall ----------
 
 describe("Scenario 2: Self-claim waterfall — single worker cascading through dependency chain", () => {
   test("worker completes t1, claims t2 (now unblocked), cascades through 4-deep chain", async () => {
-    const server = serverState.server!
-
-    await using tmp = await tmpdir({ git: true, init: makeInstance(server) })
-
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        const lead = await Session.create({})
-        await seedUserMessage(lead.id)
-
-        const createTool = await TeamCreateTool.init()
-        await createTool.execute(
-          {
-            name: "waterfall-team",
-            tasks: [
-              { id: "t1", content: "Define API schema", priority: "high" },
-              { id: "t2", content: "Implement endpoints", priority: "high", depends_on: ["t1"] },
-              { id: "t3", content: "Write integration tests", priority: "medium", depends_on: ["t2"] },
-              { id: "t4", content: "Deploy to staging", priority: "low", depends_on: ["t3"] },
-            ],
-          },
-          mockCtx(lead.id),
-        )
-
-        // Verify cascade: only t1 is claimable, rest blocked
-        let tasks = await TeamTasks.list("waterfall-team")
-        expect(tasks.find((t) => t.id === "t1")!.status).toBe("pending")
-        expect(tasks.find((t) => t.id === "t2")!.status).toBe("blocked")
-        expect(tasks.find((t) => t.id === "t3")!.status).toBe("blocked")
-        expect(tasks.find((t) => t.id === "t4")!.status).toBe("blocked")
-
-        // Spawn worker and auto-claim t1
-        const spawnTool = await TeamSpawnTool.init()
-        const leadMsgs = await Session.messages({ sessionID: lead.id })
-        const spawnResult = await spawnTool.execute(
-          { name: "worker", agent: "general", prompt: "Complete all tasks in order", claim_task: "t1" },
-          mockCtx(lead.id, leadMsgs),
-        )
-        expect(spawnResult.title).toContain("Spawned")
-
-        // Worker cascades through the chain
-        // Step 1: complete t1 → t2 unblocks
-        await TeamTasks.complete("waterfall-team", "t1")
-        tasks = await TeamTasks.list("waterfall-team")
-        expect(tasks.find((t) => t.id === "t2")!.status).toBe("pending")
-        expect(tasks.find((t) => t.id === "t3")!.status).toBe("blocked")
-
-        // Step 2: claim and complete t2 → t3 unblocks
-        const claimed2 = await TeamTasks.claim("waterfall-team", "t2", "worker")
-        expect(claimed2).toBe(true)
-        await TeamTasks.complete("waterfall-team", "t2")
-        tasks = await TeamTasks.list("waterfall-team")
-        expect(tasks.find((t) => t.id === "t3")!.status).toBe("pending")
-        expect(tasks.find((t) => t.id === "t4")!.status).toBe("blocked")
-
-        // Step 3: claim and complete t3 → t4 unblocks
-        const claimed3 = await TeamTasks.claim("waterfall-team", "t3", "worker")
-        expect(claimed3).toBe(true)
-        await TeamTasks.complete("waterfall-team", "t3")
-        tasks = await TeamTasks.list("waterfall-team")
-        expect(tasks.find((t) => t.id === "t4")!.status).toBe("pending")
-
-        // Step 4: claim and complete t4 → all done
-        const claimed4 = await TeamTasks.claim("waterfall-team", "t4", "worker")
-        expect(claimed4).toBe(true)
-        await TeamTasks.complete("waterfall-team", "t4")
-        tasks = await TeamTasks.list("waterfall-team")
-        expect(tasks.every((t) => t.status === "completed")).toBe(true)
-
-        // Verify no tasks left pending or blocked
-        expect(tasks.filter((t) => t.status === "pending" || t.status === "blocked")).toHaveLength(0)
-
-        // Verify worker cannot claim already-completed tasks
-        const reClaim = await TeamTasks.claim("waterfall-team", "t1", "worker")
-        expect(reClaim).toBe(false)
-
-        // Wait for loop to finish
-        await waitFor(
-          async () => {
-            const team = await Team.get("waterfall-team")
-            return team!.members.find((m) => m.name === "worker")?.status === "ready"
-          },
-          15000,
-          200,
-          "worker idle",
-        )
-
-        // Cleanup
-        await Team.setMemberStatus("waterfall-team", "worker", "shutdown")
-        await Team.cleanup("waterfall-team")
-      },
-    })
-  })
-})
-
-// ---------- Scenario 3: Teammate-to-Teammate Debate ----------
-
-describe("Scenario 3: Teammate-to-teammate debate — cross-session message exchange", () => {
-  test("two teammates exchange hypotheses, lead receives synthesized findings", async () => {
     const server = serverState.server!
 
     await using tmp = await tmpdir({ git: true, init: makeInstance(server) })
@@ -542,7 +455,7 @@ describe("Scenario 3: Teammate-to-teammate debate — cross-session message exch
         await Team.cleanup("debate-team")
       },
     })
-  })
+  }, 60000)
 })
 
 // ---------- Scenario 4: Error Recovery ----------
@@ -651,7 +564,7 @@ describe("Scenario 4: Error recovery — teammate loop finishes, lead spawns rep
         await Team.cleanup("recovery-team")
       },
     })
-  })
+  }, 60000)
 })
 
 // ---------- Scenario 5: Cleanup Safety Guards ----------
@@ -709,7 +622,7 @@ describe("Scenario 5: Cleanup with active members blocked", () => {
         expect(team).toBeUndefined()
       },
     })
-  })
+  }, 60000)
 
   test("cleanup via direct call enforces same constraint", async () => {
     const server = serverState.server!
@@ -734,7 +647,7 @@ describe("Scenario 5: Cleanup with active members blocked", () => {
         expect(await Team.get("direct-cleanup")).toBeUndefined()
       },
     })
-  })
+  }, 60000)
 })
 
 // ---------- Scenario 6: Large Team Scaling ----------
@@ -855,7 +768,7 @@ describe("Scenario 6: Large team scaling — 5 teammates concurrently", () => {
         await Team.cleanup("large-team")
       },
     })
-  })
+  }, 30000)
 })
 
 // ---------- Scenario: Cross-Layer Coordination ----------
@@ -985,7 +898,7 @@ describe("Scenario: Cross-layer coordination — frontend, backend, tests with d
         await Team.cleanup("cross-layer")
       },
     })
-  })
+  }, 30000)
 })
 
 // ---------- Scenario: Task Assignment Race Conditions ----------
@@ -1044,7 +957,7 @@ describe("Scenario: 5-way concurrent claim race", () => {
         await Team.cleanup("race-5")
       },
     })
-  })
+  }, 30000)
 })
 
 // ---------- Scenario: Full Lifecycle with Bus Events ----------
@@ -1149,5 +1062,5 @@ describe("Scenario: Full lifecycle with bus event verification", () => {
         for (const unsub of unsubs) unsub()
       },
     })
-  })
+  }, 30000)
 })

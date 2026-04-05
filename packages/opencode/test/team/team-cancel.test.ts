@@ -126,7 +126,7 @@ describe("Team.cancelMember", () => {
         expect(result).toBe(true)
 
         // SessionPrompt.cancel sets status to idle
-        expect(SessionStatus.get(member.id).type).toBe("idle")
+        expect((await SessionStatus.get(member.id)).type).toBe("idle")
 
         await Team.setMemberStatus("cancel-test-4", "busy-worker", "shutdown")
         await Team.cleanup("cancel-test-4")
@@ -217,8 +217,8 @@ describe("Team.cancelAllMembers", () => {
         expect(result).toBe(2)
 
         // Both active members should now be idle
-        expect(SessionStatus.get(m1.id).type).toBe("idle")
-        expect(SessionStatus.get(m2.id).type).toBe("idle")
+        expect((await SessionStatus.get(m1.id)).type).toBe("idle")
+        expect((await SessionStatus.get(m2.id)).type).toBe("idle")
 
         // Cleanup
         await Team.setMemberStatus("cancel-all-2", "worker-a", "shutdown")
@@ -259,7 +259,7 @@ describe("Team.cancelAllMembers", () => {
         const result = await Team.cancelAllMembers("cancel-all-3")
         expect(result).toBe(1) // Only the active one
 
-        expect(SessionStatus.get(m1.id).type).toBe("idle")
+        expect((await SessionStatus.get(m1.id)).type).toBe("idle")
 
         await Team.setMemberStatus("cancel-all-3", "active-one", "shutdown")
         await Team.setMemberStatus("cancel-all-3", "interrupted-one", "shutdown")
@@ -308,8 +308,8 @@ describe("Abort propagation: lead abort cancels teammates", () => {
         const cancelled = await Team.cancelAllMembers(match!.team.name)
         expect(cancelled).toBe(2)
 
-        expect(SessionStatus.get(m1.id).type).toBe("idle")
-        expect(SessionStatus.get(m2.id).type).toBe("idle")
+        expect((await SessionStatus.get(m1.id)).type).toBe("idle")
+        expect((await SessionStatus.get(m2.id)).type).toBe("idle")
 
         await Team.setMemberStatus("abort-prop-1", "worker-x", "shutdown")
         await Team.setMemberStatus("abort-prop-1", "worker-y", "shutdown")
@@ -367,7 +367,7 @@ describe("Abort propagation: lead abort cancels teammates", () => {
 
         // The route only propagates for role === "lead", so member-b stays busy
         // (cancelAllMembers is NOT called for member aborts)
-        expect(SessionStatus.get(m2.id).type).toBe("busy")
+        expect((await SessionStatus.get(m2.id)).type).toBe("busy")
 
         await Team.setMemberStatus("abort-prop-2", "member-a", "shutdown")
         await Team.setMemberStatus("abort-prop-2", "member-b", "shutdown")

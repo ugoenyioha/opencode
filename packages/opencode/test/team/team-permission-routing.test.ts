@@ -12,12 +12,18 @@ import { TeamMessaging } from "../../src/team/messaging"
 import { Inbox } from "../../src/team/inbox"
 import { initPermissionRouting } from "../../src/team/permission-routing"
 import { tmpdir } from "../fixture/fixture"
+import { initProjectors } from "../../src/server/projectors"
 
 Log.init({ print: false })
 
 let counter = 0
 function uniq(base: string) {
   return `${base}-${Date.now()}-${++counter}`
+}
+
+async function testInit() {
+  Env.set("ANTHROPIC_API_KEY", "test-key")
+  initProjectors()
 }
 
 async function seedUser(sessionID: string) {
@@ -47,7 +53,7 @@ describe("initPermissionRouting", () => {
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({
       directory: tmp.path,
-      init: async () => { Env.set("ANTHROPIC_API_KEY", "test-key") },
+      init: testInit,
       fn: async () => {
         const unsub = initPermissionRouting()
         expect(typeof unsub).toBe("function")
@@ -65,7 +71,7 @@ describe("permission routing — non-team session passthrough", () => {
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({
       directory: tmp.path,
-      init: async () => { Env.set("ANTHROPIC_API_KEY", "test-key") },
+      init: testInit,
       fn: async () => {
         const unsub = initPermissionRouting()
         const solo = await Session.create({})
@@ -101,7 +107,7 @@ describe("permission routing — teammate sends permission_request to lead", () 
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({
       directory: tmp.path,
-      init: async () => { Env.set("ANTHROPIC_API_KEY", "test-key") },
+      init: testInit,
       fn: async () => {
         const name = uniq("perm-route-send")
         const lead = await Session.create({})
@@ -127,6 +133,8 @@ describe("permission routing — teammate sends permission_request to lead", () 
           always: ["*"],
           metadata: { command: "ls -la" },
         })
+
+        await Bun.sleep(50)
 
         // TeamEvent.PermissionRequest was emitted during Phase 1
         expect(permReqEvent).not.toBeNull()
@@ -165,7 +173,7 @@ describe("permission routing — allow flow", () => {
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({
       directory: tmp.path,
-      init: async () => { Env.set("ANTHROPIC_API_KEY", "test-key") },
+      init: testInit,
       fn: async () => {
         const name = uniq("perm-route-allow")
         const lead = await Session.create({})
@@ -186,6 +194,8 @@ describe("permission routing — allow flow", () => {
           always: ["*"],
           metadata: { command: "echo hello" },
         })
+
+        await Bun.sleep(50)
 
         // Get request_id from lead's inbox (written during Phase 1)
         const leadMsgs = await Inbox.unread(name, "lead")
@@ -238,7 +248,7 @@ describe("permission routing — deny flow", () => {
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({
       directory: tmp.path,
-      init: async () => { Env.set("ANTHROPIC_API_KEY", "test-key") },
+      init: testInit,
       fn: async () => {
         const name = uniq("perm-route-deny")
         const lead = await Session.create({})
@@ -258,6 +268,8 @@ describe("permission routing — deny flow", () => {
           always: ["*"],
           metadata: { command: "rm -rf /" },
         })
+
+        await Bun.sleep(50)
 
         const leadMsgs = await Inbox.unread(name, "lead")
         const permMsg = leadMsgs.find((m) => {
@@ -307,7 +319,7 @@ describe("permission routing — request_id matching", () => {
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({
       directory: tmp.path,
-      init: async () => { Env.set("ANTHROPIC_API_KEY", "test-key") },
+      init: testInit,
       fn: async () => {
         const name = uniq("perm-route-rid")
         const lead = await Session.create({})
@@ -327,6 +339,8 @@ describe("permission routing — request_id matching", () => {
           always: ["*"],
           metadata: {},
         })
+
+        await Bun.sleep(50)
 
         const leadMsgs = await Inbox.unread(name, "lead")
         const permMsg = leadMsgs.find((m) => {

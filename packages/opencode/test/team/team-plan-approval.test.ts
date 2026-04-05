@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { afterAll, describe, expect, test } from "bun:test"
 import path from "path"
 import { Instance } from "../../src/project/instance"
 import { Team, TeamTasks } from "../../src/team"
@@ -12,6 +12,9 @@ import { TeamEvent } from "../../src/team/events"
 import { Server } from "../../src/server/server"
 
 Log.init({ print: false })
+
+process.env.OPENCODE_DISABLE_TEAM_AUTOWAKE = "1"
+afterAll(() => { delete process.env.OPENCODE_DISABLE_TEAM_AUTOWAKE })
 const projectRoot = path.join(__dirname, "../..")
 
 let counter = 0

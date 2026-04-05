@@ -73,6 +73,7 @@ export namespace Session {
       workspaceID: row.workspace_id ?? undefined,
       directory: row.directory,
       parentID: row.parent_id ?? undefined,
+      teammate: row.teammate ?? undefined,
       title: row.title,
       version: row.version,
       summary,
@@ -94,6 +95,7 @@ export namespace Session {
       project_id: info.projectID,
       workspace_id: info.workspaceID,
       parent_id: info.parentID,
+      teammate: info.teammate,
       slug: info.slug,
       directory: info.directory,
       title: info.title,
@@ -130,6 +132,7 @@ export namespace Session {
       workspaceID: WorkspaceID.zod.optional(),
       directory: z.string(),
       parentID: SessionID.zod.optional(),
+      teammate: z.boolean().optional(),
       summary: z
         .object({
           additions: z.number(),
@@ -884,4 +887,10 @@ export namespace Session {
     z.object({ sessionID: SessionID.zod, modelID: ModelID.zod, providerID: ProviderID.zod, messageID: MessageID.zod }),
     (input) => runPromise((svc) => svc.initialize(input)),
   )
+
+  /** @deprecated Use Session.get(id).then(s => s?.directory) */
+  export async function findDirectory(sessionID: string): Promise<string | undefined> {
+    const session = await get(SessionID.make(sessionID)).catch(() => undefined)
+    return session?.directory
+  }
 }

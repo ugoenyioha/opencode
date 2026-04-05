@@ -26,6 +26,7 @@ import { ConfigRoutes } from "./routes/config"
 import { ExperimentalRoutes } from "./routes/experimental"
 import { ProviderRoutes } from "./routes/provider"
 import { EventRoutes } from "./routes/event"
+import { TeamRoutes } from "./routes/team"
 import { errorHandler } from "./middleware"
 
 const log = Log.create({ service: "server" })
@@ -52,6 +53,7 @@ export const InstanceRoutes = (app?: Hono) =>
     .route("/permission", PermissionRoutes())
     .route("/question", QuestionRoutes())
     .route("/provider", ProviderRoutes())
+    .route("/team", TeamRoutes())
     .route("/", FileRoutes())
     .route("/", EventRoutes())
     .route("/mcp", McpRoutes())

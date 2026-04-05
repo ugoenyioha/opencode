@@ -18,13 +18,14 @@
  *  5. Bus events (TeamEvent.Message / TeamEvent.Broadcast) are published
  *  6. Shutdown members are skipped during broadcast
  */
-import { describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
 import path from "path"
 import { Instance } from "../../src/project/instance"
 import { Team } from "../../src/team"
 import { TeamMessaging } from "../../src/team/messaging"
 import { TeamEvent } from "../../src/team/events"
 import { Session } from "../../src/session"
+import { SessionPrompt } from "../../src/session/prompt"
 import { SessionStatus } from "../../src/session/status"
 import { Bus } from "../../src/bus"
 import { Identifier } from "../../src/id/id"
@@ -32,6 +33,27 @@ import { Log } from "../../src/util/log"
 import { tmpdir } from "../fixture/fixture"
 
 Log.init({ print: false })
+
+beforeEach(() => {
+  spyOn(SessionPrompt, "loop").mockImplementation(async () => {
+    throw new Error("mock loop failure")
+  })
+})
+
+afterEach(() => {
+  mock.restore()
+})
+
+async function shutdownAndCleanup(teamName: string) {
+  await Team.cancelAllMembers(teamName).catch(() => {})
+  await Team.drainActiveLoops().catch(() => {})
+  const team = await Team.get(teamName)
+  if (!team) return
+  for (const member of team.members) {
+    await Team.setMemberStatus(teamName, member.name, "shutdown").catch(() => {})
+  }
+  await Team.cleanup(teamName).catch(() => {})
+}
 
 async function seedUserMessage(sessionID: string, text = "init") {
   const mid = Identifier.ascending("message")
@@ -78,7 +100,7 @@ describe("autoWake: send to idle recipient", () => {
         })
 
         // Confirm member session is idle (default state — no prompt loop running)
-        const before = SessionStatus.get(member.id)
+        const before = await SessionStatus.get(member.id)
         expect(before.type).toBe("idle")
 
         // send() should NOT throw even though autoWake fires and loop() fails
@@ -99,7 +121,7 @@ describe("autoWake: send to idle recipient", () => {
         expect(part.text).toBe("[Team message from lead]: Please start task A")
 
         await Team.setMemberStatus("wake-idle", "worker", "shutdown")
-        await Team.cleanup("wake-idle")
+        await shutdownAndCleanup("wake-idle")
       },
     })
   })
@@ -141,7 +163,7 @@ describe("autoWake: send to idle recipient", () => {
         expect(textPart.synthetic).toBe(true)
 
         await Team.setMemberStatus("fmt-team", "reviewer", "shutdown")
-        await Team.cleanup("fmt-team")
+        await shutdownAndCleanup("fmt-team")
       },
     })
   })
@@ -196,7 +218,7 @@ describe("autoWake: send to busy recipient", () => {
         // Reset status for cleanup
         await SessionStatus.set(member.id, { type: "idle" })
         await Team.setMemberStatus("wake-busy", "worker", "shutdown")
-        await Team.cleanup("wake-busy")
+        await shutdownAndCleanup("wake-busy")
       },
     })
   })
@@ -241,7 +263,7 @@ describe("autoWake: send to busy recipient", () => {
 
         await SessionStatus.set(member.id, { type: "idle" })
         await Team.setMemberStatus("wake-retry", "worker", "shutdown")
-        await Team.cleanup("wake-retry")
+        await shutdownAndCleanup("wake-retry")
       },
     })
   })
@@ -302,7 +324,7 @@ describe("autoWake: broadcast", () => {
         for (const name of ["idle-a", "idle-b", "busy-c"]) {
           await Team.setMemberStatus("bcast-wake", name, "shutdown")
         }
-        await Team.cleanup("bcast-wake")
+        await shutdownAndCleanup("bcast-wake")
       },
     })
   })
@@ -351,7 +373,7 @@ describe("autoWake: broadcast", () => {
         expect(skipped).toBeUndefined()
 
         await Team.setMemberStatus("bcast-skip", "alive", "shutdown")
-        await Team.cleanup("bcast-skip")
+        await shutdownAndCleanup("bcast-skip")
       },
     })
   })
@@ -410,7 +432,7 @@ describe("autoWake: broadcast", () => {
         for (const name of ["alice", "bob"]) {
           await Team.setMemberStatus("bcast-sender", name, "shutdown")
         }
-        await Team.cleanup("bcast-sender")
+        await shutdownAndCleanup("bcast-sender")
       },
     })
   })
@@ -456,7 +478,7 @@ describe("autoWake: bus events are published", () => {
         expect(events[0].text).toBe("Do the thing")
 
         await Team.setMemberStatus("event-send", "worker", "shutdown")
-        await Team.cleanup("event-send")
+        await shutdownAndCleanup("event-send")
       },
     })
   })
@@ -499,7 +521,7 @@ describe("autoWake: bus events are published", () => {
         expect(events[0].text).toBe("All hands update")
 
         await Team.setMemberStatus("event-bcast", "worker", "shutdown")
-        await Team.cleanup("event-bcast")
+        await shutdownAndCleanup("event-bcast")
       },
     })
   })
@@ -526,7 +548,7 @@ describe("autoWake: error resilience", () => {
 
         // Member session is idle → autoWake will try SessionPrompt.loop()
         // which will fail (no LLM/agent config in test). The error must be caught.
-        expect(SessionStatus.get(member.id).type).toBe("idle")
+        expect((await SessionStatus.get(member.id)).type).toBe("idle")
 
         // This must NOT throw
         await TeamMessaging.send({
@@ -544,7 +566,7 @@ describe("autoWake: error resilience", () => {
         expect(received).toBeDefined()
 
         await Team.setMemberStatus("resilient", "worker", "shutdown")
-        await Team.cleanup("resilient")
+        await shutdownAndCleanup("resilient")
       },
     })
   })
@@ -599,7 +621,7 @@ describe("autoWake: error resilience", () => {
         for (const name of ["idle-one", "busy-one"]) {
           await Team.setMemberStatus("resilient-bcast", name, "shutdown")
         }
-        await Team.cleanup("resilient-bcast")
+        await shutdownAndCleanup("resilient-bcast")
       },
     })
   })
@@ -632,7 +654,7 @@ describe("autoWake: error resilience", () => {
         expect(teamMsgs).toHaveLength(3)
 
         await Team.setMemberStatus("rapid-wake", "worker", "shutdown")
-        await Team.cleanup("rapid-wake")
+        await shutdownAndCleanup("rapid-wake")
       },
     })
   })

@@ -57,7 +57,7 @@ function signRS256(payload: Record<string, unknown>, privateKey: string, kid: st
 async function withEnv(vars: Record<string, string>, fn: () => Promise<void>) {
   const previous = new Map<string, string | undefined>()
   resetCaches()
-  Config.global.reset()
+  Config.invalidate()
   Database.close()
   await Instance.disposeAll()
   previous.set("OPENCODE_DISABLE_SHARE", process.env.OPENCODE_DISABLE_SHARE)
@@ -81,7 +81,7 @@ async function withEnv(vars: Record<string, string>, fn: () => Promise<void>) {
       }
     }
     resetCaches()
-    Config.global.reset()
+    Config.invalidate()
     Database.close()
     await Instance.disposeAll()
   }

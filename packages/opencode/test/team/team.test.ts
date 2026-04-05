@@ -1,4 +1,5 @@
 import { describe, expect, test, beforeEach } from "bun:test"
+import os from "os"
 import path from "path"
 import { Instance } from "../../src/project/instance"
 import { Team, TeamTasks } from "../../src/team"
@@ -16,18 +17,32 @@ import {
   TeamShutdownTool,
   TeamCleanupTool,
 } from "../../src/tool/team"
+import { initProjectors } from "../../src/server/projectors"
 
 Log.init({ print: false })
 
 const projectRoot = path.join(__dirname, "../..")
 
+// Isolate config/data/cache/state for this test file so upstream config
+// validation changes don't read the user's real ~/.config/opencode.
+const xdgRoot = path.join(os.tmpdir(), `opencode-team-core-${process.pid}`)
+process.env.XDG_DATA_HOME = path.join(xdgRoot, "data")
+process.env.XDG_CACHE_HOME = path.join(xdgRoot, "cache")
+process.env.XDG_CONFIG_HOME = path.join(xdgRoot, "config")
+process.env.XDG_STATE_HOME = path.join(xdgRoot, "state")
+process.env.OPENCODE_TEST_HOME = path.join(xdgRoot, "home")
+process.env.OPENCODE_TEST_MANAGED_CONFIG_DIR = path.join(xdgRoot, "managed")
+
+async function testInit() {
+  Env.set("ANTHROPIC_API_KEY", "test-key")
+  initProjectors()
+}
+
 describe("Team", () => {
   test("create and get a team", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => {
-        Env.set("ANTHROPIC_API_KEY", "test-key")
-      },
+      init: testInit,
       fn: async () => {
         const lead = await Session.create({})
         const team = await Team.create({
@@ -53,9 +68,7 @@ describe("Team", () => {
   test("get returns undefined for non-existent team", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => {
-        Env.set("ANTHROPIC_API_KEY", "test-key")
-      },
+      init: testInit,
       fn: async () => {
         const team = await Team.get("non-existent")
         expect(team).toBeUndefined()
@@ -66,9 +79,7 @@ describe("Team", () => {
   test("create throws on duplicate team name", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => {
-        Env.set("ANTHROPIC_API_KEY", "test-key")
-      },
+      init: testInit,
       fn: async () => {
         const lead1 = await Session.create({})
         const lead2 = await Session.create({})
@@ -85,9 +96,7 @@ describe("Team", () => {
   test("add and remove members", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => {
-        Env.set("ANTHROPIC_API_KEY", "test-key")
-      },
+      init: testInit,
       fn: async () => {
         const lead = await Session.create({})
         await Team.create({ name: "member-team", leadSessionID: lead.id })
@@ -131,9 +140,7 @@ describe("Team", () => {
   test("setMemberStatus updates member", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => {
-        Env.set("ANTHROPIC_API_KEY", "test-key")
-      },
+      init: testInit,
       fn: async () => {
         const lead = await Session.create({})
         await Team.create({ name: "status-team", leadSessionID: lead.id })
@@ -161,9 +168,7 @@ describe("Team", () => {
   test("cleanup fails if active members exist", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => {
-        Env.set("ANTHROPIC_API_KEY", "test-key")
-      },
+      init: testInit,
       fn: async () => {
         const lead = await Session.create({})
         await Team.create({ name: "active-team", leadSessionID: lead.id })
@@ -187,9 +192,7 @@ describe("Team", () => {
   test("findBySession finds lead and member roles", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => {
-        Env.set("ANTHROPIC_API_KEY", "test-key")
-      },
+      init: testInit,
       fn: async () => {
         const lead = await Session.create({})
         await Team.create({ name: "find-team", leadSessionID: lead.id })
@@ -224,9 +227,7 @@ describe("TeamTasks", () => {
   test("add and list tasks", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => {
-        Env.set("ANTHROPIC_API_KEY", "test-key")
-      },
+      init: testInit,
       fn: async () => {
         const lead = await Session.create({})
         await Team.create({ name: "task-team", leadSessionID: lead.id })
@@ -249,9 +250,7 @@ describe("TeamTasks", () => {
   test("claim task atomically", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => {
-        Env.set("ANTHROPIC_API_KEY", "test-key")
-      },
+      init: testInit,
       fn: async () => {
         const lead = await Session.create({})
         await Team.create({ name: "claim-team", leadSessionID: lead.id })
@@ -282,9 +281,7 @@ describe("TeamTasks", () => {
   test("claim respects dependencies", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => {
-        Env.set("ANTHROPIC_API_KEY", "test-key")
-      },
+      init: testInit,
       fn: async () => {
         const lead = await Session.create({})
         await Team.create({ name: "dep-team", leadSessionID: lead.id })
@@ -320,9 +317,7 @@ describe("TeamTasks", () => {
   test("self-dependency is removed during task resolution", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => {
-        Env.set("ANTHROPIC_API_KEY", "test-key")
-      },
+      init: testInit,
       fn: async () => {
         const lead = await Session.create({})
         await Team.create({ name: "self-dep-team", leadSessionID: lead.id })
@@ -348,9 +343,7 @@ describe("TeamTasks", () => {
   test("complete auto-unblocks dependent tasks", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => {
-        Env.set("ANTHROPIC_API_KEY", "test-key")
-      },
+      init: testInit,
       fn: async () => {
         const lead = await Session.create({})
         await Team.create({ name: "unblock-team", leadSessionID: lead.id })
@@ -381,9 +374,7 @@ describe("TeamTasks", () => {
   test("update replaces the full task list", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => {
-        Env.set("ANTHROPIC_API_KEY", "test-key")
-      },
+      init: testInit,
       fn: async () => {
         const lead = await Session.create({})
         await Team.create({ name: "update-team", leadSessionID: lead.id })
@@ -408,9 +399,7 @@ describe("Team auto-cleanup", () => {
   test("auto-cleanup triggers when all members reach shutdown", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => {
-        Env.set("ANTHROPIC_API_KEY", "test-key")
-      },
+      init: testInit,
       fn: async () => {
         // Enable auto-cleanup subscriber
         const unsub = Team.autoCleanup()
@@ -460,9 +449,7 @@ describe("Team auto-cleanup", () => {
   test("auto-cleanup does not trigger when some members are still active", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => {
-        Env.set("ANTHROPIC_API_KEY", "test-key")
-      },
+      init: testInit,
       fn: async () => {
         const unsub = Team.autoCleanup()
 
@@ -504,9 +491,7 @@ describe("Team auto-cleanup", () => {
   test("auto-cleanup does not trigger on idle status changes", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => {
-        Env.set("ANTHROPIC_API_KEY", "test-key")
-      },
+      init: testInit,
       fn: async () => {
         const unsub = Team.autoCleanup()
 
@@ -541,9 +526,7 @@ describe("Team constraints", () => {
   test("one team per lead session", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => {
-        Env.set("ANTHROPIC_API_KEY", "test-key")
-      },
+      init: testInit,
       fn: async () => {
         const lead = await Session.create({})
         await Team.create({ name: "lead-team-1", leadSessionID: lead.id })
@@ -561,9 +544,7 @@ describe("Team constraints", () => {
   test("teammate session cannot create a team", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => {
-        Env.set("ANTHROPIC_API_KEY", "test-key")
-      },
+      init: testInit,
       fn: async () => {
         const lead = await Session.create({})
         await Team.create({ name: "parent-team", leadSessionID: lead.id })
@@ -589,9 +570,7 @@ describe("Team constraints", () => {
   test("different sessions can lead different teams", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => {
-        Env.set("ANTHROPIC_API_KEY", "test-key")
-      },
+      init: testInit,
       fn: async () => {
         const leadA = await Session.create({})
         const leadB = await Session.create({})
@@ -612,9 +591,7 @@ describe("Team tool definitions", () => {
   test("all team tools can be initialized", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => {
-        Env.set("ANTHROPIC_API_KEY", "test-key")
-      },
+      init: testInit,
       fn: async () => {
         const tools = [
           TeamCreateTool,
@@ -651,9 +628,7 @@ describe("Team tool definitions", () => {
   test("TeamCreateTool rejects teammate sessions", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => {
-        Env.set("ANTHROPIC_API_KEY", "test-key")
-      },
+      init: testInit,
       fn: async () => {
         // Set up a team with a member
         const lead = await Session.create({})
@@ -689,9 +664,7 @@ describe("Team tool definitions", () => {
   test("TeamCreateTool rejects session already leading a team", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => {
-        Env.set("ANTHROPIC_API_KEY", "test-key")
-      },
+      init: testInit,
       fn: async () => {
         const lead = await Session.create({})
         await Team.create({ name: "existing-lead-team", leadSessionID: lead.id })
@@ -718,9 +691,7 @@ describe("Team tool definitions", () => {
   test("TeamShutdownTool rejects non-lead sessions", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => {
-        Env.set("ANTHROPIC_API_KEY", "test-key")
-      },
+      init: testInit,
       fn: async () => {
         const lead = await Session.create({})
         await Team.create({ name: "shutdown-guard-team", leadSessionID: lead.id })
@@ -757,9 +728,7 @@ describe("Team tool definitions", () => {
   test("TeamShutdownTool does not allow unassociated root session to reclaim lead while original lead exists", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => {
-        Env.set("ANTHROPIC_API_KEY", "test-key")
-      },
+      init: testInit,
       fn: async () => {
         const lead = await Session.create({})
         const outsider = await Session.create({})
@@ -796,9 +765,7 @@ describe("Team tool definitions", () => {
   test("TeamCleanupTool does not allow unassociated root session to cleanup even when members are shutdown", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => {
-        Env.set("ANTHROPIC_API_KEY", "test-key")
-      },
+      init: testInit,
       fn: async () => {
         const lead = await Session.create({})
         const outsider = await Session.create({})
@@ -912,9 +879,7 @@ describe("Team tool definitions", () => {
   test("TeamClaimTool rejects session not in a team", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => {
-        Env.set("ANTHROPIC_API_KEY", "test-key")
-      },
+      init: testInit,
       fn: async () => {
         const tool = await TeamClaimTool.init()
         const result = await tool.execute({ task_id: "t1" }, {
@@ -936,9 +901,7 @@ describe("Team tool definitions", () => {
   test("TeamTasksTool lists tasks for team member", async () => {
     await Instance.provide({
       directory: projectRoot,
-      init: async () => {
-        Env.set("ANTHROPIC_API_KEY", "test-key")
-      },
+      init: testInit,
       fn: async () => {
         const lead = await Session.create({})
         await Team.create({ name: "tasks-tool-team", leadSessionID: lead.id })

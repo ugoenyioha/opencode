@@ -97,13 +97,13 @@ function parseMeta(session: typeof SessionTable.$inferSelect): TeamMember | unde
   if (typeof meta.name !== "string" || typeof meta.agent !== "string" || typeof meta.status !== "string") return
   const execution = ExecutionStatus.safeParse(meta.execution_status)
   const member: TeamMember = {
-    name: meta.name,
+    name: meta.name as string,
     sessionID: session.id,
-    agent: meta.agent,
+    agent: meta.agent as string,
     status: MemberStatusSchema.parse(meta.status),
     execution_status: execution.success ? execution.data : undefined,
-    prompt: meta.prompt,
-    model: meta.model,
+    prompt: meta.prompt as string | undefined,
+    model: meta.model as string | undefined,
     planApproval:
       session.plan_approval === "none" ||
       session.plan_approval === "pending" ||
@@ -268,9 +268,9 @@ export namespace Team {
 
       try {
         const { Session } = await import("../session")
-        const info = await Session.get(event.properties.leadSessionID)
+        const info = await Session.get(sid(event.properties.leadSessionID))
         await Session.setPermission({
-          sessionID: event.properties.leadSessionID,
+          sessionID: sid(event.properties.leadSessionID),
           permission: (info.permission ?? []).filter(
             (rule) => !((WRITE_TOOLS as readonly string[]).includes(rule.permission) && rule.action === "deny"),
           ),
@@ -356,7 +356,7 @@ export namespace Team {
             team_meta: null,
             time_updated: Date.now(),
           })
-          .where(eq(SessionTable.id, input.leadSessionID))
+          .where(eq(SessionTable.id, sid(input.leadSessionID)))
           .run()
       })
 
@@ -449,7 +449,7 @@ export namespace Team {
           plan_approval: member.planApproval ?? "none",
           time_updated: Date.now(),
         })
-        .where(eq(SessionTable.id, member.sessionID))
+        .where(eq(SessionTable.id, sid(member.sessionID)))
         .run()
     })
 
@@ -479,7 +479,7 @@ export namespace Team {
     Database.use((db) => {
       db.update(SessionTable)
         .set({ team_meta: meta, time_updated: Date.now() })
-        .where(eq(SessionTable.id, member.sessionID))
+        .where(eq(SessionTable.id, sid(member.sessionID)))
         .run()
     })
     const changed = true
@@ -523,7 +523,7 @@ export namespace Team {
     Database.use((db) => {
       db.update(SessionTable)
         .set({ team_meta: meta, time_updated: Date.now() })
-        .where(eq(SessionTable.id, member.sessionID))
+        .where(eq(SessionTable.id, sid(member.sessionID)))
         .run()
     })
     const changed = true
@@ -569,7 +569,7 @@ export namespace Team {
     Database.use((db) => {
       db.update(SessionTable)
         .set({ plan_approval: planApproval, time_updated: Date.now() })
-        .where(eq(SessionTable.id, member.sessionID))
+        .where(eq(SessionTable.id, sid(member.sessionID)))
         .run()
     })
   }
@@ -584,7 +584,7 @@ export namespace Team {
       Database.use((db) => {
         db.update(SessionTable)
           .set({ team_id: null, team_role: null, team_meta: null, plan_approval: null, time_updated: Date.now() })
-          .where(eq(SessionTable.id, member.sessionID))
+          .where(eq(SessionTable.id, sid(member.sessionID)))
           .run()
       })
     }
@@ -597,7 +597,7 @@ export namespace Team {
   export async function findBySession(
     sessionID: string,
   ): Promise<{ team: TeamInfo; role: "lead" | "member"; memberName?: string } | undefined> {
-    const session = Database.use((db) => db.select().from(SessionTable).where(eq(SessionTable.id, sessionID)).get())
+    const session = Database.use((db) => db.select().from(SessionTable).where(eq(SessionTable.id, sid(sessionID))).get())
     if (session?.team_id && session.team_role) {
       const tid = session.team_id
       const teamRow = Database.use((db) =>
@@ -636,11 +636,11 @@ export namespace Team {
     if (teams.length === 1) {
       try {
         const { Session } = await import("../session")
-        const session = await Session.get(sessionID)
+        const session = await Session.get(sid(sessionID))
         if (session && !session.parentID && !session.team_meta) {
           const team = teams[0]
           const leadExists = team.leadSessionID
-            ? await Session.get(team.leadSessionID).catch(() => undefined)
+            ? await Session.get(sid(team.leadSessionID)).catch(() => undefined)
             : undefined
           if (!leadExists) {
             log.info("rebinding lead — original lead session is gone", {
@@ -682,7 +682,7 @@ export namespace Team {
         .run()
       db.update(SessionTable)
         .set({ team_id: id, team_role: "lead", plan_approval: "none", team_meta: null, time_updated: Date.now() })
-        .where(eq(SessionTable.id, newSessionID))
+        .where(eq(SessionTable.id, sid(newSessionID)))
         .run()
     })
   }
@@ -772,6 +772,13 @@ export namespace Team {
       parentID: sid(input.parentSessionID),
       title: `${input.name} (@${input.agent.name} teammate, ${label})${input.planApproval ? " [plan mode]" : ""}`,
       permission: rules,
+    })
+
+    Database.use((db) => {
+      db.update(SessionTable)
+        .set({ teammate: true, time_updated: Date.now() })
+        .where(eq(SessionTable.id, sid(session.id)))
+        .run()
     })
 
     // Register member — if this fails, clean up the orphaned session
@@ -946,9 +953,9 @@ export namespace Team {
     if (!member) throw new Error(`Teammate "${input.memberName}" not found`)
 
     if (input.approved) {
-      const info = await Session.get(member.sessionID)
+      const info = await Session.get(sid(member.sessionID))
       await Session.setPermission({
-        sessionID: member.sessionID,
+        sessionID: sid(member.sessionID),
         permission: (info.permission ?? []).filter(
           (rule) =>
             !(
@@ -1080,13 +1087,21 @@ export namespace Team {
     // for execution to reach a terminal state before removing worktrees.
     for (const member of team.members) {
       if (TERMINAL_EXECUTION_STATES.has(member.execution_status ?? "idle")) continue
+      const loops = activeLoops.get(member.sessionID)
+      // Test/manual shutdown path: if no loop is actually tracked, don't leave
+      // the member stuck in "cancelling" forever. Force it to a terminal state.
+      if (!loops || loops.size === 0) {
+        await transitionExecutionStatus(teamName, member.name, "cancelled", { force: true })
+        await transitionExecutionStatus(teamName, member.name, "idle", { force: true })
+        continue
+      }
       log.info("cleanup cancelling still-running teammate", {
         teamName,
         memberName: member.name,
         sessionID: member.sessionID,
         execution_status: member.execution_status,
       })
-      SessionPrompt.cancel(member.sessionID)
+      SessionPrompt.cancel(sid(member.sessionID))
       await transitionExecutionStatus(teamName, member.name, "cancelling", { force: true })
     }
 
@@ -1121,7 +1136,7 @@ export namespace Team {
 
     for (const member of team.members) {
       try {
-        const session = await Session.get(member.sessionID)
+        const session = await Session.get(sid(member.sessionID))
         if (session.directory && session.directory !== Inst.directory) {
           await Worktree.remove({ directory: session.directory })
         }
@@ -1153,7 +1168,7 @@ export namespace Team {
     const { SessionPrompt } = await import("../session/prompt")
     const entries = [...activeLoops.entries()]
     for (const [sessionID] of entries) {
-      SessionPrompt.cancel(sessionID)
+      SessionPrompt.cancel(sid(sessionID))
     }
     await Promise.allSettled(entries.flatMap(([, promises]) => [...promises]))
   }
@@ -1202,7 +1217,7 @@ export namespace Team {
     await transitionExecutionStatus(teamName, memberName, "cancel_requested")
 
     for (const _ of [0, 1, 2]) {
-      SessionPrompt.cancel(member.sessionID)
+      SessionPrompt.cancel(sid(member.sessionID))
       await transitionExecutionStatus(teamName, memberName, "cancelling")
       await Bun.sleep(120)
       const next = await get(teamName)
@@ -1217,7 +1232,7 @@ export namespace Team {
     if (!current) return true
     if (TERMINAL_EXECUTION_STATES.has(current.execution_status ?? "idle")) return true
 
-    const runtime = await SessionStatus.get(member.sessionID)
+    const runtime = await SessionStatus.get(sid(member.sessionID))
     if (runtime.type !== "idle") return false
 
     await transitionExecutionStatus(teamName, memberName, "cancelled", { force: true })
@@ -1244,7 +1259,7 @@ export namespace Team {
       if (TERMINAL_EXECUTION_STATES.has(member.execution_status ?? "idle")) continue
       log.info("cancelling member", { teamName, memberName: member.name, sessionID: member.sessionID })
       await transitionExecutionStatus(teamName, member.name, "cancel_requested")
-      SessionPrompt.cancel(member.sessionID)
+      SessionPrompt.cancel(sid(member.sessionID))
       await transitionExecutionStatus(teamName, member.name, "cancelling")
       count++
     }
@@ -1296,14 +1311,14 @@ export namespace Team {
       try {
         const { Session } = await import("../session")
         const { Identifier } = await import("../id/id")
-        const msgs = await Session.messages({ sessionID: team.leadSessionID })
+        const msgs = await Session.messages({ sessionID: sid(team.leadSessionID) })
         const lastUser = msgs.findLast((m) => m.info.role === "user")
         if (lastUser) {
           const info = lastUser.info as { agent: string; model: { providerID: string; modelID: string } }
           const msgId = MessageID.ascending()
           await Session.updateMessage({
             id: msgId,
-            sessionID: team.leadSessionID,
+            sessionID: sid(team.leadSessionID),
             role: "user",
             agent: info.agent,
             model: info.model,
@@ -1312,7 +1327,7 @@ export namespace Team {
           await Session.updatePart({
             id: PartID.ascending(),
             messageID: msgId,
-            sessionID: team.leadSessionID,
+            sessionID: sid(team.leadSessionID),
             type: "text",
             text: `[System]: Server was restarted. The following teammates in team "${team.name}" were interrupted and need to be resumed: ${names.join(", ")}. Use team_message or team_broadcast to tell them to continue their work.`,
             synthetic: true,

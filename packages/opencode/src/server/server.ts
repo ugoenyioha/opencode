@@ -34,7 +34,11 @@ export namespace Server {
     return false
   }
 
-  export const Default = lazy(() => ControlPlaneRoutes())
+  export const Default = lazy(() => {
+    const app = ControlPlaneRoutes()
+    InstanceRoutes(app)
+    return app
+  })
 
   export const ControlPlaneRoutes = (opts?: { cors?: string[] }): Hono => {
     const app = new Hono()
@@ -237,8 +241,15 @@ export namespace Server {
       .use(WorkspaceRouterMiddleware)
   }
 
-  export function createApp(opts: { cors?: string[] }) {
-    return ControlPlaneRoutes(opts)
+  export function createApp(opts?: { cors?: string[] }) {
+    const app = ControlPlaneRoutes(opts ?? {})
+    InstanceRoutes(app)
+    return app
+  }
+
+  /** @deprecated use createApp() */
+  export function App() {
+    return createApp()
   }
 
   export async function openapi() {

@@ -14,9 +14,11 @@ import { ShareNext } from "@/share/share-next"
 import { Flag } from "@/flag/flag"
 import { SessionRecovery } from "@/session/recovery"
 import { SessionCron } from "@/session/cron"
+import { initProjectors } from "@/server/projectors"
 
 export async function InstanceBootstrap() {
   Log.Default.info("bootstrapping", { directory: Instance.directory })
+  initProjectors()
   await Plugin.init()
   ShareNext.init()
   Format.init()

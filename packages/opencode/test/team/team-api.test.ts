@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, test } from "bun:test"
 import path from "path"
 import { Instance } from "../../src/project/instance"
 import { Team, TeamTasks } from "../../src/team"
@@ -10,6 +10,12 @@ import { Server } from "../../src/server/server"
 import { TeamMessaging } from "../../src/team/messaging"
 
 Log.init({ print: false })
+
+// These endpoint tests validate HTTP behavior, not prompt-loop wakeups.
+// Disable auto-wake so message endpoints don't spawn background loops and hang.
+process.env.OPENCODE_DISABLE_TEAM_AUTOWAKE = "1"
+afterAll(() => { delete process.env.OPENCODE_DISABLE_TEAM_AUTOWAKE })
+
 
 const projectRoot = path.join(__dirname, "../..")
 
