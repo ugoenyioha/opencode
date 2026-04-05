@@ -161,8 +161,6 @@ export function DialogTeam() {
             onTrigger: () => {
               const info = teamInfo()
               if (!info) return
-              // Find lead session: iterate members looking for the session that has role=lead
-              // Or look up from team data
               for (const [sid, entry] of Object.entries(sync.data.team)) {
                 const e = entry as any
                 if (e?.teamName === info.teamName && e?.role === "lead") {
@@ -171,6 +169,78 @@ export function DialogTeam() {
                   return
                 }
               }
+            },
+          },
+          {
+            keybind: { name: "s", ctrl: false, meta: false, shift: false, leader: false },
+            title: "shutdown",
+            onTrigger: (option) => {
+              const info = teamInfo()
+              if (!info || info.role !== "lead") {
+                toast.show({ message: "Only the team lead can shut down teammates", variant: "error" })
+                return
+              }
+              const [type, sessionID] = option.value.split(":", 2)
+              if (type !== "member" || !sessionID) return
+              const member = info.members.find((m) => m.sessionID === sessionID)
+              if (!member) return
+              sdk
+                .fetch(`${sdk.url}/team/${info.teamName}/shutdown`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ leadSessionID: route.sessionID, member: member.name }),
+                })
+                .then(() => toast.show({ message: `Shutdown requested for ${member.name}`, variant: "info" }))
+                .catch(() => toast.show({ message: `Failed to shutdown ${member.name}`, variant: "error" }))
+            },
+          },
+          {
+            keybind: { name: "k", ctrl: false, meta: false, shift: false, leader: false },
+            title: "kill (cancel)",
+            onTrigger: (option) => {
+              const info = teamInfo()
+              if (!info || info.role !== "lead") {
+                toast.show({ message: "Only the team lead can cancel teammates", variant: "error" })
+                return
+              }
+              const [type, sessionID] = option.value.split(":", 2)
+              if (type !== "member" || !sessionID) return
+              const member = info.members.find((m) => m.sessionID === sessionID)
+              if (!member) return
+              sdk
+                .fetch(`${sdk.url}/team/${info.teamName}/cancel`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ memberName: member.name }),
+                })
+                .then(() => toast.show({ message: `Cancelled ${member.name}`, variant: "info" }))
+                .catch(() => toast.show({ message: `Failed to cancel ${member.name}`, variant: "error" }))
+            },
+          },
+          {
+            keybind: { name: "d", ctrl: false, meta: false, shift: false, leader: false },
+            title: "toggle delegate",
+            onTrigger: () => {
+              const info = teamInfo()
+              if (!info || info.role !== "lead") {
+                toast.show({ message: "Only the team lead can toggle delegate mode", variant: "error" })
+                return
+              }
+              // Derive current delegate state from team data (may not be in sync cache — best effort)
+              const currentDelegate = !!(info as any).delegate
+              sdk
+                .fetch(`${sdk.url}/team/${info.teamName}/delegate`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ enabled: !currentDelegate }),
+                })
+                .then(() =>
+                  toast.show({
+                    message: `Delegate mode ${!currentDelegate ? "enabled" : "disabled"}`,
+                    variant: "info",
+                  }),
+                )
+                .catch(() => toast.show({ message: "Failed to toggle delegate mode", variant: "error" }))
             },
           },
         ]}
